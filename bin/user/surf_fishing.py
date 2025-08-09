@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Aldabra Tortoise
+# Magic Animal: Penguin
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -16,7 +16,8 @@ import math
 import urllib.request
 import urllib.error
 import tempfile
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timedelta
 
 # WeeWX imports
 import weewx
@@ -26,6 +27,14 @@ import weeutil.logger
 
 # Logging setup
 log = weeutil.logger.logging.getLogger(__name__)
+
+# CORE ICONS: Consistent with Phase I patterns (MANDATORY)
+CORE_ICONS = {
+    'navigation': '📍',    # Location/station selection
+    'status': '✅',        # Success indicators  
+    'warning': '⚠️',       # Warnings/issues
+    'selection': '🔧'      # Configuration/selection
+}
 
 class GRIBProcessor:
     """Handle GRIB file processing for WaveWatch III data"""
@@ -521,38 +530,78 @@ class SurfForecastGenerator:
         
         return transformed_forecast
     
-    def _assess_surf_quality(self, surf_forecast, current_wind, spot_config):
-        """Assess surf quality based on wind and wave conditions"""
+    def assess_surf_quality_complete(self, surf_forecast, current_wind, spot_config):
+        """
+        REPLACEMENT for _assess_surf_quality()
+        Complete surf quality assessment with visual stars and detailed descriptions
+        """
         
-        quality_forecast = []
+        enhanced_forecast = []
         
         for period in surf_forecast:
-            # Calculate wind condition relative to wave direction
-            wind_condition = self._classify_wind_condition(
-                period['wind_direction'], 
-                period['wave_direction'],
-                period['wind_speed']
-            )
-            
-            # Calculate quality rating
-            quality_rating = self._calculate_surf_rating(
-                period['wave_period'], 
-                wind_condition,
-                (period['wave_height_min'] + period['wave_height_max']) / 2
-            )
-            
-            # Add quality assessment
-            enhanced_period = period.copy()
-            enhanced_period.update({
-                'wind_condition': wind_condition['type'],
-                'quality_rating': quality_rating['rating'],
-                'conditions_text': quality_rating['text'],
-                'confidence': quality_rating['confidence']
-            })
-            
-            quality_forecast.append(enhanced_period)
+            try:
+                # Get existing wind condition assessment
+                wind_condition = self._classify_wind_condition(
+                    period['wind_direction'], 
+                    period['wave_direction'],
+                    period['wind_speed']
+                )
+                
+                # Calculate comprehensive surf rating
+                quality_rating = self._calculate_surf_rating(
+                    period['wave_period'], 
+                    wind_condition,
+                    (period['wave_height_min'] + period['wave_height_max']) / 2
+                )
+                
+                # Generate visual star display
+                star_display = self.generate_star_display(quality_rating['rating'])
+                
+                # Format wave height range
+                wave_range = self.format_wave_height_range(
+                    period['wave_height_min'], 
+                    period['wave_height_max']
+                )
+                
+                # Generate comprehensive description
+                description = self.generate_comprehensive_description(
+                    quality_rating['rating'],
+                    period['wave_period'],
+                    wave_range,
+                    wind_condition['type'],
+                    period['wind_speed']
+                )
+                
+                # Create enhanced period data
+                enhanced_period = period.copy()
+                enhanced_period.update({
+                    'wind_condition': wind_condition['type'],
+                    'wind_quality_modifier': wind_condition['quality_modifier'],
+                    'quality_rating': quality_rating['rating'],
+                    'quality_stars': star_display['stars_visual'],
+                    'quality_text': quality_rating['text'],
+                    'wave_height_range': wave_range,
+                    'conditions_description': description,
+                    'confidence': quality_rating['confidence']
+                })
+                
+                enhanced_forecast.append(enhanced_period)
+                
+            except Exception as e:
+                log.error(f"Error assessing quality for forecast period: {e}")
+                # Add fallback data
+                enhanced_period = period.copy()
+                enhanced_period.update({
+                    'quality_rating': 1,
+                    'quality_stars': '★☆☆☆☆',
+                    'quality_text': 'Unknown',
+                    'wave_height_range': 'Unknown',
+                    'conditions_description': 'Unable to assess conditions',
+                    'confidence': 0.0
+                })
+                enhanced_forecast.append(enhanced_period)
         
-        return quality_forecast
+        return enhanced_forecast
     
     def _classify_wind_condition(self, wind_direction, wave_direction, wind_speed):
         """Classify wind condition relative to waves"""
@@ -689,6 +738,449 @@ class SurfForecastGenerator:
         
         return surf_forecast
 
+    def generate_star_display(self, rating):
+        """
+        Generate visual star display for surf rating
+        Returns both visual stars and formatted text
+        """
+        
+        # Ensure rating is in valid range
+        rating = max(1, min(5, int(rating)))
+        
+        filled_stars = '★' * rating
+        empty_stars = '☆' * (5 - rating)
+        
+        return {
+            'rating': rating,
+            'stars_visual': filled_stars + empty_stars,
+            'stars_filled': filled_stars,
+            'stars_empty': empty_stars,
+            'rating_text': f"{rating}/5 stars",
+            'rating_fraction': f"{rating}/5"
+        }
+
+    def format_wave_height_range(self, min_height, max_height):
+        """
+        Format wave height as consistent range text (e.g., "2-4 ft")
+        Handles rounding and edge cases for display
+        """
+        
+        # Round to nearest 0.5 feet for realistic ranges
+        min_rounded = round(min_height * 2) / 2
+        max_rounded = round(max_height * 2) / 2
+        
+        # Handle edge cases
+        if min_rounded <= 0:
+            min_rounded = 0.5
+        
+        if max_rounded <= min_rounded:
+            max_rounded = min_rounded + 0.5
+        
+        # Format based on size
+        if max_rounded < 1:
+            return "Flat"
+        elif min_rounded == max_rounded:
+            return f"{min_rounded:.0f}ft" if min_rounded == int(min_rounded) else f"{min_rounded:.1f}ft"
+        else:
+            # Standard range format
+            if min_rounded == int(min_rounded):
+                min_str = f"{min_rounded:.0f}"
+            else:
+                min_str = f"{min_rounded:.1f}"
+                
+            if max_rounded == int(max_rounded):
+                max_str = f"{max_rounded:.0f}"
+            else:
+                max_str = f"{max_rounded:.1f}"
+                
+            return f"{min_str}-{max_str}ft"
+
+    def generate_comprehensive_description(self, rating, wave_period, wave_range, wind_type, wind_speed):
+        """
+        Generate detailed human-readable surf condition descriptions
+        """
+        
+        # Base quality descriptions
+        quality_terms = {
+            5: "Excellent",
+            4: "Good", 
+            3: "Fair",
+            2: "Poor",
+            1: "Flat/Tiny"
+        }
+        
+        # Period quality descriptors
+        if wave_period >= 12:
+            period_desc = "groundswell"
+        elif wave_period >= 9:
+            period_desc = "clean swell"
+        elif wave_period >= 7:
+            period_desc = "mixed swell"
+        else:
+            period_desc = "wind chop"
+        
+        # Wind descriptors
+        wind_descriptors = {
+            'calm': 'glassy conditions',
+            'offshore': f'clean {wind_type} winds',
+            'onshore': f'choppy {wind_type} conditions', 
+            'cross': f'{wind_type} winds'
+        }
+        
+        wind_desc = wind_descriptors.get(wind_type, f'{wind_type} winds')
+        
+        # Construct description
+        base_quality = quality_terms.get(rating, "Unknown")
+        
+        if rating >= 4:
+            return f"{base_quality} - {wave_range} {period_desc}, {wind_desc}"
+        elif rating >= 3:
+            return f"{base_quality} conditions - {wave_range} {period_desc}, {wind_desc}"
+        elif rating >= 2:
+            return f"{base_quality} surf - {wave_range} {period_desc}, {wind_desc}"
+        else:
+            return f"{base_quality} - {wave_range}, {wind_desc}"
+
+    def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
+        """
+        Store surf forecasts in database using WeeWX patterns
+        Replaces old forecasts with current data
+        """
+        
+        try:
+            with db_manager.connection.cursor() as cursor:
+                # Clear existing forecasts for this spot
+                cursor.execute("""
+                    DELETE FROM marine_forecast_surf_data 
+                    WHERE spot_id = ?
+                """, (spot_id,))
+                
+                # Insert new forecast data
+                for forecast_period in forecast_data:
+                    cursor.execute("""
+                        INSERT INTO marine_forecast_surf_data (
+                            spot_id, forecast_time, generated_time,
+                            wave_height_min, wave_height_max, wave_height_range,
+                            wave_period, wave_direction, 
+                            wind_speed, wind_direction, wind_condition,
+                            quality_rating, quality_stars, quality_text,
+                            conditions_description, confidence
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        spot_id,
+                        forecast_period['forecast_time'],
+                        forecast_period.get('generated_time', int(time.time())),
+                        forecast_period['wave_height_min'],
+                        forecast_period['wave_height_max'],
+                        forecast_period['wave_height_range'],
+                        forecast_period['wave_period'],
+                        forecast_period['wave_direction'],
+                        forecast_period['wind_speed'],
+                        forecast_period['wind_direction'],
+                        forecast_period['wind_condition'],
+                        forecast_period['quality_rating'],
+                        forecast_period['quality_stars'],
+                        forecast_period['quality_text'],
+                        forecast_period['conditions_description'],
+                        forecast_period['confidence']
+                    ))
+                
+                db_manager.connection.commit()
+                log.debug(f"Stored {len(forecast_data)} surf forecasts for spot_id {spot_id}")
+                return True
+                
+        except Exception as e:
+            log.error(f"Error storing surf forecasts for spot_id {spot_id}: {e}")
+            db_manager.connection.rollback()
+            return False
+
+    def get_current_surf_forecast(self, spot_id, db_manager, hours_ahead=24):
+        """
+        Get current surf forecast for a spot from database
+        Returns next 24 hours by default
+        """
+        
+        try:
+            current_time = int(time.time())
+            end_time = current_time + (hours_ahead * 3600)
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT forecast_time, wave_height_min, wave_height_max, wave_height_range,
+                        wave_period, wave_direction, wind_speed, wind_direction, wind_condition,
+                        quality_rating, quality_stars, quality_text, conditions_description, confidence
+                    FROM marine_forecast_surf_data 
+                    WHERE spot_id = ? 
+                    AND forecast_time >= ? 
+                    AND forecast_time <= ?
+                    ORDER BY forecast_time
+                """, (spot_id, current_time, end_time))
+                
+                forecasts = []
+                for row in cursor.fetchall():
+                    forecast = {
+                        'forecast_time': row[0],
+                        'wave_height_min': row[1],
+                        'wave_height_max': row[2],
+                        'wave_height_range': row[3],
+                        'wave_period': row[4],
+                        'wave_direction': row[5],
+                        'wind_speed': row[6],
+                        'wind_direction': row[7],
+                        'wind_condition': row[8],
+                        'quality_rating': row[9],
+                        'quality_stars': row[10],
+                        'quality_text': row[11],
+                        'conditions_description': row[12],
+                        'confidence': row[13],
+                        'formatted_time': datetime.fromtimestamp(row[0]).strftime('%I:%M %p'),
+                        'hours_from_now': (row[0] - current_time) / 3600
+                    }
+                    forecasts.append(forecast)
+                
+                return forecasts
+                
+        except Exception as e:
+            log.error(f"Error retrieving surf forecast for spot_id {spot_id}: {e}")
+            return []
+
+    def find_next_good_session(self, spot_id, db_manager, min_rating=4):
+        """
+        Find the next surf session with rating >= min_rating
+        Returns details of the next good session
+        """
+        
+        try:
+            current_time = int(time.time())
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT forecast_time, wave_height_range, wave_period,
+                        quality_rating, quality_stars, conditions_description
+                    FROM marine_forecast_surf_data 
+                    WHERE spot_id = ? 
+                    AND forecast_time > ?
+                    AND quality_rating >= ?
+                    ORDER BY forecast_time
+                    LIMIT 1
+                """, (spot_id, current_time, min_rating))
+                
+                row = cursor.fetchone()
+                if row:
+                    hours_away = (row[0] - current_time) / 3600
+                    
+                    return {
+                        'found': True,
+                        'forecast_time': row[0],
+                        'formatted_time': datetime.fromtimestamp(row[0]).strftime('%a %I:%M %p'),
+                        'hours_away': round(hours_away, 1),
+                        'wave_height_range': row[1],
+                        'wave_period': row[2],
+                        'quality_rating': row[3],
+                        'quality_stars': row[4],
+                        'conditions_description': row[5]
+                    }
+                else:
+                    return {
+                        'found': False,
+                        'message': f'No {min_rating}+ star sessions in next 72 hours'
+                    }
+                    
+        except Exception as e:
+            log.error(f"Error finding next good session for spot_id {spot_id}: {e}")
+            return {'found': False, 'message': 'Error retrieving forecast'}
+
+    def get_today_surf_summary(self, spot_id, db_manager):
+        """
+        Get summary of today's surf conditions
+        """
+        
+        try:
+            # Get today's date range
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT quality_rating, wave_height_range, conditions_description
+                    FROM marine_forecast_surf_data 
+                    WHERE spot_id = ? 
+                    AND forecast_time >= ? 
+                    AND forecast_time < ?
+                    ORDER BY quality_rating DESC
+                """, (spot_id, int(today_start.timestamp()), int(today_end.timestamp())))
+                
+                forecasts = cursor.fetchall()
+                
+                if not forecasts:
+                    return {
+                        'status': 'No forecast available',
+                        'summary': 'No data for today'
+                    }
+                
+                # Calculate summary stats
+                ratings = [f[0] for f in forecasts]
+                max_rating = max(ratings)
+                avg_rating = sum(ratings) / len(ratings)
+                
+                # Get best session details
+                best_session = forecasts[0]  # Already ordered by rating DESC
+                
+                # Generate summary text
+                if max_rating >= 4:
+                    status = 'Good surf today'
+                elif max_rating >= 3:
+                    status = 'Fair surf today'
+                else:
+                    status = 'Poor surf today'
+                
+                return {
+                    'status': status,
+                    'max_rating': max_rating,
+                    'avg_rating': round(avg_rating, 1),
+                    'max_rating_stars': '★' * max_rating + '☆' * (5 - max_rating),
+                    'best_wave_range': best_session[1],
+                    'best_conditions': best_session[2],
+                    'total_periods': len(forecasts)
+                }
+                
+        except Exception as e:
+            log.error(f"Error getting today's summary for spot_id {spot_id}: {e}")
+            return {
+                'status': 'Error retrieving summary',
+                'summary': 'Unable to load today\'s forecast'
+            }
+
+
+class SurfForecastSearchList(SearchList):
+    """
+    NEW CLASS: SearchList extension for WeeWX template integration
+    Provides surf forecast data to WeeWX templates
+    """
+    
+    def __init__(self, generator):
+        super(SurfForecastSearchList, self).__init__(generator)
+        
+    def get_extension_list(self, timespan, db_lookup):
+        """
+        Return search list with surf forecast data for templates
+        """
+        
+        try:
+            # Get database manager
+            db_manager = db_lookup()
+            
+            # Get all active surf spots
+            surf_spots = self._get_active_surf_spots(db_manager)
+            
+            # Build forecast data for each spot
+            surf_forecasts = {}
+            for spot in surf_spots:
+                spot_data = self._get_spot_forecast_data(spot, db_manager)
+                if spot_data:
+                    surf_forecasts[spot['name']] = spot_data
+            
+            # Get overall summary
+            summary_data = self._get_overall_summary(surf_forecasts)
+            
+            return [{
+                'surf_forecasts': surf_forecasts,
+                'surf_summary': summary_data,
+                'surf_spots_count': len(surf_spots),
+                'last_surf_update': self._get_last_update_time(db_manager)
+            }]
+            
+        except Exception as e:
+            log.error(f"Error in SurfForecastSearchList: {e}")
+            return [{}]
+    
+    def _get_active_surf_spots(self, db_manager):
+        """Get all active surf spots from database"""
+        
+        with db_manager.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, name, latitude, longitude, bottom_type, exposure 
+                FROM marine_forecast_surf_spots 
+                WHERE active = 1 
+                ORDER BY name
+            """)
+            
+            spots = []
+            for row in cursor.fetchall():
+                spots.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'latitude': row[2],
+                    'longitude': row[3],
+                    'bottom_type': row[4],
+                    'exposure': row[5]
+                })
+            
+            return spots
+    
+    def _get_spot_forecast_data(self, spot, db_manager):
+        """Get complete forecast data for a specific spot"""
+        
+        try:
+            # Create SurfForecastGenerator instance to use its methods
+            generator = SurfForecastGenerator(self.generator.config_dict)
+            
+            return {
+                'spot_info': spot,
+                'current_forecast': generator.get_current_surf_forecast(spot['id'], db_manager, 24),
+                'next_good_session': generator.find_next_good_session(spot['id'], db_manager),
+                'today_summary': generator.get_today_surf_summary(spot['id'], db_manager)
+            }
+            
+        except Exception as e:
+            log.error(f"Error getting forecast data for {spot['name']}: {e}")
+            return None
+    
+    def _get_overall_summary(self, surf_forecasts):
+        """Generate overall surf summary across all spots"""
+        
+        if not surf_forecasts:
+            return {'status': 'No surf spots configured'}
+        
+        best_rating = 0
+        best_spot = None
+        
+        for spot_name, spot_data in surf_forecasts.items():
+            today_summary = spot_data.get('today_summary', {})
+            max_rating = today_summary.get('max_rating', 0)
+            
+            if max_rating > best_rating:
+                best_rating = max_rating
+                best_spot = spot_name
+        
+        if best_rating >= 4:
+            status = f'Excellent surf at {best_spot}'
+        elif best_rating >= 3:
+            status = f'Good surf at {best_spot}'
+        elif best_rating >= 2:
+            status = f'Fair surf available'
+        else:
+            status = 'Poor surf conditions'
+        
+        return {
+            'status': status,
+            'best_rating': best_rating,
+            'best_spot': best_spot,
+            'total_spots': len(surf_forecasts)
+        }
+    
+    def _get_last_update_time(self, db_manager):
+        """Get timestamp of last forecast update"""
+        
+        with db_manager.connection.cursor() as cursor:
+            cursor.execute("SELECT MAX(generated_time) FROM marine_forecast_surf_data")
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                return datetime.fromtimestamp(result[0]).strftime('%m/%d %I:%M %p')
+            
+            return 'Never'
+        
 
 class FishingForecastGenerator:
     """Generate fishing condition forecasts"""
@@ -756,120 +1248,249 @@ class FishingForecastGenerator:
         
         return periods
     
-    def _score_fishing_period(self, period, marine_conditions, category_config):
-        """Score a fishing period based on conditions"""
+    def score_fishing_period_complete(self, period, marine_conditions, category_config, db_manager):
+        """
+        REPLACEMENT for _score_fishing_period()
+        Complete enhanced fishing period scoring with real data integration
+        """
         
-        total_score = 0
-        scoring_factors = []
-        
-        # Pressure trend scoring (most important factor)
-        pressure_score, pressure_factor = self._score_pressure_conditions(marine_conditions)
-        total_score += pressure_score
-        scoring_factors.append(pressure_factor)
-        
-        # Tide movement scoring
-        tide_score, tide_factor = self._score_tide_conditions(period, marine_conditions)
-        total_score += tide_score
-        scoring_factors.append(tide_factor)
-        
-        # Time of day scoring
-        time_score, time_factor = self._score_time_of_day(period)
-        total_score += time_score
-        scoring_factors.append(time_factor)
-        
-        # Species-specific adjustments
-        species_score, species_factor = self._score_species_conditions(
-            period, marine_conditions, category_config
-        )
-        total_score += species_score
-        if species_factor:
-            scoring_factors.append(species_factor)
-        
-        # Convert to 1-5 rating
-        if total_score >= 6:
-            rating = 5
-            conditions_text = "Excellent"
-        elif total_score >= 4.5:
-            rating = 4
-            conditions_text = "Good"
-        elif total_score >= 3:
-            rating = 3
-            conditions_text = "Fair"
-        elif total_score >= 1.5:
-            rating = 2
-            conditions_text = "Poor"
-        else:
-            rating = 1
-            conditions_text = "Very Poor"
-        
-        # Determine species activity level
-        if rating >= 4:
-            species_activity = 'high'
-        elif rating >= 3:
-            species_activity = 'moderate'
-        else:
-            species_activity = 'low'
-        
-        # Enhanced period with scoring
-        enhanced_period = period.copy()
-        enhanced_period.update({
-            'activity_rating': rating,
-            'conditions_text': conditions_text,
-            'species_activity': species_activity,
-            'scoring_factors': scoring_factors,
-            'total_score': total_score,
-            'generated_time': int(time.time())
-        })
-        
-        return enhanced_period
+        try:
+            # Enhanced pressure analysis
+            pressure_analysis = self.analyze_pressure_trend_enhanced(marine_conditions, db_manager)
+            
+            # Real tide analysis
+            tide_analysis = self.analyze_tide_conditions_real(period, db_manager)
+            
+            # Time of day scoring (keep existing method)
+            time_score, time_factor = self._score_time_of_day(period)
+            
+            # Enhanced species activity prediction
+            species_activity = self.predict_species_activity_enhanced(
+                period, pressure_analysis, tide_analysis, category_config
+            )
+            
+            # Calculate total score with weights
+            scoring_weights = {
+                'pressure': 0.4,  # Most important
+                'tide': 0.3,      # Second most important
+                'time': 0.2,      # Third
+                'species': 0.1    # Fine tuning
+            }
+            
+            weighted_score = (
+                pressure_analysis['score'] * scoring_weights['pressure'] +
+                tide_analysis['score'] * scoring_weights['tide'] +
+                time_score * scoring_weights['time'] +
+                species_activity['score'] * scoring_weights['species']
+            )
+            
+            # Convert to 1-5 rating
+            if weighted_score >= 3.5:
+                rating = 5
+                conditions_text = "Excellent"
+            elif weighted_score >= 2.8:
+                rating = 4
+                conditions_text = "Good"
+            elif weighted_score >= 2.0:
+                rating = 3
+                conditions_text = "Fair"
+            elif weighted_score >= 1.0:
+                rating = 2
+                conditions_text = "Poor"
+            else:
+                rating = 1
+                conditions_text = "Slow"
+            
+            # Generate star display
+            star_display = self.generate_star_display(rating)
+            
+            # Generate comprehensive description
+            description = self.generate_comprehensive_fishing_description(
+                rating, pressure_analysis, tide_analysis, species_activity, period
+            )
+            
+            # Calculate overall confidence
+            confidence = (
+                pressure_analysis['confidence'] * 0.4 +
+                tide_analysis['confidence'] * 0.3 +
+                0.9 * 0.2 +  # Time scoring is always reliable
+                species_activity['confidence'] * 0.1
+            )
+            
+            # Enhanced period with complete data
+            enhanced_period = period.copy()
+            enhanced_period.update({
+                'activity_rating': rating,
+                'activity_stars': star_display['stars_visual'],
+                'conditions_text': conditions_text,
+                'description': description,
+                'species_activity': species_activity['text'],
+                'species_activity_level': species_activity['level'],
+                
+                # Detailed analysis results
+                'pressure_analysis': pressure_analysis,
+                'tide_analysis': tide_analysis,
+                'species_analysis': species_activity,
+                'time_score': time_score,
+                'weighted_score': weighted_score,
+                'confidence': round(confidence, 2),
+                'generated_time': int(time.time())
+            })
+            
+            return enhanced_period
+            
+        except Exception as e:
+            log.error(f"Error in enhanced fishing period scoring: {e}")
+            # Fallback to basic scoring
+            return self._score_fishing_period_basic(period, marine_conditions, category_config)
     
-    def _score_pressure_conditions(self, marine_conditions):
-        """Score barometric pressure conditions"""
+    def analyze_pressure_trend_enhanced(self, marine_conditions, db_manager):
+        """
+        REPLACEMENT for _score_pressure_conditions()
+        Enhanced pressure trend analysis using real Phase I barometric data
+        """
         
-        # Get pressure trend (this would come from analyzing recent pressure data)
-        current_pressure = marine_conditions.get('current_pressure', 30.0)
+        try:
+            current_time = int(time.time())
+            
+            # Get 6-hour pressure history from Phase I NDBC data
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT marine_barometric_pressure, dateTime
+                    FROM ndbc_data 
+                    WHERE dateTime >= ? 
+                    AND marine_barometric_pressure IS NOT NULL
+                    ORDER BY dateTime DESC
+                    LIMIT 12
+                """, (current_time - 21600,))  # Last 6 hours
+                
+                pressure_readings = cursor.fetchall()
+            
+            if len(pressure_readings) < 2:
+                # Fallback to basic analysis
+                return self._score_pressure_conditions_basic(marine_conditions)
+            
+            # Calculate pressure change over 3-hour period
+            current_pressure = pressure_readings[0][0]
+            three_hour_ago = None
+            
+            for pressure, timestamp in pressure_readings:
+                if current_time - timestamp >= 10800:  # 3 hours
+                    three_hour_ago = pressure
+                    break
+            
+            if three_hour_ago is None:
+                three_hour_ago = pressure_readings[-1][0]
+            
+            pressure_change = current_pressure - three_hour_ago
+            
+            # Enhanced scoring based on pressure change rate
+            if pressure_change <= -0.10:  # Rapidly falling
+                score = 4
+                trend = "falling_rapidly"
+                description = "Pressure falling rapidly - fish extremely active"
+            elif pressure_change <= -0.05:  # Moderately falling
+                score = 3
+                trend = "falling_moderate"
+                description = "Pressure falling - increased fish activity"
+            elif pressure_change <= -0.02:  # Slowly falling
+                score = 2
+                trend = "falling_slow"
+                description = "Pressure dropping slowly - fish more active"
+            elif abs(pressure_change) <= 0.02:  # Stable
+                score = 1
+                trend = "stable"
+                description = "Stable pressure - normal fish activity"
+            elif pressure_change <= 0.05:  # Slowly rising
+                score = 0
+                trend = "rising_slow"
+                description = "Pressure rising slowly - fish less active"
+            else:  # Rapidly rising
+                score = -1
+                trend = "rising_rapidly"
+                description = "Pressure rising rapidly - fish inactive"
+            
+            return {
+                'score': max(0, score),
+                'trend': trend,
+                'description': description,
+                'pressure_change': pressure_change,
+                'current_pressure': current_pressure,
+                'confidence': 0.9 if len(pressure_readings) >= 6 else 0.6
+            }
+            
+        except Exception as e:
+            log.error(f"Error analyzing pressure trend: {e}")
+            return self._score_pressure_conditions_basic(marine_conditions)
+
+    def analyze_tide_conditions_real(self, period, db_manager):
+        """
+        REPLACEMENT for _score_tide_conditions()
+        Real tide data integration using Phase I tide predictions
+        """
         
-        # Simplified pressure trend calculation
-        # In production, this would analyze pressure change over last 3 hours
-        pressure_change = 0  # Placeholder
-        
-        if pressure_change < -0.05:  # Falling fast
-            score = 3
-            factor = "Pressure falling rapidly - fish very active"
-        elif pressure_change < -0.02:  # Falling slowly
-            score = 2
-            factor = "Pressure falling - increased fish activity"
-        elif abs(pressure_change) <= 0.02:  # Stable
-            score = 1
-            factor = "Stable pressure - normal activity"
-        else:  # Rising
-            score = 0
-            factor = "Rising pressure - fish less active"
-        
-        return score, factor
-    
-    def _score_tide_conditions(self, period, marine_conditions):
-        """Score tide movement conditions"""
-        
-        # This would analyze tide table data for the period
-        # Simplified for now
-        
-        # Assume moving water periods are best
-        period_hour = period['period_start_hour']
-        
-        # Simplified tide scoring based on time (would use actual tide data)
-        if period_hour in [6, 7, 18, 19]:  # Typical tide change times
-            score = 2
-            factor = "Moving water - active feeding"
-        elif period_hour in [0, 12]:  # High/low tide times
-            score = 0
-            factor = "Slack tide - slow fishing"
-        else:
-            score = 1
-            factor = "Moderate tide flow"
-        
-        return score, factor
-    
+        try:
+            period_start = period['period_start_time']
+            period_end = period['period_end_time']
+            
+            # Get tide predictions from Phase I tide_table
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT tide_time, tide_type, predicted_height
+                    FROM tide_table 
+                    WHERE tide_time >= ? AND tide_time <= ?
+                    ORDER BY tide_time
+                """, (period_start - 7200, period_end + 7200))  # ±2 hours buffer
+                
+                tide_events = cursor.fetchall()
+            
+            if not tide_events:
+                # Fallback to basic time-based analysis
+                return self._score_tide_conditions_basic(period)
+            
+            # Analyze tide movement during period
+            tide_score = 0
+            tide_movement = "unknown"
+            description = "Tide data available"
+            
+            # Find tide changes within or near the period
+            for tide_time, tide_type, height in tide_events:
+                time_diff = abs(tide_time - ((period_start + period_end) / 2))
+                
+                if time_diff <= 3600:  # Within 1 hour of period center
+                    if tide_type in ['H', 'L']:  # High or Low tide
+                        tide_score = 0
+                        tide_movement = "slack"
+                        description = f"Slack tide period - {tide_type} tide near {datetime.fromtimestamp(tide_time).strftime('%I:%M %p')}"
+                        break
+                elif time_diff <= 7200:  # Within 2 hours (moving water)
+                    tide_score = 2
+                    if tide_type == 'H':
+                        tide_movement = "incoming"
+                        description = "Incoming tide - active feeding"
+                    else:
+                        tide_movement = "outgoing"
+                        description = "Outgoing tide - active feeding"
+                    break
+            
+            # If no specific tide event found, assume moderate flow
+            if tide_movement == "unknown":
+                tide_score = 1
+                tide_movement = "moderate"
+                description = "Moderate tidal flow"
+            
+            return {
+                'score': tide_score,
+                'movement': tide_movement,
+                'description': description,
+                'tide_events': len(tide_events),
+                'confidence': 0.8 if tide_events else 0.3
+            }
+            
+        except Exception as e:
+            log.error(f"Error analyzing tide conditions: {e}")
+            return self._score_tide_conditions_basic(period)
+
     def _score_time_of_day(self, period):
         """Score based on time of day feeding patterns"""
         
@@ -914,6 +1535,911 @@ class FishingForecastGenerator:
         
         factor_text = "; ".join(factors) if factors else None
         return score, factor_text
+
+    def generate_star_display(self, rating):
+        """Generate visual star display for fishing activity rating"""
+        
+        rating = max(1, min(5, int(rating)))
+        
+        filled_stars = '★' * rating
+        empty_stars = '☆' * (5 - rating)
+        
+        return {
+            'rating': rating,
+            'stars_visual': filled_stars + empty_stars,
+            'stars_filled': filled_stars,
+            'stars_empty': empty_stars,
+            'rating_text': f"{rating}/5 stars",
+            'rating_fraction': f"{rating}/5"
+        }
+
+    def _score_pressure_conditions_basic(self, marine_conditions):
+        """Basic pressure analysis when historical data unavailable"""
+        
+        current_pressure = marine_conditions.get('current_pressure', 30.0)
+        
+        # Simplified scoring based on absolute pressure
+        if current_pressure < 29.80:
+            score = 3
+            trend = "low_pressure"
+            description = "Low pressure system - active fishing"
+        elif current_pressure > 30.20:
+            score = 1
+            trend = "high_pressure"
+            description = "High pressure system - slower fishing"
+        else:
+            score = 2
+            trend = "normal_pressure"
+            description = "Normal pressure - moderate activity"
+        
+        return {
+            'score': score,
+            'trend': trend,
+            'description': description,
+            'pressure_change': 0.0,
+            'current_pressure': current_pressure,
+            'confidence': 0.4
+        }
+
+    def _score_tide_conditions_basic(self, period):
+        """Basic tide analysis when real tide data unavailable"""
+        
+        period_hour = period['period_start_hour']
+        
+        # Simplified scoring based on typical tide times
+        if period_hour in [6, 7, 18, 19]:  # Typical tide change times
+            score = 2
+            movement = "changing"
+            description = "Estimated tide change - active period"
+        elif period_hour in [0, 12]:  # Typical high/low times
+            score = 0
+            movement = "slack"
+            description = "Estimated slack tide - slower period"
+        else:
+            score = 1
+            movement = "moderate"
+            description = "Moderate tidal flow estimated"
+        
+        return {
+            'score': score,
+            'movement': movement,
+            'description': description,
+            'tide_events': 0,
+            'confidence': 0.3
+        }
+
+    def predict_species_activity_enhanced(self, period, pressure_analysis, tide_analysis, category_config):
+        """Enhanced species activity prediction with detailed factors"""
+        
+        species_list = category_config.get('species', ['Mixed'])
+        pressure_pref = category_config.get('pressure_preference', 'stable')
+        tide_relevance = category_config.get('tide_relevance', True)
+        
+        activity_factors = []
+        activity_score = 0
+        
+        # Pressure preference matching
+        if pressure_pref == 'falling' and 'falling' in pressure_analysis['trend']:
+            activity_score += 2
+            activity_factors.append(f"Target species prefer falling pressure")
+        elif pressure_pref == 'stable' and pressure_analysis['trend'] == 'stable':
+            activity_score += 1
+            activity_factors.append(f"Target species prefer stable pressure")
+        elif pressure_pref == 'rising' and 'rising' in pressure_analysis['trend']:
+            activity_score += 1
+            activity_factors.append(f"Target species prefer rising pressure")
+        
+        # Tide relevance
+        if tide_relevance and tide_analysis['score'] >= 2:
+            activity_score += 1
+            activity_factors.append(f"Good tidal movement for {species_list[0]}")
+        elif not tide_relevance:
+            activity_factors.append(f"Freshwater species - tide independent")
+        
+        # Time-based species activity
+        period_name = period['period_name']
+        if period_name in ['early_morning', 'evening']:
+            activity_score += 1
+            activity_factors.append(f"Prime feeding time for most species")
+        
+        # Convert to activity level
+        if activity_score >= 4:
+            activity_level = 'very_high'
+            activity_text = 'Very High'
+        elif activity_score >= 3:
+            activity_level = 'high'
+            activity_text = 'High'
+        elif activity_score >= 2:
+            activity_level = 'moderate'
+            activity_text = 'Moderate'
+        elif activity_score >= 1:
+            activity_level = 'low'
+            activity_text = 'Low'
+        else:
+            activity_level = 'very_low'
+            activity_text = 'Very Low'
+        
+        return {
+            'level': activity_level,
+            'text': activity_text,
+            'score': activity_score,
+            'factors': activity_factors,
+            'target_species': species_list[:3],  # Top 3 species
+            'confidence': 0.7
+        }
+
+    def generate_comprehensive_fishing_description(self, rating, pressure_analysis, tide_analysis, species_activity, period):
+        """Generate detailed human-readable fishing condition descriptions"""
+        
+        period_name = period['period_name'].replace('_', ' ').title()
+        
+        # Base quality terms
+        quality_terms = {
+            5: "Excellent",
+            4: "Good",
+            3: "Fair", 
+            2: "Poor",
+            1: "Slow"
+        }
+        
+        base_quality = quality_terms.get(rating, "Unknown")
+        
+        # Build description components
+        components = [base_quality, "fishing"]
+        
+        # Add pressure component
+        if pressure_analysis['score'] >= 3:
+            components.append(f"({pressure_analysis['description'].lower()})")
+        
+        # Add tide component if relevant
+        if tide_analysis['score'] >= 2:
+            components.append(f"with {tide_analysis['movement']} tide")
+        elif tide_analysis['score'] == 0:
+            components.append("during slack tide")
+        
+        # Add species activity
+        if species_activity['level'] in ['high', 'very_high']:
+            components.append(f"- {species_activity['text'].lower()} activity expected")
+        
+        # Add period context
+        if period['period_name'] in ['early_morning', 'evening']:
+            components.append("during prime feeding time")
+        
+        return " ".join(components)
+
+    def _score_fishing_period_basic(self, period, marine_conditions, category_config):
+        """Basic scoring fallback when enhanced analysis fails"""
+        
+        # Simple time-based scoring
+        period_name = period['period_name']
+        
+        if period_name in ['early_morning', 'evening']:
+            rating = 4
+            conditions_text = "Good"
+        elif period_name in ['morning', 'afternoon']:
+            rating = 3
+            conditions_text = "Fair"
+        else:
+            rating = 2
+            conditions_text = "Poor"
+        
+        star_display = self.generate_star_display(rating)
+        
+        enhanced_period = period.copy()
+        enhanced_period.update({
+            'activity_rating': rating,
+            'activity_stars': star_display['stars_visual'],
+            'conditions_text': conditions_text,
+            'description': f"{conditions_text} fishing during {period_name.replace('_', ' ')}",
+            'species_activity': 'Moderate',
+            'confidence': 0.3,
+            'generated_time': int(time.time())
+        })
+        
+        return enhanced_period
+
+    def store_fishing_forecasts(self, spot_id, forecast_data, db_manager):
+        """Store fishing forecasts in database using WeeWX patterns"""
+        
+        try:
+            with db_manager.connection.cursor() as cursor:
+                # Clear existing forecasts for this spot
+                cursor.execute("""
+                    DELETE FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ?
+                """, (spot_id,))
+                
+                # Insert new forecast data
+                for forecast_period in forecast_data:
+                    cursor.execute("""
+                        INSERT INTO marine_forecast_fishing_data (
+                            spot_id, forecast_date, period_name,
+                            period_start_hour, period_end_hour, generated_time,
+                            pressure_trend, pressure_change, tide_movement,
+                            species_activity, activity_rating, activity_stars,
+                            conditions_text, description, best_species, confidence
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        spot_id,
+                        forecast_period['forecast_date'],
+                        forecast_period['period_name'],
+                        forecast_period['period_start_hour'],
+                        forecast_period['period_end_hour'],
+                        forecast_period['generated_time'],
+                        forecast_period.get('pressure_analysis', {}).get('trend', 'unknown'),
+                        forecast_period.get('pressure_analysis', {}).get('pressure_change', 0.0),
+                        forecast_period.get('tide_analysis', {}).get('movement', 'unknown'),
+                        forecast_period['species_activity'],
+                        forecast_period['activity_rating'],
+                        forecast_period['activity_stars'],
+                        forecast_period['conditions_text'],
+                        forecast_period['description'],
+                        json.dumps(forecast_period.get('species_analysis', {}).get('target_species', [])),
+                        forecast_period['confidence']
+                    ))
+                
+                db_manager.connection.commit()
+                log.debug(f"Stored {len(forecast_data)} fishing forecasts for spot_id {spot_id}")
+                return True
+                
+        except Exception as e:
+            log.error(f"Error storing fishing forecasts for spot_id {spot_id}: {e}")
+            db_manager.connection.rollback()
+            return False
+
+    def get_current_fishing_forecast(self, spot_id, db_manager, days_ahead=3):
+        """Get current fishing forecast for a spot from database"""
+        
+        try:
+            current_time = int(time.time())
+            end_time = current_time + (days_ahead * 86400)
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT forecast_date, period_name, period_start_hour, period_end_hour,
+                        pressure_trend, tide_movement, species_activity,
+                        activity_rating, activity_stars, conditions_text, description,
+                        best_species, confidence
+                    FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ? 
+                    AND forecast_date >= ? 
+                    AND forecast_date <= ?
+                    ORDER BY forecast_date, period_start_hour
+                """, (spot_id, current_time - (current_time % 86400), end_time))
+                
+                forecasts = []
+                for row in cursor.fetchall():
+                    forecast = {
+                        'forecast_date': row[0],
+                        'period_name': row[1],
+                        'period_display': row[1].replace('_', ' ').title(),
+                        'period_start_hour': row[2],
+                        'period_end_hour': row[3],
+                        'pressure_trend': row[4],
+                        'tide_movement': row[5],
+                        'species_activity': row[6],
+                        'activity_rating': row[7],
+                        'activity_stars': row[8],
+                        'conditions_text': row[9],
+                        'description': row[10],
+                        'best_species': json.loads(row[11]) if row[11] else [],
+                        'confidence': row[12],
+                        'formatted_date': datetime.fromtimestamp(row[0]).strftime('%m/%d'),
+                        'time_range': f"{row[2]:02d}:00-{row[3]:02d}:00"
+                    }
+                    forecasts.append(forecast)
+                
+                return forecasts
+                
+        except Exception as e:
+            log.error(f"Error retrieving fishing forecast for spot_id {spot_id}: {e}")
+            return []
+
+    def find_next_good_fishing_period(self, spot_id, db_manager, min_rating=4):
+        """Find the next fishing period with rating >= min_rating"""
+        
+        try:
+            current_time = int(time.time())
+            current_hour = datetime.fromtimestamp(current_time).hour
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT forecast_date, period_name, period_start_hour,
+                        activity_rating, activity_stars, conditions_text, description
+                    FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ? 
+                    AND (forecast_date > ? OR 
+                        (forecast_date = ? AND period_start_hour > ?))
+                    AND activity_rating >= ?
+                    ORDER BY forecast_date, period_start_hour
+                    LIMIT 1
+                """, (
+                    spot_id, 
+                    current_time - (current_time % 86400),
+                    current_time - (current_time % 86400),
+                    current_hour,
+                    min_rating
+                ))
+                
+                row = cursor.fetchone()
+                if row:
+                    forecast_date, period_name, start_hour = row[0], row[1], row[2]
+                    period_time = forecast_date + (start_hour * 3600)
+                    hours_away = (period_time - current_time) / 3600
+                    
+                    return {
+                        'found': True,
+                        'period_name': period_name.replace('_', ' ').title(),
+                        'formatted_time': datetime.fromtimestamp(period_time).strftime('%a %I:%M %p'),
+                        'hours_away': round(hours_away, 1),
+                        'activity_rating': row[3],
+                        'activity_stars': row[4],
+                        'conditions_text': row[5],
+                        'description': row[6]
+                    }
+                else:
+                    return {
+                        'found': False,
+                        'message': f'No {min_rating}+ star periods in next 3 days'
+                    }
+                    
+        except Exception as e:
+            log.error(f"Error finding next good fishing period for spot_id {spot_id}: {e}")
+            return {'found': False, 'message': 'Error retrieving forecast'}
+
+    def get_today_fishing_summary(self, spot_id, db_manager):
+        """Get summary of today's fishing conditions"""
+        
+        try:
+            # Get today's date range
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT activity_rating, conditions_text, period_name, description
+                    FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ? 
+                    AND forecast_date >= ? 
+                    AND forecast_date < ?
+                    ORDER BY activity_rating DESC
+                """, (spot_id, int(today_start.timestamp()), int(today_end.timestamp())))
+                
+                forecasts = cursor.fetchall()
+                
+                if not forecasts:
+                    return {
+                        'status': 'No forecast available',
+                        'summary': 'No fishing data for today'
+                    }
+                
+                # Calculate summary stats
+                ratings = [f[0] for f in forecasts]
+                max_rating = max(ratings)
+                avg_rating = sum(ratings) / len(ratings)
+                
+                # Get best period details
+                best_period = forecasts[0]  # Already ordered by rating DESC
+                
+                # Generate summary text
+                if max_rating >= 4:
+                    status = 'Good fishing today'
+                elif max_rating >= 3:
+                    status = 'Fair fishing today'
+                else:
+                    status = 'Slow fishing today'
+                
+                return {
+                    'status': status,
+                    'max_rating': max_rating,
+                    'avg_rating': round(avg_rating, 1),
+                    'max_rating_stars': '★' * max_rating + '☆' * (5 - max_rating),
+                    'best_period': best_period[2].replace('_', ' ').title(),
+                    'best_conditions': best_period[1],
+                    'best_description': best_period[3],
+                    'total_periods': len(forecasts)
+                }
+                
+        except Exception as e:
+            log.error(f"Error getting today's fishing summary for spot_id {spot_id}: {e}")
+            return {
+                'status': 'Error retrieving summary',
+                'summary': 'Unable to load today\'s fishing forecast'
+            }
+
+    def get_pressure_trend_analysis(self, spot_id, db_manager, hours_back=6):
+        """Get detailed pressure trend analysis for display purposes"""
+        
+        try:
+            current_time = int(time.time())
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT marine_barometric_pressure, dateTime
+                    FROM ndbc_data 
+                    WHERE dateTime >= ? 
+                    AND marine_barometric_pressure IS NOT NULL
+                    ORDER BY dateTime DESC
+                    LIMIT ?
+                """, (current_time - (hours_back * 3600), hours_back * 2))
+                
+                pressure_readings = cursor.fetchall()
+            
+            if len(pressure_readings) < 3:
+                return {
+                    'status': 'Insufficient data',
+                    'trend': 'unknown',
+                    'confidence': 0.0
+                }
+            
+            # Calculate pressure changes over different time periods
+            current_pressure = pressure_readings[0][0]
+            
+            # 1-hour change
+            one_hour_change = 0
+            for pressure, timestamp in pressure_readings[1:]:
+                if current_time - timestamp >= 3600:  # 1 hour
+                    one_hour_change = current_pressure - pressure
+                    break
+            
+            # 3-hour change
+            three_hour_change = 0
+            for pressure, timestamp in pressure_readings:
+                if current_time - timestamp >= 10800:  # 3 hours
+                    three_hour_change = current_pressure - pressure
+                    break
+            
+            # 6-hour change
+            six_hour_change = 0
+            if len(pressure_readings) > 0:
+                six_hour_change = current_pressure - pressure_readings[-1][0]
+            
+            # Determine overall trend
+            if three_hour_change <= -0.05:
+                trend = 'falling_fast'
+                trend_text = 'Falling rapidly'
+                fishing_impact = 'Excellent for fishing'
+            elif three_hour_change <= -0.02:
+                trend = 'falling'
+                trend_text = 'Falling'
+                fishing_impact = 'Good for fishing'
+            elif abs(three_hour_change) <= 0.02:
+                trend = 'stable'
+                trend_text = 'Stable'
+                fishing_impact = 'Normal conditions'
+            elif three_hour_change >= 0.05:
+                trend = 'rising_fast'
+                trend_text = 'Rising rapidly'
+                fishing_impact = 'Poor for fishing'
+            else:
+                trend = 'rising'
+                trend_text = 'Rising'
+                fishing_impact = 'Below average'
+            
+            return {
+                'status': 'Available',
+                'current_pressure': round(current_pressure, 2),
+                'trend': trend,
+                'trend_text': trend_text,
+                'fishing_impact': fishing_impact,
+                'changes': {
+                    '1_hour': round(one_hour_change, 3),
+                    '3_hour': round(three_hour_change, 3),
+                    '6_hour': round(six_hour_change, 3)
+                },
+                'readings_count': len(pressure_readings),
+                'confidence': min(1.0, len(pressure_readings) / 6)
+            }
+            
+        except Exception as e:
+            log.error(f"Error getting pressure trend analysis: {e}")
+            return {
+                'status': 'Error',
+                'trend': 'unknown',
+                'confidence': 0.0
+            }
+
+    def get_tide_schedule_for_fishing(self, spot_id, db_manager, days_ahead=3):
+        """Get tide schedule optimized for fishing planning"""
+        
+        try:
+            current_time = int(time.time())
+            end_time = current_time + (days_ahead * 86400)
+            
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT tide_time, tide_type, predicted_height, datum
+                    FROM tide_table 
+                    WHERE tide_time >= ? AND tide_time <= ?
+                    ORDER BY tide_time
+                """, (current_time, end_time))
+                
+                tide_events = cursor.fetchall()
+            
+            if not tide_events:
+                return {
+                    'status': 'No tide data available',
+                    'events': []
+                }
+            
+            # Process tide events for fishing optimization
+            fishing_tide_events = []
+            
+            for i, (tide_time, tide_type, height, datum) in enumerate(tide_events):
+                # Calculate fishing windows around each tide change
+                tide_dt = datetime.fromtimestamp(tide_time)
+                
+                # 2-hour window before tide change (moving water)
+                start_fishing = tide_time - 7200
+                # 2-hour window after tide change
+                end_fishing = tide_time + 7200
+                
+                # Determine fishing quality based on tide type and height
+                if tide_type == 'H':  # High tide
+                    tide_description = f"High tide {height:.1f}ft"
+                    if height >= 6.0:
+                        fishing_quality = 'excellent'
+                    elif height >= 4.0:
+                        fishing_quality = 'good'
+                    else:
+                        fishing_quality = 'fair'
+                else:  # Low tide
+                    tide_description = f"Low tide {height:.1f}ft"
+                    if height <= 1.0:
+                        fishing_quality = 'fair'  # Very low water
+                    else:
+                        fishing_quality = 'good'
+                
+                fishing_tide_events.append({
+                    'tide_time': tide_time,
+                    'tide_type': tide_type,
+                    'tide_height': height,
+                    'tide_description': tide_description,
+                    'formatted_time': tide_dt.strftime('%a %I:%M %p'),
+                    'fishing_window_start': datetime.fromtimestamp(start_fishing).strftime('%I:%M %p'),
+                    'fishing_window_end': datetime.fromtimestamp(end_fishing).strftime('%I:%M %p'),
+                    'fishing_quality': fishing_quality,
+                    'moving_water_period': f"{datetime.fromtimestamp(start_fishing).strftime('%I:%M %p')} - {datetime.fromtimestamp(end_fishing).strftime('%I:%M %p')}"
+                })
+            
+            return {
+                'status': 'Available',
+                'events': fishing_tide_events,
+                'total_events': len(fishing_tide_events)
+            }
+            
+        except Exception as e:
+            log.error(f"Error getting tide schedule for fishing: {e}")
+            return {
+                'status': 'Error retrieving tide data',
+                'events': []
+            }
+
+    def get_species_specific_recommendations(self, spot_id, target_category, db_manager):
+        """Get species-specific fishing recommendations based on current conditions"""
+        
+        try:
+            # Get category configuration
+            category_config = self.fish_categories.get(target_category, {})
+            species_list = category_config.get('species', ['Mixed'])
+            pressure_pref = category_config.get('pressure_preference', 'stable')
+            
+            # Get current conditions
+            current_forecasts = self.get_current_fishing_forecast(spot_id, db_manager, 1)
+            if not current_forecasts:
+                return {
+                    'status': 'No current forecast available',
+                    'recommendations': []
+                }
+            
+            # Get today's forecasts only
+            today = int(time.time()) - (int(time.time()) % 86400)
+            today_forecasts = [f for f in current_forecasts if f['forecast_date'] == today]
+            
+            if not today_forecasts:
+                return {
+                    'status': 'No forecast for today',
+                    'recommendations': []
+                }
+            
+            # Generate species-specific recommendations
+            recommendations = []
+            
+            for species in species_list[:3]:  # Top 3 species
+                species_recommendations = []
+                
+                # Find best periods for this species
+                best_periods = [f for f in today_forecasts if f['activity_rating'] >= 3]
+                best_periods.sort(key=lambda x: x['activity_rating'], reverse=True)
+                
+                if best_periods:
+                    best_period = best_periods[0]
+                    species_recommendations.append({
+                        'type': 'best_time',
+                        'text': f"Best time for {species}: {best_period['period_display']} ({best_period['activity_stars']})",
+                        'period': best_period['period_display'],
+                        'rating': best_period['activity_rating']
+                    })
+                
+                # Pressure-based recommendations
+                if pressure_pref == 'falling':
+                    species_recommendations.append({
+                        'type': 'pressure_tip',
+                        'text': f"{species} are most active during falling barometric pressure",
+                        'advice': "Look for periods with falling pressure trends"
+                    })
+                
+                # Tide-based recommendations
+                if category_config.get('tide_relevance', True):
+                    species_recommendations.append({
+                        'type': 'tide_tip',
+                        'text': f"{species} feed actively during moving water",
+                        'advice': "Fish 2 hours before/after tide changes"
+                    })
+                
+                recommendations.append({
+                    'species': species,
+                    'recommendations': species_recommendations
+                })
+            
+            return {
+                'status': 'Available',
+                'target_category': target_category,
+                'recommendations': recommendations,
+                'general_advice': self._get_general_fishing_advice(today_forecasts)
+            }
+            
+        except Exception as e:
+            log.error(f"Error getting species recommendations: {e}")
+            return {
+                'status': 'Error generating recommendations',
+                'recommendations': []
+            }
+
+    def _get_general_fishing_advice(self, today_forecasts):
+        """Generate general fishing advice based on today's conditions"""
+        
+        if not today_forecasts:
+            return ["No forecast data available for advice"]
+        
+        advice = []
+        
+        # Find best and worst periods
+        best_rating = max(f['activity_rating'] for f in today_forecasts)
+        worst_rating = min(f['activity_rating'] for f in today_forecasts)
+        
+        if best_rating >= 4:
+            best_periods = [f for f in today_forecasts if f['activity_rating'] >= 4]
+            period_names = [f['period_display'] for f in best_periods]
+            advice.append(f"Excellent fishing expected during: {', '.join(period_names)}")
+        
+        if worst_rating <= 2:
+            worst_periods = [f for f in today_forecasts if f['activity_rating'] <= 2]
+            period_names = [f['period_display'] for f in worst_periods]
+            advice.append(f"Avoid fishing during: {', '.join(period_names)}")
+        
+        # Check for pressure trends
+        pressure_trends = [f.get('pressure_trend', 'unknown') for f in today_forecasts]
+        if 'falling' in pressure_trends:
+            advice.append("Falling pressure detected - fish should be more active")
+        elif 'rising' in pressure_trends:
+            advice.append("Rising pressure may reduce fish activity")
+        
+        # Check for tide patterns
+        tide_movements = [f.get('tide_movement', 'unknown') for f in today_forecasts]
+        if 'incoming' in tide_movements or 'outgoing' in tide_movements:
+            advice.append("Moving water periods available - good for active feeding")
+        
+        if not advice:
+            advice.append("Moderate fishing conditions expected today")
+        
+        return advice
+
+    def export_fishing_forecast_summary(self, spot_id, db_manager, format='dict'):
+        """Export complete fishing forecast summary for external use"""
+        
+        try:
+            # Get all forecast components
+            current_forecasts = self.get_current_fishing_forecast(spot_id, db_manager)
+            next_good_period = self.find_next_good_fishing_period(spot_id, db_manager)
+            today_summary = self.get_today_fishing_summary(spot_id, db_manager)
+            pressure_analysis = self.get_pressure_trend_analysis(spot_id, db_manager)
+            tide_schedule = self.get_tide_schedule_for_fishing(spot_id, db_manager)
+            
+            # Get spot information
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT name, latitude, longitude, location_type, target_category
+                    FROM marine_forecast_fishing_spots 
+                    WHERE id = ?
+                """, (spot_id,))
+                
+                spot_info = cursor.fetchone()
+            
+            if not spot_info:
+                return {'error': 'Spot not found'}
+            
+            # Compile complete summary
+            summary = {
+                'spot_info': {
+                    'id': spot_id,
+                    'name': spot_info[0],
+                    'latitude': spot_info[1],
+                    'longitude': spot_info[2],
+                    'location_type': spot_info[3],
+                    'target_category': spot_info[4]
+                },
+                'generated_time': datetime.now().isoformat(),
+                'forecasts': current_forecasts,
+                'next_good_period': next_good_period,
+                'today_summary': today_summary,
+                'pressure_analysis': pressure_analysis,
+                'tide_schedule': tide_schedule,
+                'forecast_count': len(current_forecasts)
+            }
+            
+            if format == 'json':
+                return json.dumps(summary, indent=2)
+            else:
+                return summary
+                
+        except Exception as e:
+            log.error(f"Error exporting fishing forecast summary: {e}")
+            return {'error': f'Export failed: {str(e)}'}
+
+    def integrate_fishing_enhancements():
+        """
+        Instructions for integrating these methods into the existing FishingForecastGenerator class:
+        
+        1. Add all the above methods to the existing FishingForecastGenerator class in surf_fishing.py
+        2. Replace _score_fishing_period with score_fishing_period_complete
+        3. Replace _score_pressure_conditions with analyze_pressure_trend_enhanced  
+        4. Replace _score_tide_conditions with analyze_tide_conditions_real
+        5. Add the new FishingForecastSearchList class to surf_fishing.py
+        6. Update the main service to use the enhanced methods
+        
+        Example usage in service:
+        ```python
+        # Enhanced forecast generation
+        fishing_forecast = self.fishing_generator.generate_fishing_forecast(spot, marine_conditions)
+        
+        # Store with enhanced data
+        self.fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast, self.db_manager)
+        
+        # Get enhanced retrievals
+        current_forecast = self.fishing_generator.get_current_fishing_forecast(spot['id'], self.db_manager)
+        next_good = self.fishing_generator.find_next_good_fishing_period(spot['id'], self.db_manager)
+        ```
+        """
+        pass
+
+
+class FishingForecastSearchList(SearchList):
+    """
+    NEW CLASS: SearchList extension for WeeWX template integration
+    Provides fishing forecast data to WeeWX templates
+    """
+    
+    def __init__(self, generator):
+        super(FishingForecastSearchList, self).__init__(generator)
+        
+    def get_extension_list(self, timespan, db_lookup):
+        """Return search list with fishing forecast data for templates"""
+        
+        try:
+            # Get database manager
+            db_manager = db_lookup()
+            
+            # Get all active fishing spots
+            fishing_spots = self._get_active_fishing_spots(db_manager)
+            
+            # Build forecast data for each spot
+            fishing_forecasts = {}
+            for spot in fishing_spots:
+                spot_data = self._get_spot_forecast_data(spot, db_manager)
+                if spot_data:
+                    fishing_forecasts[spot['name']] = spot_data
+            
+            # Get overall summary
+            summary_data = self._get_overall_fishing_summary(fishing_forecasts)
+            
+            return [{
+                'fishing_forecasts': fishing_forecasts,
+                'fishing_summary': summary_data,
+                'fishing_spots_count': len(fishing_spots),
+                'last_fishing_update': self._get_last_update_time(db_manager)
+            }]
+            
+        except Exception as e:
+            log.error(f"Error in FishingForecastSearchList: {e}")
+            return [{}]
+    
+    def _get_active_fishing_spots(self, db_manager):
+        """Get all active fishing spots from database"""
+        
+        with db_manager.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, name, latitude, longitude, location_type, target_category 
+                FROM marine_forecast_fishing_spots 
+                WHERE active = 1 
+                ORDER BY name
+            """)
+            
+            spots = []
+            for row in cursor.fetchall():
+                spots.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'latitude': row[2],
+                    'longitude': row[3],
+                    'location_type': row[4],
+                    'target_category': row[5]
+                })
+            
+            return spots
+    
+    def _get_spot_forecast_data(self, spot, db_manager):
+        """Get complete forecast data for a specific fishing spot"""
+        
+        try:
+            # Create FishingForecastGenerator instance to use its methods
+            generator = FishingForecastGenerator(self.generator.config_dict)
+            
+            return {
+                'spot_info': spot,
+                'current_forecast': generator.get_current_fishing_forecast(spot['id'], db_manager),
+                'next_good_period': generator.find_next_good_fishing_period(spot['id'], db_manager),
+                'today_summary': generator.get_today_fishing_summary(spot['id'], db_manager)
+            }
+            
+        except Exception as e:
+            log.error(f"Error getting fishing forecast data for {spot['name']}: {e}")
+            return None
+    
+    def _get_overall_fishing_summary(self, fishing_forecasts):
+        """Generate overall fishing summary across all spots"""
+        
+        if not fishing_forecasts:
+            return {'status': 'No fishing spots configured'}
+        
+        best_rating = 0
+        best_spot = None
+        
+        for spot_name, spot_data in fishing_forecasts.items():
+            today_summary = spot_data.get('today_summary', {})
+            max_rating = today_summary.get('max_rating', 0)
+            
+            if max_rating > best_rating:
+                best_rating = max_rating
+                best_spot = spot_name
+        
+        if best_rating >= 4:
+            status = f'Excellent fishing at {best_spot}'
+        elif best_rating >= 3:
+            status = f'Good fishing at {best_spot}'
+        elif best_rating >= 2:
+            status = f'Fair fishing available'
+        else:
+            status = 'Slow fishing conditions'
+        
+        return {
+            'status': status,
+            'best_rating': best_rating,
+            'best_spot': best_spot,
+            'total_spots': len(fishing_forecasts)
+        }
+    
+    def _get_last_update_time(self, db_manager):
+        """Get timestamp of last forecast update"""
+        
+        with db_manager.connection.cursor() as cursor:
+            cursor.execute("SELECT MAX(generated_time) FROM marine_forecast_fishing_data")
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                return datetime.fromtimestamp(result[0]).strftime('%m/%d %I:%M %p')
+            
+            return 'Never'
 
 
 class SurfFishingService(StdService):
