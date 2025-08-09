@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Seahorse 🐟
+# Magic Animal: Aldabra Tortoise
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1494,81 +1494,74 @@ class FishingForecastSearchList(weewx.cheetahgenerator.SearchList):
             'total_periods': len(today_forecasts)
         }
 
-
-# Test function for development/debugging
-def test_forecast_generation():
-    """Test forecast generation functionality"""
-    
-    print("Testing Surf & Fishing Forecast Generation")
-    print("Magic Animal: Seahorse 🐟")
-    print("-" * 50)
-    
-    # Test GRIB processor
-    config_dict = {}
-    grib_processor = GRIBProcessor(config_dict)
-    print(f"GRIB processing available: {grib_processor.is_available()}")
-    print(f"GRIB library: {grib_processor.grib_library}")
-    
-    # Test forecast generators
-    surf_generator = SurfForecastGenerator(config_dict)
-    fishing_generator = FishingForecastGenerator(config_dict)
-    
-    print("Forecast generators initialized successfully")
-    
-    # Mock data for testing
-    test_spot = {
-        'name': 'Test Beach',
-        'latitude': 34.0522,
-        'longitude': -118.2437,
-        'bottom_type': 'sand',
-        'exposure': 'exposed'
-    }
-    
-    test_marine_conditions = {
-        'current_wave_height': 3.5,
-        'current_wave_period': 8.0,
-        'current_wind_speed': 10.0,
-        'current_pressure': 30.15
-    }
-    
-    # Test surf forecast
-    print("\nTesting surf forecast generation...")
-    surf_forecast = surf_generator.generate_surf_forecast(
-        test_spot, test_marine_conditions, []
-    )
-    print(f"Generated {len(surf_forecast)} surf forecast periods")
-    
-    # Test fishing forecast
-    print("\nTesting fishing forecast generation...")
-    fishing_forecast = fishing_generator.generate_fishing_forecast(
-        test_spot, test_marine_conditions
-    )
-    print(f"Generated {len(fishing_forecast)} fishing forecast periods")
-    
-    print("\nTest completed successfully!")
-
-
-if __name__ == "__main__":
-    # Run tests if executed directly
-    test_forecast_generation()_i_marine_conditions(spot['latitude'], spot['longitude'])
+    def test_forecast_generation():
+        """Test forecast generation functionality"""
         
-        # Get WaveWatch III forecast data
-        wavewatch_data = self.wavewatch_collector.fetch_forecast_data(
-            spot['latitude'], spot['longitude']
+        print("Testing Surf & Fishing Forecast Generation")
+        print("Magic Animal: Seahorse 🐟")
+        print("-" * 50)
+        
+        # Test GRIB processor
+        config_dict = {}
+        grib_processor = GRIBProcessor(config_dict)
+        print(f"GRIB processing available: {grib_processor.is_available()}")
+        print(f"GRIB library: {grib_processor.grib_library}")
+        
+        # Test forecast generators
+        surf_generator = SurfForecastGenerator(config_dict)
+        fishing_generator = FishingForecastGenerator(config_dict)
+        
+        print("Forecast generators initialized successfully")
+        
+        # Mock data for testing
+        test_spot = {
+            'name': 'Test Beach',
+            'latitude': 34.0522,
+            'longitude': -118.2437,
+            'bottom_type': 'sand',
+            'exposure': 'exposed'
+        }
+        
+        test_marine_conditions = {
+            'current_wave_height': 3.5,
+            'current_wave_period': 8.0,
+            'current_wind_speed': 10.0,
+            'current_pressure': 30.15
+        }
+        
+        # Test surf forecast
+        print("\nTesting surf forecast generation...")
+        surf_forecast = surf_generator.generate_surf_forecast(
+            test_spot, test_marine_conditions, []
         )
+        print(f"Generated {len(surf_forecast)} surf forecast periods")
         
-        # Generate surf forecast
-        surf_forecast = self.surf_generator.generate_surf_forecast(
-            spot, marine_conditions, wavewatch_data
+        # Test fishing forecast
+        print("\nTesting fishing forecast generation...")
+        fishing_forecast = fishing_generator.generate_fishing_forecast(
+            test_spot, test_marine_conditions
         )
+        print(f"Generated {len(fishing_forecast)} fishing forecast periods")
         
-        # Store forecast in database
-        self._store_surf_forecast(spot['id'], surf_forecast)
-    
+        print("\nTest completed successfully!")
+
+
+    if __name__ == "__main__":
+        # Run tests if executed directly
+        test_forecast_generation()
+
     def _generate_fishing_forecast_for_spot(self, spot):
-        """Generate fishing forecast for a specific spot"""
-        
-        log.debug(f"Generating fishing forecast for {spot['name']}")
-        
-        # Get current marine conditions from Phase I
-        marine_conditions = self._get_phase
+            """Generate fishing forecast for a specific spot"""
+            
+            log.debug(f"Generating fishing forecast for {spot['name']}")
+            
+            # Get current marine conditions from Phase I
+            marine_conditions = self._get_phase_i_marine_conditions(spot['latitude'], spot['longitude'])
+            
+            # Generate fishing forecast
+            fishing_forecast = self.fishing_generator.generate_fishing_forecast(
+                spot, marine_conditions
+            )
+            
+            # Store forecast in database
+            self._store_fishing_forecast(spot['id'], fishing_forecast)
