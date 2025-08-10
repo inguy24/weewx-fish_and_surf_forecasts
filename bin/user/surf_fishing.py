@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Jaguar
+# Magic Animal: Asian Elephant
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import weewx
 import weewx.manager
 from weewx.engine import StdService
+from weewx.cheetahgenerator import SearchList
 import weeutil.logger
 
 # Logging setup
@@ -3453,6 +3454,7 @@ class SurfFishingService(StdService):
         self.wavewatch_collector = WaveWatchDataCollector(config_dict, self.grib_processor)
         self.surf_generator = SurfForecastGenerator(config_dict)
         self.fishing_generator = FishingForecastGenerator(config_dict)
+        self.field_definitions = self.service_config.get('field_definitions', {})
         
         # Background forecast generation
         self.forecast_thread = None
@@ -3926,35 +3928,7 @@ class SurfFishingService(StdService):
             validation_result['errors'].append(f"Validation error: {str(e)}")
             validation_result['is_valid'] = False
             return validation_result
-    
-    def _load_field_definitions(self):
-        """Load field definitions from YAML following WeeWX 5.1 patterns"""
-        try:
-            # Get the directory where this service file is located
-            extension_dir = os.path.dirname(__file__)
-            fields_path = os.path.join(extension_dir, 'surf_fishing_fields.yaml')
-            
-            if not os.path.exists(fields_path):
-                log.error(f"{CORE_ICONS['warning']} Field definitions file not found: {fields_path}")
-                return {}
-            
-            with open(fields_path, 'r') as f:
-                field_definitions = yaml.safe_load(f)
-            
-            log.info(f"{CORE_ICONS['status']} Loaded field definitions from YAML")
-            return field_definitions
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} CRITICAL ERROR: Could not load field definitions: {e}")
-            # Return minimal configuration to prevent service failure
-            return {
-                'station_quality_thresholds': {
-                    'wave_data': {'excellent_distance_miles': 25, 'good_distance_miles': 50},
-                    'atmospheric_data': {'excellent_distance_miles': 50, 'good_distance_miles': 100},
-                    'tide_data': {'excellent_distance_miles': 15, 'good_distance_miles': 50}
-                }
-            }
-    
+     
     def get_optimal_sources_for_location(self, latitude, longitude):
         """Get optimal data sources for a specific location - utility method for diagnostics"""
         if not hasattr(self, 'integration_manager'):
@@ -4023,6 +3997,7 @@ class SurfFishingService(StdService):
             test_results['results']['error'] = str(e)
             return test_results
 
+    def _find_next_good_surf_session(self, forecast_data):
         """Find next surf session with rating >= 3"""
         
         for forecast in forecast_data:
@@ -4036,17 +4011,18 @@ class SurfFishingService(StdService):
                 }
         return None
 
-            """Generate fishing forecast for a specific spot"""
-            
-            log.debug(f"Generating fishing forecast for {spot['name']}")
-            
-            # Get current marine conditions from Phase I
-            marine_conditions = self._get_phase_i_marine_conditions(spot['latitude'], spot['longitude'])
-            
-            # Generate fishing forecast
-            fishing_forecast = self.fishing_generator.generate_fishing_forecast(
-                spot, marine_conditions
-            )
-            
-            # Store forecast in database
-            self._store_fishing_forecast(spot['id'], fishing_forecast)
+    def _generate_spot_fishing_forecast(self, spot):
+        """Generate fishing forecast for a specific spot"""
+        
+        log.debug(f"Generating fishing forecast for {spot['name']}")
+        
+        # Get current marine conditions from Phase I
+        marine_conditions = self._get_phase_i_marine_conditions(spot['latitude'], spot['longitude'])
+        
+        # Generate fishing forecast
+        fishing_forecast = self.fishing_generator.generate_fishing_forecast(
+            spot, marine_conditions
+        )
+        
+        # Store forecast in database
+        self._store_fishing_forecast(spot['id'], fishing_forecast)
