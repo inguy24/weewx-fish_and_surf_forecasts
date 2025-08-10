@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Penguin
+# Magic Animal: Jaguar
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -201,6 +201,387 @@ class GRIBProcessor:
         
         return lat_idx, lon_idx
 
+
+class MarineStationIntegrationManager:
+    """Manage integration with Phase I marine station data and quality analysis"""
+    
+    def __init__(self, config_dict, field_definitions):
+        """Initialize with Phase I CONF metadata and field definitions"""
+        self.config_dict = config_dict
+        self.marine_config = config_dict.get('MarineDataService', {})
+        self.field_definitions = field_definitions
+        self.phase_i_metadata = None
+        self.quality_thresholds = None
+        self._load_phase_i_metadata()
+        self._load_quality_thresholds()
+        
+    def _load_phase_i_metadata(self):
+        """Load station metadata from Phase I CONF structure"""
+        try:
+            station_metadata = self.marine_config.get('station_metadata', {})
+            self.phase_i_metadata = {
+                'coops_stations': station_metadata.get('coops_stations', {}),
+                'ndbc_stations': station_metadata.get('ndbc_stations', {}),
+                'available': len(station_metadata) > 0
+            }
+            log.info(f"{CORE_ICONS['status']} Loaded Phase I metadata for {len(self.phase_i_metadata.get('coops_stations', {}))} CO-OPS and {len(self.phase_i_metadata.get('ndbc_stations', {}))} NDBC stations")
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error loading Phase I metadata: {e}")
+            self.phase_i_metadata = {'available': False, 'coops_stations': {}, 'ndbc_stations': {}}
+    
+    def _load_quality_thresholds(self):
+        """Load research-based quality thresholds from field definitions"""
+        try:
+            self.quality_thresholds = self.field_definitions.get('station_quality_thresholds', {})
+            log.debug(f"{CORE_ICONS['status']} Loaded station quality thresholds from YAML")
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error loading quality thresholds: {e}")
+            self.quality_thresholds = {}
+    
+    def calculate_distance(self, location_coords, station_coords):
+        """Calculate haversine distance between location and station in miles"""
+        lat1, lon1 = math.radians(location_coords[0]), math.radians(location_coords[1])
+        lat2, lon2 = math.radians(station_coords[0]), math.radians(station_coords[1])
+        
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        # Earth radius in miles
+        return 3959 * c
+    
+    def calculate_wave_quality(self, distance_miles):
+        """Research-based wave data quality scoring (García-Reyes methodology)"""
+        thresholds = self.quality_thresholds.get('wave_data', {})
+        excellent = thresholds.get('excellent_distance_miles', 25)
+        good = thresholds.get('good_distance_miles', 50) 
+        fair = thresholds.get('fair_distance_miles', 100)
+        
+        if distance_miles <= excellent:
+            return 1.0  # Excellent
+        elif distance_miles <= good:
+            return 0.8  # Good
+        elif distance_miles <= fair:
+            return 0.6  # Fair
+        else:
+            return 0.3  # Poor
+    
+    def calculate_atmospheric_quality(self, distance_miles):
+        """Research-based atmospheric data quality scoring (Bourassa methodology)"""
+        thresholds = self.quality_thresholds.get('atmospheric_data', {})
+        excellent = thresholds.get('excellent_distance_miles', 50)
+        good = thresholds.get('good_distance_miles', 100)
+        fair = thresholds.get('fair_distance_miles', 200)
+        
+        if distance_miles <= excellent:
+            return 1.0  # Excellent
+        elif distance_miles <= good:
+            return 0.8  # Good
+        elif distance_miles <= fair:
+            return 0.6  # Fair
+        else:
+            return 0.4  # Poor
+    
+    def calculate_tide_quality(self, distance_miles):
+        """Research-based tide data quality scoring"""
+        thresholds = self.quality_thresholds.get('tide_data', {})
+        excellent = thresholds.get('excellent_distance_miles', 15)
+        good = thresholds.get('good_distance_miles', 50)
+        fair = thresholds.get('fair_distance_miles', 100)
+        
+        if distance_miles <= excellent:
+            return 1.0  # Excellent
+        elif distance_miles <= good:
+            return 0.8  # Good
+        elif distance_miles <= fair:
+            return 0.6  # Fair
+        else:
+            return 0.3  # Poor
+    
+    def select_optimal_wave_source(self, location_coords):
+        """Select best wave data source for specific location"""
+        if not self.phase_i_metadata['available']:
+            return None
+            
+        ndbc_stations = self.phase_i_metadata['ndbc_stations']
+        wave_capable_stations = []
+        
+        for station_id, station_data in ndbc_stations.items():
+            if station_data.get('wave_capability') == 'true':
+                distance = self.calculate_distance(
+                    location_coords, 
+                    (float(station_data['latitude']), float(station_data['longitude']))
+                )
+                quality = self.calculate_wave_quality(distance)
+                
+                wave_capable_stations.append({
+                    'station_id': station_id,
+                    'name': station_data.get('name', station_id),
+                    'distance_miles': distance,
+                    'quality_score': quality,
+                    'latitude': station_data['latitude'],
+                    'longitude': station_data['longitude']
+                })
+        
+        if not wave_capable_stations:
+            return None
+            
+        # Return highest quality source
+        return max(wave_capable_stations, key=lambda s: s['quality_score'])
+    
+    def select_optimal_atmospheric_sources(self, location_coords, max_sources=3):
+        """Select best atmospheric data sources with multi-source fusion capability"""
+        if not self.phase_i_metadata['available']:
+            return []
+            
+        ndbc_stations = self.phase_i_metadata['ndbc_stations']
+        atmospheric_capable_stations = []
+        
+        for station_id, station_data in ndbc_stations.items():
+            if station_data.get('atmospheric_capability') == 'true':
+                distance = self.calculate_distance(
+                    location_coords,
+                    (float(station_data['latitude']), float(station_data['longitude']))
+                )
+                quality = self.calculate_atmospheric_quality(distance)
+                
+                atmospheric_capable_stations.append({
+                    'station_id': station_id,
+                    'name': station_data.get('name', station_id),
+                    'distance_miles': distance,
+                    'quality_score': quality,
+                    'latitude': station_data['latitude'],
+                    'longitude': station_data['longitude']
+                })
+        
+        # Sort by quality and return top sources
+        atmospheric_capable_stations.sort(key=lambda s: s['quality_score'], reverse=True)
+        return atmospheric_capable_stations[:max_sources]
+    
+    def select_optimal_tide_source(self, location_coords):
+        """Select best tide data source for specific location"""
+        if not self.phase_i_metadata['available']:
+            return None
+            
+        coops_stations = self.phase_i_metadata['coops_stations']
+        tide_capable_stations = []
+        
+        for station_id, station_data in coops_stations.items():
+            distance = self.calculate_distance(
+                location_coords,
+                (float(station_data['latitude']), float(station_data['longitude']))
+            )
+            quality = self.calculate_tide_quality(distance)
+            
+            tide_capable_stations.append({
+                'station_id': station_id,
+                'name': station_data.get('name', station_id),
+                'distance_miles': distance,
+                'quality_score': quality,
+                'latitude': station_data['latitude'],
+                'longitude': station_data['longitude']
+            })
+        
+        if not tide_capable_stations:
+            return None
+            
+        # Return highest quality source
+        return max(tide_capable_stations, key=lambda s: s['quality_score'])
+    
+    def get_integration_metadata_summary(self):
+        """Get summary of available station metadata for diagnostics"""
+        return {
+            'phase_i_available': self.phase_i_metadata['available'],
+            'coops_station_count': len(self.phase_i_metadata['coops_stations']),
+            'ndbc_station_count': len(self.phase_i_metadata['ndbc_stations']),
+            'wave_capable_stations': len([s for s in self.phase_i_metadata['ndbc_stations'].values() 
+                                        if s.get('wave_capability') == 'true']),
+            'atmospheric_capable_stations': len([s for s in self.phase_i_metadata['ndbc_stations'].values() 
+                                               if s.get('atmospheric_capability') == 'true'])
+        }
+    
+
+class DataFusionProcessor:
+    """Handle multi-source data fusion with quality confidence scoring"""
+    
+    def __init__(self, config_dict, field_definitions):
+        """Initialize with integration settings from CONF and field definitions"""
+        self.config_dict = config_dict
+        self.field_definitions = field_definitions
+        self.fusion_params = field_definitions.get('fusion_parameters', {})
+        self.calibration_factors = field_definitions.get('calibration_factors', {})
+        self.quality_control = field_definitions.get('quality_control', {})
+        
+    def fuse_atmospheric_data(self, sources_data):
+        """Distance-weighted interpolation for atmospheric data (Thomas methodology)"""
+        if not sources_data or len(sources_data) == 0:
+            return None
+            
+        fusion_config = self.fusion_params.get('atmospheric_fusion', {})
+        
+        # Single source - apply calibration only
+        if len(sources_data) == 1:
+            source = sources_data[0]
+            return self._apply_calibration_factors(source['data'], source.get('station_type', 'standard_buoy'))
+        
+        # Multi-source fusion with distance weighting
+        fused_data = {}
+        total_weight = 0.0
+        
+        for source in sources_data:
+            # Calculate distance-based weight
+            distance_miles = source.get('distance_miles', 999)
+            quality_score = source.get('quality_score', 0.5)
+            
+            # Weight = quality * inverse distance squared
+            weight = quality_score / max(1.0, (distance_miles / 10.0) ** 2)
+            
+            # Apply calibration to source data
+            calibrated_data = self._apply_calibration_factors(
+                source['data'], 
+                source.get('station_type', 'standard_buoy')
+            )
+            
+            # Accumulate weighted values
+            for field, value in calibrated_data.items():
+                if value is not None:
+                    if field not in fused_data:
+                        fused_data[field] = {'weighted_sum': 0.0, 'total_weight': 0.0}
+                    
+                    fused_data[field]['weighted_sum'] += value * weight
+                    fused_data[field]['total_weight'] += weight
+            
+            total_weight += weight
+        
+        # Calculate final weighted averages
+        result = {}
+        for field, accumulator in fused_data.items():
+            if accumulator['total_weight'] > 0:
+                result[field] = accumulator['weighted_sum'] / accumulator['total_weight']
+        
+        return result
+    
+    def calculate_confidence_score(self, sources, quality_scores):
+        """Calculate forecast confidence based on source quality and agreement"""
+        if not sources or len(sources) == 0:
+            return 0.0
+            
+        fusion_config = self.fusion_params.get('atmospheric_fusion', {})
+        confidence_factors = fusion_config.get('confidence_factors', {})
+        
+        # Base confidence from number of sources
+        num_sources = len(sources)
+        if num_sources == 1:
+            base_confidence = confidence_factors.get('single_source', 0.7)
+        elif num_sources == 2:
+            base_confidence = confidence_factors.get('two_sources', 0.9)
+        else:
+            base_confidence = confidence_factors.get('three_plus_sources', 1.0)
+        
+        # Adjust by average quality score
+        avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
+        
+        # Final confidence score
+        confidence = min(1.0, base_confidence * avg_quality)
+        
+        return confidence
+    
+    def validate_temporal_consistency(self, sources_data):
+        """Verify sources show similar trend directions"""
+        if len(sources_data) < 2:
+            return True  # Single source always consistent
+            
+        # Check pressure trends for consistency
+        pressure_trends = []
+        for source in sources_data:
+            pressure_trend = source['data'].get('pressure_trend')
+            if pressure_trend:
+                pressure_trends.append(pressure_trend)
+        
+        if len(pressure_trends) < 2:
+            return True  # Not enough trend data
+            
+        # Check if trends generally agree (simple majority consensus)
+        rising_count = pressure_trends.count('rising')
+        falling_count = pressure_trends.count('falling')
+        stable_count = pressure_trends.count('stable')
+        
+        total_trends = len(pressure_trends)
+        max_agreement = max(rising_count, falling_count, stable_count)
+        
+        # Consider consistent if >50% agreement
+        agreement_ratio = max_agreement / total_trends
+        return agreement_ratio > 0.5
+    
+    def _apply_calibration_factors(self, source_data, station_type):
+        """Apply research-based calibration factors for known systematic differences"""
+        calibrated_data = source_data.copy()
+        
+        # Get station type calibration factor
+        buoy_types = self.calibration_factors.get('buoy_types', {})
+        station_factor = buoy_types.get(station_type, 1.0)
+        
+        # Get measurement corrections
+        corrections = self.calibration_factors.get('measurement_corrections', {})
+        
+        # Apply wind speed correction (Thomas et al. 2011)
+        if 'wind_speed' in calibrated_data and calibrated_data['wind_speed'] is not None:
+            wind_correction = corrections.get('wind_speed_systematic', 1.0)
+            calibrated_data['wind_speed'] *= (station_factor * wind_correction)
+        
+        # Apply pressure offset correction if needed
+        if 'barometric_pressure' in calibrated_data and calibrated_data['barometric_pressure'] is not None:
+            pressure_offset = corrections.get('pressure_offset', 0.0)
+            calibrated_data['barometric_pressure'] += pressure_offset
+        
+        return calibrated_data
+    
+    def detect_outliers(self, sources_data, field_name):
+        """Detect outlier values in multi-source data for quality control"""
+        if len(sources_data) < 2:
+            return []  # Need at least 2 sources for outlier detection
+            
+        values = []
+        for i, source in enumerate(sources_data):
+            value = source['data'].get(field_name)
+            if value is not None:
+                values.append((i, value))
+        
+        if len(values) < 2:
+            return []
+            
+        # Calculate mean and standard deviation
+        data_values = [v[1] for v in values]
+        mean_value = sum(data_values) / len(data_values)
+        variance = sum((x - mean_value) ** 2 for x in data_values) / len(data_values)
+        std_dev = math.sqrt(variance)
+        
+        # Flag outliers beyond 2 standard deviations
+        outliers = []
+        for idx, value in values:
+            if abs(value - mean_value) > (2 * std_dev):
+                outliers.append({
+                    'source_index': idx,
+                    'value': value,
+                    'deviation': abs(value - mean_value)
+                })
+        
+        return outliers
+    
+    def check_data_freshness(self, source_data, current_time):
+        """Check if data meets freshness requirements"""
+        max_age_hours = self.quality_control.get('max_data_age_hours', 6)
+        max_age_seconds = max_age_hours * 3600
+        
+        data_time = source_data.get('observation_time')
+        if not data_time:
+            return False  # No timestamp = not fresh
+            
+        age_seconds = current_time - data_time
+        return age_seconds <= max_age_seconds
+    
 
 class WaveWatchDataCollector:
     """Collect WaveWatch III offshore wave forecast data"""
@@ -1051,6 +1432,246 @@ class SurfForecastGenerator:
                 'summary': 'Unable to load today\'s forecast'
             }
 
+    def integrate_optimal_data_sources(self, spot_config):
+        """Integrate optimal data source selection into surf forecast generation"""
+        location_coords = (float(spot_config['latitude']), float(spot_config['longitude']))
+        
+        # Get optimal sources using integration manager
+        integration_manager = getattr(self, 'integration_manager', None)
+        if not integration_manager:
+            log.warning(f"{CORE_ICONS['warning']} No integration manager available - using default data sources")
+            return self._get_default_marine_conditions()
+        
+        # Select optimal wave source
+        optimal_wave_source = integration_manager.select_optimal_wave_source(location_coords)
+        
+        # Select optimal atmospheric sources
+        optimal_atmospheric_sources = integration_manager.select_optimal_atmospheric_sources(location_coords)
+        
+        # Get current data from optimal sources
+        marine_conditions = self._fetch_data_from_optimal_sources(
+            optimal_wave_source,
+            optimal_atmospheric_sources
+        )
+        
+        # Apply coastal transformation factors
+        if optimal_wave_source and marine_conditions.get('wave_data'):
+            marine_conditions['wave_data'] = self.apply_coastal_transformation_factors(
+                marine_conditions['wave_data'],
+                optimal_wave_source['distance_miles']
+            )
+        
+        return marine_conditions
+    
+    def apply_coastal_transformation_factors(self, wave_data, distance_miles):
+        """Apply research-based coastal wave transformation (Komar methodology)"""
+        transformed_data = wave_data.copy()
+        
+        # Base height reduction factor (waves lose ~30% height reaching shore)
+        base_height_factor = 0.7
+        
+        # Distance-based additional reduction
+        if distance_miles > 25:
+            distance_factor = max(0.8, 1.0 - (distance_miles - 25) / 200)  # Gradual reduction
+        else:
+            distance_factor = 1.0
+        
+        # Apply transformation to wave height
+        if 'wave_height' in transformed_data and transformed_data['wave_height'] is not None:
+            transformed_data['wave_height'] *= (base_height_factor * distance_factor)
+        
+        # Wave period typically remains more stable during propagation
+        # No major transformation needed for period
+        
+        # Add quality confidence based on distance
+        integration_manager = getattr(self, 'integration_manager', None)
+        if integration_manager:
+            quality_score = integration_manager.calculate_wave_quality(distance_miles)
+            transformed_data['data_quality'] = quality_score
+            transformed_data['transformation_applied'] = True
+            transformed_data['distance_miles'] = distance_miles
+        
+        return transformed_data
+    
+    def validate_wave_data_quality(self, primary_source_data, secondary_source_data=None):
+        """Cross-validate wave data between sources"""
+        validation_result = {
+            'is_valid': True,
+            'confidence': 1.0,
+            'warnings': [],
+            'primary_quality': 'good'
+        }
+        
+        # Basic validity checks for primary source
+        if not primary_source_data or 'wave_height' not in primary_source_data:
+            validation_result['is_valid'] = False
+            validation_result['warnings'].append("No primary wave height data available")
+            return validation_result
+        
+        wave_height = primary_source_data['wave_height']
+        wave_period = primary_source_data.get('wave_period')
+        
+        # Sanity checks for wave height
+        if wave_height < 0 or wave_height > 50:  # Extreme wave height check
+            validation_result['is_valid'] = False
+            validation_result['warnings'].append(f"Unrealistic wave height: {wave_height}ft")
+            return validation_result
+        
+        # Period validation if available
+        if wave_period is not None:
+            if wave_period < 2 or wave_period > 25:  # Realistic period range
+                validation_result['warnings'].append(f"Unusual wave period: {wave_period}s")
+                validation_result['confidence'] *= 0.8
+        
+        # Cross-validation with secondary source if available
+        if secondary_source_data and 'wave_height' in secondary_source_data:
+            secondary_height = secondary_source_data['wave_height']
+            height_difference = abs(wave_height - secondary_height)
+            
+            # Flag if sources disagree significantly (>30% difference)
+            if height_difference > (max(wave_height, secondary_height) * 0.3):
+                validation_result['warnings'].append(
+                    f"Wave height disagreement between sources: {wave_height}ft vs {secondary_height}ft"
+                )
+                validation_result['confidence'] *= 0.7
+        
+        # Determine overall quality rating
+        if validation_result['confidence'] >= 0.9:
+            validation_result['primary_quality'] = 'excellent'
+        elif validation_result['confidence'] >= 0.7:
+            validation_result['primary_quality'] = 'good'
+        elif validation_result['confidence'] >= 0.5:
+            validation_result['primary_quality'] = 'fair'
+        else:
+            validation_result['primary_quality'] = 'poor'
+        
+        return validation_result
+    
+    def _fetch_data_from_optimal_sources(self, wave_source, atmospheric_sources):
+        """Fetch current data from optimal sources identified by integration manager"""
+        marine_conditions = {
+            'wave_data': {},
+            'atmospheric_data': {},
+            'source_info': {
+                'wave_source': wave_source,
+                'atmospheric_sources': atmospheric_sources,
+                'integration_method': 'optimal_selection'
+            }
+        }
+        
+        # Fetch wave data from optimal source
+        if wave_source:
+            try:
+                # Query Phase I ndbc_data table for current conditions
+                wave_data = self._query_current_wave_data(wave_source['station_id'])
+                if wave_data:
+                    marine_conditions['wave_data'] = wave_data
+                    log.debug(f"{CORE_ICONS['status']} Retrieved wave data from optimal source {wave_source['station_id']}")
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error fetching wave data from {wave_source['station_id']}: {e}")
+        
+        # Fetch and fuse atmospheric data from optimal sources
+        if atmospheric_sources:
+            try:
+                atmospheric_data_sources = []
+                for atm_source in atmospheric_sources:
+                    atm_data = self._query_current_atmospheric_data(atm_source['station_id'])
+                    if atm_data:
+                        atmospheric_data_sources.append({
+                            'station_id': atm_source['station_id'],
+                            'data': atm_data,
+                            'distance_miles': atm_source['distance_miles'],
+                            'quality_score': atm_source['quality_score'],
+                            'station_type': 'standard_buoy'  # Default, could be enhanced
+                        })
+                
+                if atmospheric_data_sources:
+                    # Use DataFusionProcessor for multi-source integration
+                    fusion_processor = getattr(self, 'fusion_processor', None)
+                    if fusion_processor:
+                        fused_atmospheric = fusion_processor.fuse_atmospheric_data(atmospheric_data_sources)
+                        marine_conditions['atmospheric_data'] = fused_atmospheric
+                    else:
+                        # Fallback to primary source only
+                        marine_conditions['atmospheric_data'] = atmospheric_data_sources[0]['data']
+                    
+                    log.debug(f"{CORE_ICONS['status']} Retrieved atmospheric data from {len(atmospheric_data_sources)} optimal sources")
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error fetching atmospheric data: {e}")
+        
+        return marine_conditions
+    
+    def _query_current_wave_data(self, station_id):
+        """Query Phase I ndbc_data table for current wave conditions"""
+        try:
+            db_manager = getattr(self, 'db_manager', None)
+            if not db_manager:
+                return None
+                
+            # Get most recent wave data for this station
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT wave_height, wave_period, wave_direction, observation_time
+                    FROM ndbc_data 
+                    WHERE station_id = ? AND wave_height IS NOT NULL
+                    ORDER BY observation_time DESC 
+                    LIMIT 1
+                """, (station_id,))
+                
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'wave_height': result[0],
+                        'wave_period': result[1],
+                        'wave_direction': result[2],
+                        'observation_time': result[3]
+                    }
+                return None
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error querying wave data for station {station_id}: {e}")
+            return None
+    
+    def _query_current_atmospheric_data(self, station_id):
+        """Query Phase I ndbc_data table for current atmospheric conditions"""
+        try:
+            db_manager = getattr(self, 'db_manager', None)
+            if not db_manager:
+                return None
+                
+            # Get most recent atmospheric data for this station
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT wind_speed, wind_direction, barometric_pressure, 
+                           air_temperature, observation_time
+                    FROM ndbc_data 
+                    WHERE station_id = ? AND wind_speed IS NOT NULL
+                    ORDER BY observation_time DESC 
+                    LIMIT 1
+                """, (station_id,))
+                
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'wind_speed': result[0],
+                        'wind_direction': result[1],
+                        'barometric_pressure': result[2],
+                        'air_temperature': result[3],
+                        'observation_time': result[4]
+                    }
+                return None
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error querying atmospheric data for station {station_id}: {e}")
+            return None
+    
+    def _get_default_marine_conditions(self):
+        """Fallback method to get marine conditions when integration manager unavailable"""
+        log.warning(f"{CORE_ICONS['warning']} Using default marine conditions - integration manager not available")
+        return {
+            'wave_data': {'wave_height': 2.0, 'wave_period': 8.0, 'wave_direction': 270},
+            'atmospheric_data': {'wind_speed': 10.0, 'wind_direction': 270, 'barometric_pressure': 30.0},
+            'source_info': {'integration_method': 'default_fallback'}
+        }
+    
 
 class SurfForecastSearchList(SearchList):
     """
@@ -2313,6 +2934,374 @@ class FishingForecastGenerator:
         """
         pass
 
+    def integrate_pressure_trend_analysis(self, spot_config):
+        """Enhanced pressure analysis using optimal atmospheric sources"""
+        location_coords = (float(spot_config['latitude']), float(spot_config['longitude']))
+        
+        # Get optimal atmospheric sources using integration manager
+        integration_manager = getattr(self, 'integration_manager', None)
+        if not integration_manager:
+            log.warning(f"{CORE_ICONS['warning']} No integration manager available - using default pressure analysis")
+            return self._get_default_pressure_analysis()
+        
+        # Select optimal atmospheric sources for pressure data
+        optimal_sources = integration_manager.select_optimal_atmospheric_sources(location_coords)
+        
+        if not optimal_sources:
+            log.warning(f"{CORE_ICONS['warning']} No optimal atmospheric sources found for pressure analysis")
+            return self._get_default_pressure_analysis()
+        
+        # Get pressure trend data from multiple sources
+        pressure_data_sources = []
+        for source in optimal_sources:
+            pressure_data = self._query_pressure_trend_data(source['station_id'])
+            if pressure_data:
+                pressure_data_sources.append({
+                    'station_id': source['station_id'],
+                    'data': pressure_data,
+                    'distance_miles': source['distance_miles'],
+                    'quality_score': source['quality_score']
+                })
+        
+        if not pressure_data_sources:
+            return self._get_default_pressure_analysis()
+        
+        # Fuse pressure data from multiple sources
+        fusion_processor = getattr(self, 'fusion_processor', None)
+        if fusion_processor and len(pressure_data_sources) > 1:
+            fused_pressure = fusion_processor.fuse_atmospheric_data(pressure_data_sources)
+            confidence = fusion_processor.calculate_confidence_score(
+                pressure_data_sources, 
+                [s['quality_score'] for s in pressure_data_sources]
+            )
+        else:
+            # Single source or no fusion processor
+            fused_pressure = pressure_data_sources[0]['data']
+            confidence = pressure_data_sources[0]['quality_score']
+        
+        # Analyze pressure trend for fishing implications
+        return self._analyze_pressure_trend_for_fishing(fused_pressure, confidence)
+    
+    def integrate_tide_correlation_analysis(self, spot_config):
+        """Enhanced tide analysis using optimal tide sources"""
+        location_coords = (float(spot_config['latitude']), float(spot_config['longitude']))
+        
+        # Get optimal tide source using integration manager
+        integration_manager = getattr(self, 'integration_manager', None)
+        if not integration_manager:
+            log.warning(f"{CORE_ICONS['warning']} No integration manager available - using default tide analysis")
+            return self._get_default_tide_analysis()
+        
+        # Select optimal tide source
+        optimal_tide_source = integration_manager.select_optimal_tide_source(location_coords)
+        
+        if not optimal_tide_source:
+            log.warning(f"{CORE_ICONS['warning']} No optimal tide source found for tide analysis")
+            return self._get_default_tide_analysis()
+        
+        # Get current and predicted tide data
+        tide_data = self._query_tide_data_for_analysis(optimal_tide_source['station_id'])
+        
+        if not tide_data:
+            return self._get_default_tide_analysis()
+        
+        # Apply distance-based quality adjustment
+        quality_score = integration_manager.calculate_tide_quality(optimal_tide_source['distance_miles'])
+        
+        # Analyze tide patterns for fishing implications
+        return self._analyze_tide_correlation_for_fishing(tide_data, quality_score, optimal_tide_source)
+    
+    def calculate_species_activity_with_multi_source(self, target_category, atmospheric_data, tide_data):
+        """Species activity calculation using fused data sources"""
+        category_config = self.fish_categories.get(target_category, {})
+        
+        activity_factors = []
+        activity_score = 0
+        
+        # Enhanced pressure analysis with confidence weighting
+        if atmospheric_data and 'barometric_pressure' in atmospheric_data:
+            pressure_trend = atmospheric_data.get('pressure_trend', 'stable')
+            pressure_change = atmospheric_data.get('pressure_change_6h', 0.0)
+            pressure_confidence = atmospheric_data.get('confidence', 0.7)
+            
+            pressure_preference = category_config.get('pressure_preference', 'stable')
+            
+            # Score pressure conditions
+            pressure_score = self._score_pressure_for_species(
+                pressure_trend, pressure_change, pressure_preference
+            )
+            
+            # Weight by confidence in pressure data
+            weighted_pressure_score = pressure_score * pressure_confidence
+            activity_score += weighted_pressure_score * 0.4  # Pressure weight from YAML
+            
+            activity_factors.append(f"Pressure: {pressure_trend} (confidence: {pressure_confidence:.1f})")
+        
+        # Enhanced tide analysis with distance quality
+        if tide_data and category_config.get('tide_relevance', False):
+            tide_movement = tide_data.get('current_movement', 'unknown')
+            tide_quality = tide_data.get('quality_score', 0.7)
+            
+            optimal_stages = category_config.get('optimal_tide_stage', ['incoming', 'outgoing'])
+            
+            # Score tide conditions
+            if isinstance(optimal_stages, list):
+                tide_score = 1.0 if tide_movement in optimal_stages else 0.3
+            else:
+                tide_score = 1.0 if tide_movement == optimal_stages else 0.3
+            
+            # Weight by tide data quality (distance-based)
+            weighted_tide_score = tide_score * tide_quality
+            activity_score += weighted_tide_score * 0.3  # Tide weight from YAML
+            
+            activity_factors.append(f"Tide: {tide_movement} (quality: {tide_quality:.1f})")
+        
+        # Time of day factor (unchanged from existing logic)
+        current_hour = datetime.now().hour
+        if current_hour in [4, 5, 6, 7, 19, 20, 21, 22]:  # Dawn/dusk
+            activity_score += 1.0 * 0.2  # Time weight from YAML
+            activity_factors.append("Prime feeding time")
+        
+        # Weather stability factor
+        if atmospheric_data:
+            wind_speed = atmospheric_data.get('wind_speed', 0)
+            if wind_speed < 15:  # Calm conditions
+                activity_score += 0.8 * 0.1  # Weather weight from YAML
+                activity_factors.append("Calm weather conditions")
+        
+        # Convert to activity level with enhanced confidence
+        overall_confidence = min(
+            atmospheric_data.get('confidence', 0.7) if atmospheric_data else 0.5,
+            tide_data.get('quality_score', 0.7) if tide_data else 0.5
+        )
+        
+        if activity_score >= 3.5:
+            activity_level = 'very_high'
+            activity_text = 'Very High'
+        elif activity_score >= 2.5:
+            activity_level = 'high'
+            activity_text = 'High'
+        elif activity_score >= 1.5:
+            activity_level = 'moderate'
+            activity_text = 'Moderate'
+        elif activity_score >= 0.8:
+            activity_level = 'low'
+            activity_text = 'Low'
+        else:
+            activity_level = 'very_low'
+            activity_text = 'Very Low'
+        
+        return {
+            'level': activity_level,
+            'text': activity_text,
+            'score': activity_score,
+            'factors': activity_factors,
+            'target_species': category_config.get('species', ['Mixed'])[:3],
+            'confidence': overall_confidence,
+            'integration_method': 'multi_source_fusion'
+        }
+    
+    def _query_pressure_trend_data(self, station_id):
+        """Query Phase I data for pressure trend analysis"""
+        try:
+            db_manager = getattr(self, 'db_manager', None)
+            if not db_manager:
+                return None
+                
+            # Get pressure data for last 6 hours to calculate trend
+            with db_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT barometric_pressure, observation_time
+                    FROM ndbc_data 
+                    WHERE station_id = ? AND barometric_pressure IS NOT NULL
+                    AND observation_time > ?
+                    ORDER BY observation_time DESC 
+                    LIMIT 12
+                """, (station_id, int(time.time()) - 21600))  # Last 6 hours
+                
+                results = cursor.fetchall()
+                if len(results) >= 2:
+                    # Calculate trend
+                    latest_pressure = results[0][0]
+                    earliest_pressure = results[-1][0]
+                    pressure_change = latest_pressure - earliest_pressure
+                    
+                    # Determine trend direction
+                    if pressure_change > 0.05:
+                        trend = 'rising'
+                    elif pressure_change < -0.05:
+                        trend = 'falling'
+                    else:
+                        trend = 'stable'
+                    
+                    return {
+                        'barometric_pressure': latest_pressure,
+                        'pressure_change_6h': pressure_change,
+                        'pressure_trend': trend,
+                        'observation_time': results[0][1],
+                        'data_points': len(results)
+                    }
+                return None
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error querying pressure trend data for station {station_id}: {e}")
+            return None
+    
+    def _query_tide_data_for_analysis(self, station_id):
+        """Query Phase I tide data for fishing analysis"""
+        try:
+            db_manager = getattr(self, 'db_manager', None)
+            if not db_manager:
+                return None
+                
+            current_time = int(time.time())
+            
+            # Get current water level and next tide events
+            with db_manager.connection.cursor() as cursor:
+                # Current water level
+                cursor.execute("""
+                    SELECT water_level, observation_time
+                    FROM coops_realtime 
+                    WHERE station_id = ? AND water_level IS NOT NULL
+                    ORDER BY observation_time DESC 
+                    LIMIT 1
+                """, (station_id,))
+                
+                current_level_result = cursor.fetchone()
+                
+                # Next tide events
+                cursor.execute("""
+                    SELECT tide_time, tide_height, tide_type
+                    FROM tide_table 
+                    WHERE station_id = ? AND tide_time > ?
+                    ORDER BY tide_time ASC 
+                    LIMIT 4
+                """, (station_id, current_time))
+                
+                tide_events = cursor.fetchall()
+                
+                if current_level_result and tide_events:
+                    # Determine current tide movement
+                    next_tide = tide_events[0]
+                    time_to_next_tide = next_tide[0] - current_time
+                    
+                    if time_to_next_tide < 3600:  # Within 1 hour of tide change
+                        current_movement = 'slack'
+                    elif next_tide[2] == 'H':  # Next is high tide
+                        current_movement = 'incoming'
+                    else:  # Next is low tide
+                        current_movement = 'outgoing'
+                    
+                    return {
+                        'current_water_level': current_level_result[0],
+                        'current_movement': current_movement,
+                        'next_tide_time': next_tide[0],
+                        'next_tide_type': next_tide[2],
+                        'time_to_next_tide_hours': time_to_next_tide / 3600,
+                        'observation_time': current_level_result[1]
+                    }
+                return None
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error querying tide data for station {station_id}: {e}")
+            return None
+    
+    def _analyze_pressure_trend_for_fishing(self, pressure_data, confidence):
+        """Analyze pressure trend data for fishing implications"""
+        pressure_trend = pressure_data.get('pressure_trend', 'stable')
+        pressure_change = pressure_data.get('pressure_change_6h', 0.0)
+        
+        # Fishing quality based on pressure research (Skov et al. 2011)
+        if pressure_trend == 'falling' and pressure_change < -0.1:
+            quality = 'excellent'
+            description = 'Rapidly falling pressure - prime fishing conditions'
+        elif pressure_trend == 'falling':
+            quality = 'good'
+            description = 'Falling pressure - good fishing activity expected'
+        elif pressure_trend == 'stable':
+            quality = 'fair'
+            description = 'Stable pressure - moderate fishing activity'
+        else:  # rising
+            quality = 'poor'
+            description = 'Rising pressure - reduced fishing activity'
+        
+        return {
+            'pressure_trend': pressure_trend,
+            'pressure_change_6h': pressure_change,
+            'quality': quality,
+            'description': description,
+            'confidence': confidence
+        }
+    
+    def _analyze_tide_correlation_for_fishing(self, tide_data, quality_score, tide_source):
+        """Analyze tide correlation data for fishing implications"""
+        current_movement = tide_data.get('current_movement', 'unknown')
+        time_to_next_tide = tide_data.get('time_to_next_tide_hours', 999)
+        
+        # Fishing quality based on tide movement
+        if current_movement in ['incoming', 'outgoing']:
+            if 1.0 <= time_to_next_tide <= 3.0:  # Sweet spot: 1-3 hours before tide change
+                quality = 'excellent'
+                description = f'Moving water ({current_movement}) - optimal fishing window'
+            else:
+                quality = 'good'
+                description = f'Moving water ({current_movement}) - active fishing conditions'
+        elif current_movement == 'slack':
+            quality = 'fair'
+            description = 'Slack tide - good for bottom fishing'
+        else:
+            quality = 'poor'
+            description = 'Unknown tide conditions'
+        
+        return {
+            'current_movement': current_movement,
+            'time_to_next_tide_hours': time_to_next_tide,
+            'quality': quality,
+            'description': description,
+            'quality_score': quality_score,
+            'source_distance_miles': tide_source['distance_miles']
+        }
+    
+    def _score_pressure_for_species(self, pressure_trend, pressure_change, preference):
+        """Score pressure conditions for specific species preferences"""
+        if preference == 'falling':
+            if pressure_trend == 'falling':
+                return 1.0 if pressure_change < -0.1 else 0.8
+            elif pressure_trend == 'stable':
+                return 0.5
+            else:
+                return 0.2
+        elif preference == 'rising':
+            if pressure_trend == 'rising':
+                return 1.0 if pressure_change > 0.1 else 0.8
+            elif pressure_trend == 'stable':
+                return 0.5
+            else:
+                return 0.2
+        else:  # stable preference
+            if pressure_trend == 'stable':
+                return 1.0
+            else:
+                return 0.6
+    
+    def _get_default_pressure_analysis(self):
+        """Fallback pressure analysis when integration unavailable"""
+        return {
+            'pressure_trend': 'stable',
+            'pressure_change_6h': 0.0,
+            'quality': 'fair',
+            'description': 'Default pressure conditions - integration unavailable',
+            'confidence': 0.5
+        }
+    
+    def _get_default_tide_analysis(self):
+        """Fallback tide analysis when integration unavailable"""
+        return {
+            'current_movement': 'unknown',
+            'time_to_next_tide_hours': 999,
+            'quality': 'fair',
+            'description': 'Default tide conditions - integration unavailable',
+            'quality_score': 0.5
+        }
+    
 
 class FishingForecastSearchList(SearchList):
     """
@@ -2805,7 +3794,234 @@ class SurfFishingService(StdService):
         except Exception as e:
             log.error(f"Error storing fishing forecast for spot {spot_id}: {e}")
 
-
+    def initialize_station_integration(self):
+        """Initialize Phase I metadata integration during service startup"""
+        try:
+            log.info(f"{CORE_ICONS['status']} Initializing marine station integration...")
+            
+            # Load field definitions from YAML
+            field_definitions = self._load_field_definitions()
+            
+            # Initialize integration manager
+            self.integration_manager = MarineStationIntegrationManager(
+                self.config_dict, 
+                field_definitions
+            )
+            
+            # Initialize data fusion processor
+            self.fusion_processor = DataFusionProcessor(
+                self.config_dict,
+                field_definitions
+            )
+            
+            # Pass integration components to forecast generators
+            if hasattr(self, 'surf_generator'):
+                self.surf_generator.integration_manager = self.integration_manager
+                self.surf_generator.fusion_processor = self.fusion_processor
+                self.surf_generator.db_manager = self.db_manager
+            
+            if hasattr(self, 'fishing_generator'):
+                self.fishing_generator.integration_manager = self.integration_manager
+                self.fishing_generator.fusion_processor = self.fusion_processor
+                self.fishing_generator.db_manager = self.db_manager
+            
+            # Get integration summary for logging
+            summary = self.integration_manager.get_integration_metadata_summary()
+            log.info(f"{CORE_ICONS['status']} Station integration initialized: {summary}")
+            
+            return True
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error initializing station integration: {e}")
+            return False
+    
+    def get_station_metadata_summary(self):
+        """Get summary of available station metadata for diagnostics"""
+        if not hasattr(self, 'integration_manager'):
+            return {
+                'status': 'integration_not_initialized',
+                'message': 'Station integration manager not available'
+            }
+        
+        try:
+            summary = self.integration_manager.get_integration_metadata_summary()
+            
+            # Add service-level information
+            summary.update({
+                'status': 'operational',
+                'integration_enabled': True,
+                'fusion_processor_available': hasattr(self, 'fusion_processor'),
+                'service_config': {
+                    'forecast_types': self.service_config.get('forecast_types', []),
+                    'data_integration_method': self.service_config.get('data_integration', {}).get('method', 'unknown')
+                }
+            })
+            
+            return summary
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error getting station metadata summary: {e}")
+            return {
+                'status': 'error',
+                'message': f'Error retrieving metadata: {str(e)}'
+            }
+    
+    def validate_integration_configuration(self):
+        """Validate that Phase I metadata is available and properly configured"""
+        validation_result = {
+            'is_valid': True,
+            'warnings': [],
+            'errors': [],
+            'recommendations': []
+        }
+        
+        try:
+            # Check if integration manager is initialized
+            if not hasattr(self, 'integration_manager'):
+                validation_result['errors'].append("Integration manager not initialized")
+                validation_result['is_valid'] = False
+                return validation_result
+            
+            # Check Phase I metadata availability
+            summary = self.integration_manager.get_integration_metadata_summary()
+            
+            if not summary['phase_i_available']:
+                validation_result['errors'].append("Phase I metadata not available in CONF")
+                validation_result['recommendations'].append("Ensure Phase I Marine Data Extension is properly installed and configured")
+                validation_result['is_valid'] = False
+            
+            # Check station availability for different data types
+            if summary['wave_capable_stations'] == 0:
+                validation_result['warnings'].append("No wave-capable stations found")
+                validation_result['recommendations'].append("Add NDBC buoys with wave measurement capability")
+            
+            if summary['atmospheric_capable_stations'] == 0:
+                validation_result['warnings'].append("No atmospheric-capable stations found")
+                validation_result['recommendations'].append("Add NDBC buoys with atmospheric measurement capability")
+            
+            if summary['coops_station_count'] == 0:
+                validation_result['warnings'].append("No CO-OPS tide stations found")
+                validation_result['recommendations'].append("Add CO-OPS stations for tide data")
+            
+            # Check field definitions loaded
+            if not hasattr(self.integration_manager, 'quality_thresholds') or not self.integration_manager.quality_thresholds:
+                validation_result['errors'].append("Quality thresholds not loaded from YAML")
+                validation_result['is_valid'] = False
+            
+            # Check fusion processor
+            if not hasattr(self, 'fusion_processor'):
+                validation_result['warnings'].append("Data fusion processor not available")
+                validation_result['recommendations'].append("Multi-source data fusion will be limited")
+            
+            # Log validation results
+            if validation_result['is_valid']:
+                log.info(f"{CORE_ICONS['status']} Integration configuration validation passed")
+            else:
+                log.warning(f"{CORE_ICONS['warning']} Integration configuration validation failed: {validation_result['errors']}")
+            
+            return validation_result
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error validating integration configuration: {e}")
+            validation_result['errors'].append(f"Validation error: {str(e)}")
+            validation_result['is_valid'] = False
+            return validation_result
+    
+    def _load_field_definitions(self):
+        """Load field definitions from YAML following WeeWX 5.1 patterns"""
+        try:
+            # Get the directory where this service file is located
+            extension_dir = os.path.dirname(__file__)
+            fields_path = os.path.join(extension_dir, 'surf_fishing_fields.yaml')
+            
+            if not os.path.exists(fields_path):
+                log.error(f"{CORE_ICONS['warning']} Field definitions file not found: {fields_path}")
+                return {}
+            
+            with open(fields_path, 'r') as f:
+                field_definitions = yaml.safe_load(f)
+            
+            log.info(f"{CORE_ICONS['status']} Loaded field definitions from YAML")
+            return field_definitions
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} CRITICAL ERROR: Could not load field definitions: {e}")
+            # Return minimal configuration to prevent service failure
+            return {
+                'station_quality_thresholds': {
+                    'wave_data': {'excellent_distance_miles': 25, 'good_distance_miles': 50},
+                    'atmospheric_data': {'excellent_distance_miles': 50, 'good_distance_miles': 100},
+                    'tide_data': {'excellent_distance_miles': 15, 'good_distance_miles': 50}
+                }
+            }
+    
+    def get_optimal_sources_for_location(self, latitude, longitude):
+        """Get optimal data sources for a specific location - utility method for diagnostics"""
+        if not hasattr(self, 'integration_manager'):
+            return None
+        
+        try:
+            location_coords = (float(latitude), float(longitude))
+            
+            optimal_sources = {
+                'wave_source': self.integration_manager.select_optimal_wave_source(location_coords),
+                'atmospheric_sources': self.integration_manager.select_optimal_atmospheric_sources(location_coords),
+                'tide_source': self.integration_manager.select_optimal_tide_source(location_coords),
+                'location': {
+                    'latitude': latitude,
+                    'longitude': longitude
+                }
+            }
+            
+            return optimal_sources
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error getting optimal sources for location {latitude}, {longitude}: {e}")
+            return None
+    
+    def test_data_integration(self, test_location=None):
+        """Test data integration functionality - diagnostic method"""
+        if not test_location:
+            # Use default test location (Los Angeles area)
+            test_location = {'latitude': 34.0522, 'longitude': -118.2437}
+        
+        test_results = {
+            'timestamp': datetime.now().isoformat(),
+            'test_location': test_location,
+            'results': {}
+        }
+        
+        try:
+            log.info(f"{CORE_ICONS['status']} Testing data integration at {test_location}")
+            
+            # Test integration manager
+            if hasattr(self, 'integration_manager'):
+                optimal_sources = self.get_optimal_sources_for_location(
+                    test_location['latitude'], 
+                    test_location['longitude']
+                )
+                test_results['results']['optimal_sources'] = optimal_sources
+                test_results['results']['integration_manager'] = 'operational'
+            else:
+                test_results['results']['integration_manager'] = 'not_available'
+            
+            # Test fusion processor
+            if hasattr(self, 'fusion_processor'):
+                test_results['results']['fusion_processor'] = 'operational'
+            else:
+                test_results['results']['fusion_processor'] = 'not_available'
+            
+            # Test validation
+            validation = self.validate_integration_configuration()
+            test_results['results']['configuration_validation'] = validation
+            
+            log.info(f"{CORE_ICONS['status']} Data integration test completed")
+            return test_results
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error during data integration test: {e}")
+            test_results['results']['error'] = str(e)
+            return test_results
 
         """Find next surf session with rating >= 3"""
         
