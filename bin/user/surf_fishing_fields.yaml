@@ -499,3 +499,202 @@ installation_messages:
     - "Station integration improves local wind accuracy"
     - "Configure spots within 50 miles of your station for best results"
     - "Add 2-5 locations for optimal forecast coverage"
+
+# Station Quality Assessment Thresholds
+# Based on peer-reviewed coastal oceanography research
+station_quality_thresholds:
+  wave_data:
+    excellent_distance_km: 40    # 25 miles - Direct application, minimal transformation
+    good_distance_km: 80         # 50 miles - Good with coastal corrections  
+    fair_distance_km: 160        # 100 miles - Significant transformation needed
+    minimum_quality: 0.6         # Below this = recommend additional stations
+
+  atmospheric_data:
+    excellent_distance_km: 80    # 50 miles - High coherence for atmospheric patterns
+    good_distance_km: 160        # 100 miles - Regional coherence maintained
+    fair_distance_km: 320        # 200 miles - Useful for trends/verification
+    minimum_quality: 0.5         # Below this = recommend additional stations
+
+  tide_data:
+    excellent_distance_km: 80    # 50 miles - Tidal propagation coherence
+    good_distance_km: 160        # 100 miles - Regional tidal patterns
+    fair_distance_km: 240        # 150 miles - Basic tidal timing
+    minimum_quality: 0.7         # Below this = recommend backup stations
+
+  # Spatial weighting factors from research
+  spatial_weighting:
+    alongshore_coherence: 0.7    # Research: alongshore patterns more coherent
+    cross_shore_coherence: 1.3   # Research: rapid cross-shore variation
+
+  # Local station integration thresholds
+  local_station_integration:
+    max_useful_distance_km: 25   # 15 miles - Beyond this, minimal marine relevance
+    pressure_high_value_km: 8    # 5 miles - Pressure data highly valuable within 5km
+    wind_useful_km: 8            # 5 miles - Wind data useful within 5km coastal zone
+    
+  # Quality control parameters
+  quality_control:
+    max_data_age_hours: 6        # Operational requirement for fresh data
+    pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
+    consistency_check_required: true
+
+# WaveWatch III Configuration
+wavewatch_endpoints:
+  base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/wave/prod/"
+  grids:
+    us_east:
+      description: "US East Coast (7km resolution)"
+      bounds: [24, 50, -95, -65]
+      update_frequency: "6_hours"
+    us_west: 
+      description: "US West Coast (7km resolution)"
+      bounds: [24, 50, -130, -95]
+      update_frequency: "6_hours"
+    glo_30m:
+      description: "Global 30 arc-minute"
+      bounds: [-90, 90, -180, 180]
+      update_frequency: "6_hours"
+  
+  # Wave parameters to extract from GRIB files
+  parameters:
+    - name: "Significant height of combined wind waves and swell"
+      field: "wave_height"
+      units: "meters"
+      conversion_factor: 3.28084  # Convert to feet
+      grib_parameter: "HTSGW"
+    - name: "Primary wave mean period" 
+      field: "wave_period"
+      units: "seconds"
+      grib_parameter: "PERPW"
+    - name: "Primary wave direction"
+      field: "wave_direction"
+      units: "degrees"
+      grib_parameter: "DIRPW"
+    - name: "Wind wave height"
+      field: "wind_wave_height"
+      units: "meters"
+      conversion_factor: 3.28084
+      grib_parameter: "WVHGT"
+
+# Fish Category Definitions for Forecast Algorithms
+fish_categories:
+  freshwater_sport:
+    display_name: "Freshwater Sport Fish"
+    species: ["Bass (Largemouth/Smallmouth)", "Trout (Rainbow/Brown)", "Pike/Muskie", "Walleye"]
+    pressure_preference: "falling"
+    tide_relevance: false
+    optimal_pressure_change: -0.05  # inches Hg per hour
+    temperature_sensitive: true
+    
+  saltwater_inshore:
+    display_name: "Saltwater Inshore"
+    species: ["Striped Bass", "Redfish", "Snook", "Flounder"]
+    pressure_preference: "falling"
+    tide_relevance: true
+    optimal_tide_stage: "incoming"
+    optimal_pressure_change: -0.08
+    structure_dependent: true
+    
+  saltwater_offshore:
+    display_name: "Saltwater Offshore"
+    species: ["Tuna (Yellowfin/Bluefin)", "Mahi-Mahi", "Marlin", "Sailfish"]
+    pressure_preference: "stable"
+    tide_relevance: false
+    optimal_pressure_change: 0.0
+    current_dependent: true
+    
+  bottom_fish:
+    display_name: "Bottom Fish"
+    species: ["Halibut", "Cod", "Rockfish", "Grouper"]
+    pressure_preference: "rising"
+    tide_relevance: true
+    optimal_tide_stage: "slack"
+    optimal_pressure_change: 0.03
+    depth_dependent: true
+    
+  mixed_bag:
+    display_name: "Mixed Species"
+    species: ["Various coastal species"]
+    pressure_preference: "stable"
+    tide_relevance: true
+    optimal_pressure_change: -0.02
+    versatile: true
+
+# Surf Spot Bottom Type Characteristics
+surf_bottom_types:
+  sand:
+    description: "Sandy beach break"
+    wave_characteristics: "Forgiving, good for beginners"
+    swell_direction_sensitivity: "low"
+    tide_sensitivity: "medium"
+    
+  reef:
+    description: "Coral or rock reef"
+    wave_characteristics: "Consistent, potentially powerful"
+    swell_direction_sensitivity: "high"
+    tide_sensitivity: "high"
+    
+  point:
+    description: "Rocky point break"
+    wave_characteristics: "Long rides, directional"
+    swell_direction_sensitivity: "very_high"
+    tide_sensitivity: "medium"
+    
+  jetty:
+    description: "Man-made structure"
+    wave_characteristics: "Focused energy, consistent"
+    swell_direction_sensitivity: "medium"
+    tide_sensitivity: "high"
+
+# Forecast Algorithm Parameters
+forecast_algorithms:
+  surf_rating:
+    # Star rating thresholds (1-5 stars)
+    excellent_threshold: 4.0    # 4+ stars
+    good_threshold: 3.0         # 3+ stars  
+    fair_threshold: 2.0         # 2+ stars
+    poor_threshold: 1.0         # 1+ stars
+    
+    # Wave quality factors
+    optimal_wave_height_range: [2, 8]  # feet
+    optimal_wave_period_min: 8         # seconds
+    excellent_wave_period_min: 12      # seconds
+    
+    # Wind quality factors
+    offshore_wind_bonus: 1.5
+    onshore_wind_penalty: 0.6
+    cross_wind_factor: 0.8
+    
+  fishing_rating:
+    # Activity level thresholds
+    very_high_threshold: 4.0
+    high_threshold: 3.0
+    moderate_threshold: 2.0
+    low_threshold: 1.0
+    
+    # Pressure change factors (inches Hg per 3 hours)
+    rapid_falling_bonus: 1.3      # -0.15+ inches
+    slow_falling_bonus: 1.1       # -0.05 to -0.15 inches
+    stable_neutral: 1.0           # -0.05 to +0.05 inches
+    rising_penalty: 0.8           # +0.05+ inches
+    
+    # Time of day factors
+    prime_time_periods: ["early_morning", "evening"]
+    prime_time_bonus: 1.2
+
+# Data Integration Methods
+integration_methods:
+  distance_weighting:
+    enabled: true
+    max_distance_km: 200        # Beyond this, weight approaches zero
+    decay_exponent: 2.0         # How quickly weight decreases with distance
+    
+  quality_weighting:
+    enabled: true
+    data_age_penalty: 0.1       # Per hour penalty for old data
+    station_reliability_factor: true
+    
+  multi_source_fusion:
+    wave_data_priority: ["ndbc_buoys", "wavewatch_iii", "coastal_models"]
+    atmospheric_priority: ["local_station", "ndbc_buoys", "wavewatch_iii"]
+    tide_data_priority: ["coops_stations", "harmonic_predictions"]
