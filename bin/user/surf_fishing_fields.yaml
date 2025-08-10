@@ -698,3 +698,88 @@ integration_methods:
     wave_data_priority: ["ndbc_buoys", "wavewatch_iii", "coastal_models"]
     atmospheric_priority: ["local_station", "ndbc_buoys", "wavewatch_iii"]
     tide_data_priority: ["coops_stations", "harmonic_predictions"]
+
+# Required Fields for Surf & Fishing Forecasting
+# Based on forecast algorithm requirements
+required_surf_fishing_fields:
+  surf_forecasting:
+    critical:
+      - wave_height              # Primary surf indicator
+      - wave_period              # Wave quality determination
+      - wind_speed               # Surface conditions
+      - wind_direction           # Onshore/offshore assessment
+    
+    recommended:
+      - wave_direction           # Swell direction for spot-specific forecasts
+      - sea_surface_temp         # Seasonal surf quality factors
+      - barometric_pressure      # Weather pattern stability
+      - current_water_level      # Beach access, rip current assessment
+
+  fishing_forecasting:
+    critical:
+      - barometric_pressure      # Primary fishing activity indicator
+      - current_water_level      # Real-time tide information
+      - tide_predictions         # Future fishing time planning
+    
+    recommended:
+      - wind_speed               # Surface conditions affect fishing
+      - wind_direction           # Fishing spot accessibility
+      - sea_surface_temp         # Species activity indicator
+      - coastal_water_temp       # Seasonal fishing patterns
+
+# Coverage Thresholds for Field Adequacy Assessment
+coverage_thresholds:
+  critical_field_coverage: 1.0      # Must have ALL critical fields
+  recommended_field_coverage: 0.75  # Should have 75%+ of recommended
+  minimum_overall_coverage: 0.8     # 80% of total required fields
+
+# Field Priority Rankings for Recommendations
+field_priorities:
+  surf_priority:
+    1: wave_height
+    2: wave_period  
+    3: wind_speed
+    4: wind_direction
+    5: wave_direction
+  
+  fishing_priority:
+    1: barometric_pressure
+    2: tide_predictions
+    3: current_water_level
+    4: wind_speed
+    5: sea_surface_temp
+
+# Multi-Source Data Fusion Parameters
+fusion_parameters:
+  atmospheric_fusion:
+    distance_weight_enabled: true
+    quality_confidence_enabled: true
+    temporal_consistency_check: true
+    
+    weights:
+      primary_source: 0.6
+      secondary_source: 0.3
+      tertiary_source: 0.1
+      
+    confidence_factors:
+      single_source: 0.7
+      two_sources: 0.9
+      three_plus_sources: 1.0
+
+# Station Calibration Factors (Thomas et al. 2011 methodology)
+calibration_factors:
+  buoy_types:
+    standard_buoy: 1.0
+    cman_station: 0.95
+    coastal_station: 0.9
+    
+  measurement_corrections:
+    wind_speed_systematic: 1.05     # Buoy wind speed correction
+    pressure_offset: 0.0            # No systematic pressure correction needed
+
+# Quality Control Parameters
+quality_control:
+  max_data_age_hours: 6        # Operational requirement for fresh data
+  pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
+  consistency_check_required: true
+  outlier_detection_enabled: true
