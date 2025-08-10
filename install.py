@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Coral
+# Magic Animal: Cone Snail
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -244,22 +244,35 @@ class SurfFishingConfigurator:
         print("This extension reads data from Phase I and adds forecasting capabilities")
         print()
         
-        # Step 1: Check dependencies
+        # Step 1: Check Phase I dependency (ENHANCED)
         self._check_phase_i_dependency()
         
-        # Step 2: Install GRIB libraries
+        # Step 2: Setup GRIB processing libraries (ENHANCED) 
         grib_available = self._setup_grib_processing()
         
-        # Step 3: Configure data sources
-        data_sources = self._configure_data_sources()
+        # Step 3: Configure data source strategy (ENHANCED)
+        data_sources = self._configure_data_sources(grib_available)
         
-        # Step 4: Configure locations
-        locations = self._configure_locations()
+        # Step 4: Configure forecast types and locations (EXISTING PATTERN)
+        forecast_types = self._select_forecast_types()
+        selected_locations = {}
         
-        # Step 5: Transform to weewx.conf format
-        config_dict = self._transform_to_weewx_conf(data_sources, locations, grib_available)
+        if 'surf' in forecast_types:
+            selected_locations['surf_spots'] = self._configure_surf_spots()
         
-        return config_dict, locations
+        if 'fishing' in forecast_types:
+            selected_locations['fishing_spots'] = self._configure_fishing_spots()
+        
+        # Step 5: Analyze marine station integration (NEW)
+        station_analysis = self._analyze_marine_station_integration(selected_locations)
+        
+        # Step 6: Create configuration dictionary (ENHANCED)
+        config_dict = self._create_config_dict(forecast_types, data_sources, selected_locations, grib_available, station_analysis)
+        
+        # Step 7: Display final summary (NEW)
+        self._display_configuration_summary(config_dict, station_analysis)
+        
+        return config_dict, selected_locations
     
     def _check_phase_i_dependency(self):
         """Verify Phase I marine data extension is installed"""
@@ -601,6 +614,624 @@ class SurfFishingConfigurator:
             fishing_count += 1
     
         return config_dict
+
+    def _analyze_marine_station_integration(self, selected_locations):
+        """
+        Analyze Phase I marine station coverage for user locations
+        Provide recommendations for optimization if needed
+        """
+        print(f"\n{CORE_ICONS['navigation']} Marine Station Integration Analysis")
+        print("Analyzing your Phase I station coverage for optimal forecasting...")
+        
+        # Initialize analyzers
+        phase_i_analyzer = PhaseIAnalyzer(self.config_dict)
+        quality_analyzer = StationQualityAnalyzer(self.yaml_data)
+        recommendation_engine = MarineStationRecommendationEngine(phase_i_analyzer, quality_analyzer)
+        
+        # Get Phase I coverage summary
+        phase_i_coverage = phase_i_analyzer.analyze_phase_i_coverage()
+        
+        print(f"\nPhase I Station Summary:")
+        print(f"  Total stations: {phase_i_coverage['total_stations']}")
+        print(f"  CO-OPS tide stations: {phase_i_coverage['coops_count']}")
+        print(f"  NDBC buoy stations: {phase_i_coverage['ndbc_count']}")
+        
+        if phase_i_coverage['distance_summary']['closest_station']:
+            closest = phase_i_coverage['distance_summary']['closest_station']
+            print(f"  Closest station: {closest['name']} ({closest['distance']:.1f} miles)")
+        
+        # Analyze all user locations
+        all_user_locations = []
+        for spot in selected_locations.get('surf_spots', []):
+            all_user_locations.append(spot)
+        for spot in selected_locations.get('fishing_spots', []):
+            all_user_locations.append(spot)
+        
+        if not all_user_locations:
+            print(f"\n{CORE_ICONS['status']} No location analysis needed - no locations configured")
+            return
+        
+        # Generate recommendations
+        recommendations = recommendation_engine.analyze_multi_location_optimization(all_user_locations)
+        
+        # Display current coverage summary
+        current = recommendations['current_coverage']
+        print(f"\nCoverage Quality Summary:")
+        print(f"  Wave data quality: {current['wave_quality']:.1f}/1.0")
+        print(f"  Atmospheric data quality: {current['atmospheric_quality']:.1f}/1.0")
+        print(f"  Tide data quality: {current['tide_quality']:.1f}/1.0")
+        
+        # Present recommendations interactively
+        accepted_recommendations = recommendation_engine.display_recommendations_interactive(recommendations)
+        
+        if accepted_recommendations:
+            print(f"\n{CORE_ICONS['selection']} Implementation Options")
+            print("Accepted recommendations will be noted in your configuration.")
+            print("You can implement these manually in Phase I after installation.")
+            print()
+            
+            # Store recommendations in configuration for reference
+            return {
+                'station_analysis_completed': True,
+                'accepted_recommendations': accepted_recommendations,
+                'coverage_summary': current
+            }
+        else:
+            print(f"\n{CORE_ICONS['status']} Current configuration will be used as-is")
+            return {
+                'station_analysis_completed': True,
+                'accepted_recommendations': [],
+                'coverage_summary': current
+            }
+
+    def _display_configuration_summary(self, config_dict, station_analysis):
+        """
+        Display comprehensive configuration summary including station analysis
+        Provides clear overview of what was configured
+        """
+        print(f"\n{CORE_ICONS['status']} Configuration Summary")
+        print("="*50)
+        
+        service_config = config_dict['SurfFishingService']
+        
+        # Forecast types configured
+        forecast_types = service_config['forecast_types']
+        print(f"Forecast Types: {', '.join(forecast_types).title()}")
+        
+        # Data sources
+        data_source_type = service_config['data_sources']['type']
+        print(f"Data Strategy: {data_source_type.replace('_', ' ').title()}")
+        
+        # Location counts
+        surf_count = len(service_config['surf_spots'])
+        fishing_count = len(service_config['fishing_spots'])
+        print(f"Locations: {surf_count} surf spots, {fishing_count} fishing spots")
+        
+        # GRIB processing
+        grib_enabled = service_config['grib_processing']['available']
+        grib_lib = service_config['grib_processing']['library']
+        print(f"WaveWatch III: {'Enabled' if grib_enabled == 'true' else 'Disabled'}")
+        if grib_enabled == 'true':
+            print(f"  GRIB Library: {grib_lib}")
+        
+        # Station integration analysis results (NEW)
+        if station_analysis:
+            integration = service_config['station_integration']
+            print(f"\nStation Integration Analysis:")
+            print(f"  Analysis completed: {integration['analysis_completed']}")
+            
+            if integration.get('coverage_quality'):
+                coverage = integration['coverage_quality']
+                print(f"  Wave data quality: {coverage.get('wave_quality', 0):.1f}/1.0")
+                print(f"  Atmospheric quality: {coverage.get('atmospheric_quality', 0):.1f}/1.0")
+                print(f"  Tide data quality: {coverage.get('tide_quality', 0):.1f}/1.0")
+            
+            rec_count = integration.get('recommendations_count', '0')
+            if int(rec_count) > 0:
+                print(f"  Optimization recommendations: {rec_count} accepted")
+                print(f"  (See marine_recommendations section in configuration)")
+        
+        print()
+
+    def _handle_configuration_error(self, error, context="configuration"):
+        """
+        Handle configuration errors gracefully with helpful messaging
+        Provides actionable error information to users
+        """
+        error_msg = str(error).lower()
+        
+        if "phase i" in error_msg or "marinedataservice" in error_msg:
+            print(f"\n{CORE_ICONS['warning']} Phase I Dependency Error")
+            print("The Phase I Marine Data Extension is required but not properly configured.")
+            print("\nPlease ensure Phase I is installed and has marine stations selected:")
+            print("1. Check if Phase I is installed: weectl extension list")
+            print("2. Reconfigure Phase I if needed: sudo weectl extension reconfigure marine_data") 
+            print("3. Restart WeeWX: sudo systemctl restart weewx")
+            print("4. Then retry this installation")
+            
+        elif "grib" in error_msg or "eccodes" in error_msg or "pygrib" in error_msg:
+            print(f"\n{CORE_ICONS['warning']} GRIB Processing Error")
+            print("GRIB library installation or configuration failed.")
+            print("\nYou can continue without WaveWatch III forecasts,")
+            print("using only Phase I marine data for forecasting.")
+            print("\nTo fix GRIB processing later:")
+            print("  sudo apt-get install eccodes python3-eccodes")
+            print("  # OR")
+            print("  pip3 install eccodes-python")
+            
+        elif "permission" in error_msg or "sudo" in error_msg:
+            print(f"\n{CORE_ICONS['warning']} Permission Error")
+            print("Installation requires administrator privileges.")
+            print("\nPlease run the installer with sudo:")
+            print("  sudo weectl extension install weewx-surf-fishing-1.0.0-alpha.zip")
+            
+        elif "network" in error_msg or "connection" in error_msg:
+            print(f"\n{CORE_ICONS['warning']} Network Error")
+            print("Cannot connect to required services during installation.")
+            print("\nPlease check your internet connection and try again.")
+            print("Installation can continue with limited functionality.")
+            
+        else:
+            print(f"\n{CORE_ICONS['warning']} Configuration Error")
+            print(f"An error occurred during {context}: {error}")
+            print("\nYou may need to:")
+            print("1. Check system requirements")
+            print("2. Verify WeeWX 5.1+ is installed")
+            print("3. Ensure proper permissions")
+            print("4. Check available disk space")
+        
+        print()
+
+class PhaseIAnalyzer:
+    """
+    Analyze existing Phase I station configuration from CONF metadata
+    Provides zero-API station analysis for Phase II optimization
+    """
+    
+    def __init__(self, config_dict):
+        """
+        Initialize analyzer with WeeWX configuration dictionary
+        """
+        self.config_dict = config_dict
+        self.marine_config = config_dict.get('MarineDataService', {})
+        self.station_metadata = self.marine_config.get('station_metadata', {})
+        
+    def get_available_stations(self):
+        """
+        Extract all Phase I selected stations with metadata from CONF
+        Returns comprehensive station data without any API calls
+        """
+        stations = {
+            'coops_stations': [],
+            'ndbc_stations': [],
+            'total_count': 0
+        }
+        
+        # Process CO-OPS stations from Phase I metadata
+        coops_metadata = self.station_metadata.get('coops_stations', {})
+        for station_id, metadata in coops_metadata.items():
+            station_info = {
+                'station_id': station_id,
+                'name': metadata.get('name', f'Station {station_id}'),
+                'latitude': float(metadata.get('latitude', 0)),
+                'longitude': float(metadata.get('longitude', 0)),
+                'distance_miles': float(metadata.get('distance_miles', 0)),
+                'capabilities': metadata.get('capabilities', '').split(', '),
+                'station_type': metadata.get('station_type', 'coops'),
+                'has_tide_data': 'water_level' in metadata.get('capabilities', '') or 'predictions' in metadata.get('capabilities', ''),
+                'has_water_temp': 'water_temperature' in metadata.get('capabilities', '')
+            }
+            stations['coops_stations'].append(station_info)
+        
+        # Process NDBC stations from Phase I metadata  
+        ndbc_metadata = self.station_metadata.get('ndbc_stations', {})
+        for station_id, metadata in ndbc_metadata.items():
+            capabilities = {
+                'wave_data': metadata.get('wave_capability', 'false') == 'true',
+                'atmospheric_data': metadata.get('atmospheric_capability', 'false') == 'true'
+            }
+            
+            station_info = {
+                'station_id': station_id,
+                'name': metadata.get('name', f'Buoy {station_id}'),
+                'latitude': float(metadata.get('latitude', 0)),
+                'longitude': float(metadata.get('longitude', 0)),
+                'distance_miles': float(metadata.get('distance_miles', 0)),
+                'capabilities': capabilities,
+                'station_type': metadata.get('station_type', 'ndbc'),
+                'has_wave_data': capabilities['wave_data'],
+                'has_atmospheric_data': capabilities['atmospheric_data']
+            }
+            stations['ndbc_stations'].append(station_info)
+        
+        stations['total_count'] = len(stations['coops_stations']) + len(stations['ndbc_stations'])
+        return stations
+
+    def analyze_phase_i_coverage(self):
+        """
+        Analyze Phase I station coverage for basic metrics
+        Returns coverage summary for user information
+        """
+        stations = self.get_available_stations()
+        
+        analysis = {
+            'total_stations': stations['total_count'],
+            'coops_count': len(stations['coops_stations']),
+            'ndbc_count': len(stations['ndbc_stations']),
+            'coverage_types': set(),
+            'distance_summary': {
+                'closest_station': None,
+                'average_distance': 0,
+                'farthest_station': None
+            }
+        }
+        
+        all_stations = stations['coops_stations'] + stations['ndbc_stations']
+        
+        if all_stations:
+            # Calculate distance statistics
+            distances = [s['distance_miles'] for s in all_stations]
+            analysis['distance_summary']['average_distance'] = sum(distances) / len(distances)
+            
+            closest = min(all_stations, key=lambda s: s['distance_miles'])
+            analysis['distance_summary']['closest_station'] = {
+                'name': closest['name'],
+                'distance': closest['distance_miles'],
+                'type': closest['station_type']
+            }
+            
+            farthest = max(all_stations, key=lambda s: s['distance_miles'])
+            analysis['distance_summary']['farthest_station'] = {
+                'name': farthest['name'], 
+                'distance': farthest['distance_miles'],
+                'type': farthest['station_type']
+            }
+            
+            # Identify coverage types
+            for station in stations['coops_stations']:
+                if station['has_tide_data']:
+                    analysis['coverage_types'].add('tide_data')
+                if station['has_water_temp']:
+                    analysis['coverage_types'].add('water_temperature')
+            
+            for station in stations['ndbc_stations']:
+                if station['has_wave_data']:
+                    analysis['coverage_types'].add('wave_data')
+                if station['has_atmospheric_data']:
+                    analysis['coverage_types'].add('atmospheric_data')
+        
+        return analysis
+    
+
+class StationQualityAnalyzer:
+    """
+    Analyze station data quality for user locations using research-based thresholds
+    Implements coastal oceanography research for distance-based quality scoring
+    """
+    
+    def __init__(self, yaml_data):
+        """
+        Initialize with quality thresholds from YAML configuration
+        """
+        # Load research-based quality thresholds from YAML
+        quality_config = yaml_data.get('station_quality_thresholds', {})
+        
+        self.wave_thresholds = quality_config.get('wave_data', {
+            'excellent_distance_km': 40,  # 25 miles
+            'good_distance_km': 80,       # 50 miles  
+            'fair_distance_km': 160,      # 100 miles
+            'minimum_quality': 0.6
+        })
+        
+        self.atmospheric_thresholds = quality_config.get('atmospheric_data', {
+            'excellent_distance_km': 80,   # 50 miles
+            'good_distance_km': 160,       # 100 miles
+            'fair_distance_km': 320,       # 200 miles
+            'minimum_quality': 0.5
+        })
+        
+        self.tide_thresholds = quality_config.get('tide_data', {
+            'excellent_distance_km': 80,   # 50 miles
+            'good_distance_km': 160,       # 100 miles  
+            'fair_distance_km': 240,       # 150 miles
+            'minimum_quality': 0.7
+        })
+    
+    def calculate_wave_quality_score(self, distance_miles):
+        """
+        Calculate wave data quality score based on research-validated distance thresholds
+        Returns quality score (0.0-1.0) and quality level
+        """
+        distance_km = distance_miles * 1.60934
+        
+        if distance_km <= self.wave_thresholds['excellent_distance_km']:
+            return 1.0, 'excellent'
+        elif distance_km <= self.wave_thresholds['good_distance_km']:
+            return 0.8, 'good'
+        elif distance_km <= self.wave_thresholds['fair_distance_km']:
+            return 0.6, 'fair'
+        else:
+            # Linear decay beyond fair threshold
+            max_distance = self.wave_thresholds['fair_distance_km'] * 2
+            if distance_km >= max_distance:
+                return 0.1, 'poor'
+            decay_factor = (max_distance - distance_km) / max_distance
+            return max(0.1, decay_factor * 0.5), 'poor'
+    
+    def calculate_atmospheric_quality_score(self, distance_miles):
+        """
+        Calculate atmospheric data quality score based on research thresholds
+        Returns quality score (0.0-1.0) and quality level
+        """
+        distance_km = distance_miles * 1.60934
+        
+        if distance_km <= self.atmospheric_thresholds['excellent_distance_km']:
+            return 1.0, 'excellent'
+        elif distance_km <= self.atmospheric_thresholds['good_distance_km']:
+            return 0.8, 'good'
+        elif distance_km <= self.atmospheric_thresholds['fair_distance_km']:
+            return 0.6, 'fair'
+        else:
+            max_distance = self.atmospheric_thresholds['fair_distance_km'] * 2
+            if distance_km >= max_distance:
+                return 0.1, 'poor'
+            decay_factor = (max_distance - distance_km) / max_distance
+            return max(0.1, decay_factor * 0.5), 'poor'
+    
+    def calculate_tide_quality_score(self, distance_miles):
+        """
+        Calculate tide data quality score based on coastal research
+        Returns quality score (0.0-1.0) and quality level
+        """
+        distance_km = distance_miles * 1.60934
+        
+        if distance_km <= self.tide_thresholds['excellent_distance_km']:
+            return 1.0, 'excellent'
+        elif distance_km <= self.tide_thresholds['good_distance_km']:
+            return 0.8, 'good'
+        elif distance_km <= self.tide_thresholds['fair_distance_km']:
+            return 0.6, 'fair'
+        else:
+            max_distance = self.tide_thresholds['fair_distance_km'] * 2
+            if distance_km >= max_distance:
+                return 0.1, 'poor'
+            decay_factor = (max_distance - distance_km) / max_distance
+            return max(0.1, decay_factor * 0.5), 'poor'
+
+    def analyze_location_coverage(self, location, available_stations):
+        """
+        Analyze data coverage quality for specific user location
+        Returns comprehensive coverage analysis with quality scores
+        """
+        location_lat = location['latitude']
+        location_lon = location['longitude']
+        location_name = location['name']
+        
+        analysis = {
+            'location': location_name,
+            'coordinates': (location_lat, location_lon),
+            'wave_sources': [],
+            'atmospheric_sources': [],
+            'tide_sources': [],
+            'quality_summary': {
+                'wave_quality': 0.0,
+                'atmospheric_quality': 0.0,
+                'tide_quality': 0.0,
+                'overall_quality': 0.0
+            },
+            'recommendations': []
+        }
+        
+        # Analyze NDBC stations for wave and atmospheric data
+        for station in available_stations['ndbc_stations']:
+            station_distance = self._calculate_distance(
+                location_lat, location_lon,
+                station['latitude'], station['longitude']
+            )
+            
+            if station['has_wave_data']:
+                wave_score, wave_level = self.calculate_wave_quality_score(station_distance)
+                analysis['wave_sources'].append({
+                    'station_id': station['station_id'],
+                    'name': station['name'],
+                    'distance_miles': station_distance,
+                    'quality_score': wave_score,
+                    'quality_level': wave_level
+                })
+            
+            if station['has_atmospheric_data']:
+                atmo_score, atmo_level = self.calculate_atmospheric_quality_score(station_distance)
+                analysis['atmospheric_sources'].append({
+                    'station_id': station['station_id'],
+                    'name': station['name'],
+                    'distance_miles': station_distance,
+                    'quality_score': atmo_score,
+                    'quality_level': atmo_level
+                })
+        
+        # Analyze CO-OPS stations for tide data
+        for station in available_stations['coops_stations']:
+            if station['has_tide_data']:
+                station_distance = self._calculate_distance(
+                    location_lat, location_lon,
+                    station['latitude'], station['longitude']
+                )
+                
+                tide_score, tide_level = self.calculate_tide_quality_score(station_distance)
+                analysis['tide_sources'].append({
+                    'station_id': station['station_id'],
+                    'name': station['name'],
+                    'distance_miles': station_distance,
+                    'quality_score': tide_score,
+                    'quality_level': tide_level
+                })
+        
+        # Calculate best quality scores for each data type
+        if analysis['wave_sources']:
+            analysis['quality_summary']['wave_quality'] = max(s['quality_score'] for s in analysis['wave_sources'])
+        
+        if analysis['atmospheric_sources']:
+            analysis['quality_summary']['atmospheric_quality'] = max(s['quality_score'] for s in analysis['atmospheric_sources'])
+        
+        if analysis['tide_sources']:
+            analysis['quality_summary']['tide_quality'] = max(s['quality_score'] for s in analysis['tide_sources'])
+        
+        # Calculate overall quality (weighted average)
+        weights = {'wave': 0.4, 'atmospheric': 0.4, 'tide': 0.2}
+        overall_quality = (
+            analysis['quality_summary']['wave_quality'] * weights['wave'] +
+            analysis['quality_summary']['atmospheric_quality'] * weights['atmospheric'] +
+            analysis['quality_summary']['tide_quality'] * weights['tide']
+        )
+        analysis['quality_summary']['overall_quality'] = overall_quality
+        
+        return analysis
+    
+    def _calculate_distance(self, lat1, lon1, lat2, lon2):
+        """
+        Calculate distance between two points using haversine formula
+        Returns distance in miles
+        """
+        import math
+        R = 3959  # Earth radius in miles
+        
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
+        
+        a = (math.sin(delta_lat/2) * math.sin(delta_lat/2) +
+             math.cos(lat1_rad) * math.cos(lat2_rad) *
+             math.sin(delta_lon/2) * math.sin(delta_lon/2))
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        
+        return R * c
+    
+
+class MarineStationRecommendationEngine:
+    """
+    Generate station recommendations for optimizing surf and fishing forecasts
+    Provides actionable suggestions for improving data coverage
+    """
+    
+    def __init__(self, phase_i_analyzer, quality_analyzer):
+        """
+        Initialize recommendation engine with analyzers
+        """
+        self.phase_i_analyzer = phase_i_analyzer
+        self.quality_analyzer = quality_analyzer
+    
+    def analyze_multi_location_optimization(self, user_locations):
+        """
+        Analyze all user locations and provide comprehensive optimization recommendations
+        Returns prioritized recommendations for improving overall data coverage
+        """
+        available_stations = self.phase_i_analyzer.get_available_stations()
+        
+        # Analyze coverage for each location
+        location_analyses = []
+        for location in user_locations:
+            analysis = self.quality_analyzer.analyze_location_coverage(location, available_stations)
+            location_analyses.append(analysis)
+        
+        # Generate comprehensive recommendations
+        recommendations = {
+            'priority_recommendations': [],
+            'optimization_summary': {},
+            'current_coverage': {},
+            'improvement_potential': {}
+        }
+        
+        # Analyze overall coverage quality
+        overall_wave_quality = sum(a['quality_summary']['wave_quality'] for a in location_analyses) / len(location_analyses) if location_analyses else 0
+        overall_atmospheric_quality = sum(a['quality_summary']['atmospheric_quality'] for a in location_analyses) / len(location_analyses) if location_analyses else 0
+        overall_tide_quality = sum(a['quality_summary']['tide_quality'] for a in location_analyses) / len(location_analyses) if location_analyses else 0
+        
+        recommendations['current_coverage'] = {
+            'wave_quality': overall_wave_quality,
+            'atmospheric_quality': overall_atmospheric_quality, 
+            'tide_quality': overall_tide_quality,
+            'total_locations': len(location_analyses)
+        }
+        
+        # Generate priority recommendations based on quality gaps
+        if overall_wave_quality < 0.6:
+            recommendations['priority_recommendations'].append({
+                'type': 'critical',
+                'category': 'wave_data',
+                'message': f'Wave data quality is below recommended threshold ({overall_wave_quality:.1f}/1.0)',
+                'impact': 'Surf forecasts may be less accurate due to distant wave buoys',
+                'suggestion': 'Consider adding closer NDBC wave buoys to Phase I configuration'
+            })
+        
+        if overall_atmospheric_quality < 0.5:
+            recommendations['priority_recommendations'].append({
+                'type': 'critical',
+                'category': 'atmospheric_data',
+                'message': f'Atmospheric data quality is below threshold ({overall_atmospheric_quality:.1f}/1.0)',
+                'impact': 'Wind and pressure forecasts may lack local precision',
+                'suggestion': 'Add closer NDBC atmospheric buoys or enable WeeWX station integration'
+            })
+        
+        if overall_tide_quality < 0.7:
+            recommendations['priority_recommendations'].append({
+                'type': 'important',
+                'category': 'tide_data',
+                'message': f'Tide data quality could be improved ({overall_tide_quality:.1f}/1.0)',
+                'impact': 'Fishing forecasts may be less precise for tide-dependent species',
+                'suggestion': 'Consider adding backup CO-OPS tide stations'
+            })
+        
+        # Check for locations with particularly poor coverage
+        for analysis in location_analyses:
+            location_quality = analysis['quality_summary']['overall_quality']
+            if location_quality < 0.4:
+                recommendations['priority_recommendations'].append({
+                    'type': 'location_specific',
+                    'category': 'poor_coverage',
+                    'message': f'Location "{analysis["location"]}" has poor data coverage ({location_quality:.1f}/1.0)',
+                    'impact': 'Forecasts for this location may be unreliable',
+                    'suggestion': f'Consider relocating closer to existing stations or adding stations near {analysis["location"]}'
+                })
+        
+        return recommendations
+    
+    def display_recommendations_interactive(self, recommendations):
+        """
+        Display recommendations to user and get their choices
+        Returns list of accepted recommendations for implementation
+        """
+        if not recommendations['priority_recommendations']:
+            print(f"\n{CORE_ICONS['status']} Station Coverage Analysis")
+            print("Your Phase I station configuration provides good coverage for all locations.")
+            print("No immediate improvements needed.")
+            return []
+        
+        print(f"\n{CORE_ICONS['selection']} Station Coverage Recommendations")
+        print("Based on your surf/fishing locations, we recommend these improvements:")
+        print()
+        
+        accepted_recommendations = []
+        for i, rec in enumerate(recommendations['priority_recommendations'], 1):
+            icon = CORE_ICONS['warning'] if rec['type'] == 'critical' else CORE_ICONS['navigation']
+            print(f"{icon} {i}. {rec['message']}")
+            print(f"   Impact: {rec['impact']}")
+            print(f"   Suggestion: {rec['suggestion']}")
+            
+            while True:
+                choice = input(f"   Apply this recommendation? (y/n): ").strip().lower()
+                if choice in ['y', 'yes']:
+                    accepted_recommendations.append(rec)
+                    print(f"   {CORE_ICONS['status']} Will implement")
+                    break
+                elif choice in ['n', 'no']:
+                    print(f"   Skipped")
+                    break
+                else:
+                    print(f"   {CORE_ICONS['warning']} Please enter y or n")
+            print()
+        
+        return accepted_recommendations
 
 
 class SurfFishingInstaller(ExtensionInstaller):
