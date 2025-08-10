@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Anenome
+# Magic Animal: Coral
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -70,11 +70,10 @@ class InstallationProgressManager:
 
 
 class GRIBLibraryManager:
-    """Detect and install GRIB processing libraries"""
+    """Detect GRIB processing libraries and enforce prerequisites"""
     
     def __init__(self):
         self.available_library = None
-        self.installation_method = None
     
     def detect_grib_libraries(self):
         """Detect available GRIB processing libraries"""
@@ -83,7 +82,6 @@ class GRIBLibraryManager:
         try:
             import eccodes
             self.available_library = 'eccodes'
-            self.installation_method = 'pre-installed'
             return True
         except ImportError:
             pass
@@ -92,7 +90,6 @@ class GRIBLibraryManager:
         try:
             import pygrib
             self.available_library = 'pygrib'
-            self.installation_method = 'pre-installed'
             return True
         except ImportError:
             pass
@@ -100,84 +97,31 @@ class GRIBLibraryManager:
         return False
     
     def install_grib_library(self):
-        """Install GRIB processing library with fallbacks"""
+        """Check GRIB library availability and exit if not found"""
         
-        print(f"\n{CORE_ICONS['selection']} GRIB Processing Library Installation")
+        print(f"\n{CORE_ICONS['selection']} GRIB Processing Library Check")
         print("WaveWatch III forecast data requires GRIB file processing capability.")
         print()
         
-        # Try eccodes-python first (recommended)
-        print("Attempting to install eccodes-python (recommended)...")
-        
-        try:
-            # Method 1: APT system package (most reliable)
-            result = subprocess.run([
-                'apt-get', 'install', '-y', 'libeccodes0', 'libeccodes-dev', 'python3-eccodes'
-            ], capture_output=True, text=True, timeout=300)
-            
-            if result.returncode == 0:
-                import eccodes
-                self.available_library = 'eccodes'
-                self.installation_method = 'apt-system'
-                print(f"  {CORE_ICONS['status']} eccodes-python installed via APT")
-                return True
-        except Exception as e:
-            print(f"  {CORE_ICONS['warning']} APT installation failed: {e}")
-        
-        try:
-            # Method 2: APT + pip hybrid
-            subprocess.run([
-                'apt-get', 'install', '-y', 'libeccodes0', 'libeccodes-dev'
-            ], capture_output=True, text=True, timeout=120)
-            
-            subprocess.run([
-                'pip3', 'install', 'eccodes-python'
-            ], capture_output=True, text=True, timeout=120)
-            
-            import eccodes
-            self.available_library = 'eccodes'
-            self.installation_method = 'apt-pip-hybrid'
-            print(f"  {CORE_ICONS['status']} eccodes-python installed via APT + pip")
+        if self.detect_grib_libraries():
+            print(f"  {CORE_ICONS['status']} GRIB library detected: {self.available_library}")
             return True
-        except Exception as e:
-            print(f"  {CORE_ICONS['warning']} Hybrid installation failed: {e}")
-        
-        # Fallback to pygrib
-        print("Falling back to pygrib installation...")
-        
-        try:
-            # Method 3: APT system package for pygrib
-            result = subprocess.run([
-                'apt-get', 'install', '-y', 'python3-grib'
-            ], capture_output=True, text=True, timeout=120)
-            
-            if result.returncode == 0:
-                import pygrib
-                self.available_library = 'pygrib'
-                self.installation_method = 'apt-system'
-                print(f"  {CORE_ICONS['status']} pygrib installed via APT")
-                return True
-        except Exception as e:
-            print(f"  {CORE_ICONS['warning']} APT pygrib installation failed: {e}")
-        
-        try:
-            # Method 4: pip pygrib
-            subprocess.run([
-                'pip3', 'install', 'pygrib'
-            ], capture_output=True, text=True, timeout=120)
-            
-            import pygrib
-            self.available_library = 'pygrib'
-            self.installation_method = 'pip'
-            print(f"  {CORE_ICONS['status']} pygrib installed via pip")
-            return True
-        except Exception as e:
-            print(f"  {CORE_ICONS['warning']} pip pygrib installation failed: {e}")
-        
-        # No GRIB library available
-        print(f"  {CORE_ICONS['warning']} No GRIB library could be installed")
-        print("  WaveWatch III forecasts will be disabled")
-        return False
+        else:
+            print(f"  {CORE_ICONS['warning']} No GRIB library found")
+            print()
+            print("PREREQUISITE MISSING:")
+            print("This extension requires either eccodes-python or pygrib to process")
+            print("WaveWatch III GRIB forecast data.")
+            print()
+            print("Installation options:")
+            print("  1. Debian/Ubuntu: sudo apt-get install libeccodes0 libeccodes-dev python3-eccodes")
+            print("  2. Alternative:   sudo apt-get install python3-grib")
+            print("  3. pip fallback:  pip install eccodes-python")
+            print("  4. pip fallback:  pip install pygrib")
+            print()
+            print("Please install a GRIB library and run the installer again.")
+            print("See README.md for detailed installation instructions.")
+            sys.exit(1)
 
 
 class AtmosphericDataAnalyzer:
@@ -605,10 +549,10 @@ class SurfFishingConfigurator:
                 
                 # GRIB processing capability
                 'grib_processing': {
-                    'available': 'true' if grib_available else 'false',
-                    'library': self.grib_manager.available_library or 'none'
+                    'available': 'true',  # Always true if we reach this point
+                    'library': self.grib_manager.available_library
                 },
-                
+
                 # WaveWatch III endpoints from YAML
                 'wavewatch_endpoints': self.yaml_data.get('api_endpoints', {}).get('wavewatch_iii', {}),
                 
