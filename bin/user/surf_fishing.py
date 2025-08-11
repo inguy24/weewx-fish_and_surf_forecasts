@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Asian Elephant
+# Magic Animal: Emu
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -772,14 +772,17 @@ class WaveWatchDataCollector:
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
     
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, db_manager=None):
         self.config_dict = config_dict
+        self.db_manager = db_manager
         service_config = config_dict.get('SurfFishingService', {})
         self.surf_rating_factors = service_config.get('surf_rating_factors', {})
     
-    def generate_surf_forecast(self, spot_config, marine_conditions, wavewatch_data):
+    def generate_surf_forecast(self, spot_config, wavewatch_data=None):
         """Generate surf forecast for a specific spot"""
         
+        marine_conditions = self.integrate_optimal_data_sources(spot_config)
+
         try:
             # Get current conditions from Phase I data
             current_waves = self._get_current_wave_conditions(marine_conditions)
@@ -1807,18 +1810,25 @@ class SurfForecastSearchList(SearchList):
 class FishingForecastGenerator:
     """Generate fishing condition forecasts"""
     
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, db_manager=None):
         self.config_dict = config_dict
+        self.db_manager = db_manager
         service_config = config_dict.get('SurfFishingService', {})
         self.fish_categories = service_config.get('fish_categories', {})
         self.fishing_scoring = service_config.get('fishing_scoring', {})
     
-    def generate_fishing_forecast(self, spot_config, marine_conditions):
+    def generate_fishing_forecast(self, spot_config):
         """Generate fishing forecast for a specific spot"""
         
+        pressure_analysis = self.integrate_pressure_trend_analysis(spot_config)
+        tide_analysis = self.integrate_tide_correlation_analysis(spot_config)
+
         try:
             # Get target species category
             target_category = spot_config.get('target_category', 'mixed_bag')
+            species_activity = self.calculate_species_activity_with_multi_source(
+            target_category, pressure_analysis, tide_analysis
+            )
             category_config = self.fish_categories.get(target_category, {})
             
             # Generate period-based forecasts (6 periods per day)
@@ -3452,10 +3462,17 @@ class SurfFishingService(StdService):
         # Initialize components
         self.grib_processor = GRIBProcessor(config_dict)
         self.wavewatch_collector = WaveWatchDataCollector(config_dict, self.grib_processor)
-        self.surf_generator = SurfForecastGenerator(config_dict)
-        self.fishing_generator = FishingForecastGenerator(config_dict)
+        self.surf_generator = SurfForecastGenerator(config_dict, self.db_manager)
+        self.fishing_generator = FishingForecastGenerator(config_dict, self.db_manager)
         self.field_definitions = self.service_config.get('field_definitions', {})
         
+        # Initialize station integration
+        integration_success = self.initialize_station_integration()
+        if integration_success:
+            log.info(f"{CORE_ICONS['status']} Station integration active")
+        else:
+            log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
+
         # Background forecast generation
         self.forecast_thread = None
         self.shutdown_event = threading.Event()
