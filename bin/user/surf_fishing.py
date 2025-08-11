@@ -1822,6 +1822,7 @@ class FishingForecastGenerator:
         
         pressure_analysis = self.integrate_pressure_trend_analysis(spot_config)
         tide_analysis = self.integrate_tide_correlation_analysis(spot_config)
+        marine_conditions = self.integrate_optimal_data_sources(spot_config)
 
         try:
             # Get target species category
