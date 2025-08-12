@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Hermit Crab
+# Magic Animal: Alaskan King Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -1448,7 +1448,7 @@ class SurfFishingInstaller(ExtensionInstaller):
     
     def _extend_database_schema(self, config_dict, selected_locations):
         """
-        Extend database schema for surf and fishing forecasts with proper error handling
+        Extend database schema for surf and fishing forecasts - reads YAML directly
         """
         
         progress = InstallationProgressManager()
@@ -1456,60 +1456,67 @@ class SurfFishingInstaller(ExtensionInstaller):
         try:
             progress.show_step_progress("Creating Database Tables")
             
-            # Get database binding from config
-            db_binding = config_dict.get('DataBindings', {}).get('wx_binding', {}).get('database', 'archive_sqlite')
+            # Read YAML directly here - no separate method needed
+            database_schema = self.yaml_data.get('database_schema', {})
+            
+            if not database_schema:
+                raise Exception(
+                    f"{CORE_ICONS['warning']} No database_schema found in YAML configuration. "
+                    "The surf_fishing_fields.yaml file must contain 'database_schema' section with table definitions."
+                )
             
             with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as manager:
                 
-                # Required table schemas for surf and fishing forecasts
-                required_tables = self._get_required_table_schemas()
-                
-                for table_name, table_fields in required_tables.items():
-                    
-                    # Build field definitions
-                    field_definitions = []
-                    for field_name, field_type in table_fields.items():
-                        # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
-                        if (field_name == "period_name" and 
-                            field_type == "TEXT NOT NULL" and 
-                            table_name == "marine_forecast_fishing_data"):
-                            field_type = "VARCHAR(50) NOT NULL"
+                # Process each table from YAML
+                for table_key, table_config in database_schema.items():
+                    if isinstance(table_config, dict) and 'name' in table_config and 'fields' in table_config:
+                        table_name = table_config['name']
+                        table_fields = table_config['fields']
                         
-                        field_definitions.append(f"{field_name} {field_type}")
-                    
-                    # Add table-specific constraints
-                    constraints = []
-                    if table_name == "marine_forecast_surf_data":
-                        constraints.extend([
-                            "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
-                            "UNIQUE(spot_id, forecast_time)"
-                        ])
-                    elif table_name == "marine_forecast_fishing_data":
-                        constraints.extend([
-                            "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
-                            "UNIQUE(spot_id, forecast_date, period_name)"
-                        ])
-                    
-                    # Combine fields and constraints
-                    all_definitions = field_definitions + constraints
-                    
-                    # Add inline indexes to table definitions (Phase I pattern)
-                    if table_name == "marine_forecast_surf_spots":
-                        all_definitions.append("INDEX idx_surf_spots_active (active)")
-                    elif table_name == "marine_forecast_fishing_spots":
-                        all_definitions.append("INDEX idx_fishing_spots_active (active)")
-                    elif table_name == "marine_forecast_surf_data":
-                        all_definitions.append("INDEX idx_surf_forecasts_time (spot_id, forecast_time)")
-                    elif table_name == "marine_forecast_fishing_data":
-                        all_definitions.append("INDEX idx_fishing_forecasts_date (spot_id, forecast_date)")
-                    
-                    # Execute CREATE TABLE with inline indexes (Phase I pattern)
-                    create_sql = f"""
-                        CREATE TABLE IF NOT EXISTS {table_name} (
-                            {', '.join(all_definitions)}
-                        )
-                    """
-                    manager.connection.execute(create_sql)
+                        # Build field definitions
+                        field_definitions = []
+                        for field_name, field_type in table_fields.items():
+                            # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
+                            if (field_name == "period_name" and 
+                                field_type == "TEXT NOT NULL" and 
+                                table_name == "marine_forecast_fishing_data"):
+                                field_type = "VARCHAR(50) NOT NULL"
+                            
+                            field_definitions.append(f"{field_name} {field_type}")
+                        
+                        # Add table-specific constraints
+                        constraints = []
+                        if table_name == "marine_forecast_surf_data":
+                            constraints.extend([
+                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
+                                "UNIQUE(spot_id, forecast_time)"
+                            ])
+                        elif table_name == "marine_forecast_fishing_data":
+                            constraints.extend([
+                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
+                                "UNIQUE(spot_id, forecast_date, period_name)"
+                            ])
+                        
+                        # Combine fields and constraints
+                        all_definitions = field_definitions + constraints
+                        
+                        # Add inline indexes to table definitions (Phase I pattern)
+                        if table_name == "marine_forecast_surf_spots":
+                            all_definitions.append("INDEX idx_surf_spots_active (active)")
+                        elif table_name == "marine_forecast_fishing_spots":
+                            all_definitions.append("INDEX idx_fishing_spots_active (active)")
+                        elif table_name == "marine_forecast_surf_data":
+                            all_definitions.append("INDEX idx_surf_forecasts_time (spot_id, forecast_time)")
+                        elif table_name == "marine_forecast_fishing_data":
+                            all_definitions.append("INDEX idx_fishing_forecasts_date (spot_id, forecast_date)")
+                        
+                        # Execute CREATE TABLE with inline indexes (Phase I pattern)
+                        create_sql = f"""
+                            CREATE TABLE IF NOT EXISTS {table_name} (
+                                {', '.join(all_definitions)}
+                            )
+                        """
+                        manager.connection.execute(create_sql)
                 
                 # Insert user locations into database (existing method)
                 self._insert_user_locations(manager, selected_locations)
@@ -1567,7 +1574,7 @@ class SurfFishingInstaller(ExtensionInstaller):
         
         print(f"  {CORE_ICONS['status']} Inserted {surf_count} surf spots and {fishing_count} fishing spots")
 
-    def _get_required_table_schemas(self):
+
         """
         Get table schemas from YAML configuration data.
         Returns dictionary of table_name -> field_definitions
