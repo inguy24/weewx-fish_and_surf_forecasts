@@ -769,53 +769,59 @@ class SurfFishingConfigurator:
             }
 
     def _display_configuration_summary(self, config_dict, station_analysis):
-        """
-        Display comprehensive configuration summary including station analysis
-        Provides clear overview of what was configured
-        """
-        print(f"\n{CORE_ICONS['status']} Configuration Summary")
-        print("="*50)
-        
-        service_config = config_dict['SurfFishingService']
-        
-        # Forecast types configured
-        forecast_types = service_config['forecast_types']
-        print(f"Forecast Types: {', '.join(forecast_types).title()}")
-        
-        # Data sources
-        data_source_type = service_config['data_sources']['type']
-        print(f"Data Strategy: {data_source_type.replace('_', ' ').title()}")
-        
-        # Location counts
-        surf_count = len(service_config['surf_spots'])
-        fishing_count = len(service_config['fishing_spots'])
-        print(f"Locations: {surf_count} surf spots, {fishing_count} fishing spots")
-        
-        # GRIB processing
-        grib_enabled = service_config['grib_processing']['available']
-        grib_lib = service_config['grib_processing']['library']
-        print(f"WaveWatch III: {'Enabled' if grib_enabled == 'true' else 'Disabled'}")
-        if grib_enabled == 'true':
-            print(f"  GRIB Library: {grib_lib}")
-        
-        # Station integration analysis results (NEW)
-        if station_analysis:
-            integration = service_config['station_integration']
-            print(f"\nStation Integration Analysis:")
-            print(f"  Analysis completed: {integration['analysis_completed']}")
+            """
+            Display comprehensive configuration summary including station analysis
+            Provides clear overview of what was configured
+            """
+            print(f"\n{CORE_ICONS['status']} Configuration Summary")
+            print("="*50)
             
-            if integration.get('coverage_quality'):
-                coverage = integration['coverage_quality']
-                print(f"  Wave data quality: {coverage.get('wave_quality', 0):.1f}/1.0")
-                print(f"  Atmospheric quality: {coverage.get('atmospheric_quality', 0):.1f}/1.0")
-                print(f"  Tide data quality: {coverage.get('tide_quality', 0):.1f}/1.0")
+            service_config = config_dict['SurfFishingService']
             
-            rec_count = integration.get('recommendations_count', '0')
-            if int(rec_count) > 0:
-                print(f"  Optimization recommendations: {rec_count} accepted")
-                print(f"  (See marine_recommendations section in configuration)")
-        
-        print()
+            # Forecast types configured
+            forecast_types = service_config['forecast_types']
+            print(f"Forecast Types: {', '.join(forecast_types).title()}")
+            
+            # Data sources
+            data_source_type = service_config['data_sources']['type']
+            print(f"Data Strategy: {data_source_type.replace('_', ' ').title()}")
+            
+            # Location counts
+            surf_count = len(service_config['surf_spots'])
+            fishing_count = len(service_config['fishing_spots'])
+            print(f"Locations: {surf_count} surf spots, {fishing_count} fishing spots")
+            
+            # GRIB processing
+            grib_enabled = service_config['grib_processing']['available']
+            grib_lib = service_config['grib_processing']['library']
+            print(f"WaveWatch III: {'Enabled' if grib_enabled == 'true' else 'Disabled'}")
+            if grib_enabled == 'true':
+                print(f"  GRIB Library: {grib_lib}")
+            
+            # Station integration analysis results (FIXED)
+            if station_analysis and 'station_analysis' in service_config:
+                analysis_config = service_config['station_analysis']
+                print(f"\nStation Integration Analysis:")
+                print(f"  Analysis completed: {analysis_config['analysis_completed']}")
+                
+                if analysis_config.get('coverage_quality'):
+                    print(f"  Coverage quality: {analysis_config['coverage_quality']}")
+                
+                recommendations_count = analysis_config.get('accepted_recommendations', '0')
+                print(f"  Accepted recommendations: {recommendations_count}")
+            
+            # Data integration settings
+            if 'data_integration' in service_config:
+                data_integration = service_config['data_integration']
+                print(f"\nData Integration:")
+                print(f"  Method: {data_integration['method']}")
+                print(f"  Station data enabled: {data_integration['enable_station_data']}")
+                
+                distance_km = data_integration.get('local_station_distance_km', 'unknown')
+                if distance_km != '999':
+                    print(f"  Station distance: {distance_km} km")
+            
+            print(f"\n{CORE_ICONS['status']} Configuration complete - ready for installation!")
 
     def _handle_configuration_error(self, error, context="configuration"):
         """
