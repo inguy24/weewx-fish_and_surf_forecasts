@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Cone Snail
+# Magic Animal: Horseshoe Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -251,7 +251,7 @@ class SurfFishingConfigurator:
         grib_available = self._setup_grib_processing()
         
         # Step 3: Configure data source strategy (ENHANCED)
-        data_sources = self._configure_data_sources(grib_available)
+        data_sources = self._configure_data_sources()
         
         # Step 4: Configure forecast types and locations (EXISTING PATTERN)
         forecast_types = self._select_forecast_types()
