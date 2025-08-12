@@ -298,38 +298,81 @@ class SurfFishingConfigurator:
             return self.grib_manager.install_grib_library()
     
     def _configure_data_sources(self):
-        """Configure atmospheric data strategy"""
+        """
+        Configure atmospheric data strategy based on user's station location
+        Uses simple question about coastal proximity for decision making
+        """
         
-        print(f"\n{CORE_ICONS['selection']} Atmospheric Data Strategy")
-        print("Choose your atmospheric data sources for surf and fishing forecasts:")
+        print(f"\n{CORE_ICONS['selection']} Station Location Assessment")
+        print("To optimize your surf and fishing forecasts, we need to understand your station location.")
         print()
-        print("1. NOAA APIs Only (recommended for most users)")
-        print("   - Uses NDBC buoys, CO-OPS tides, WaveWatch III")
-        print("   - Most comprehensive offshore data")
+        
+        # Get station coordinates for display (if available)
+        station_lat = self.config_dict.get('Station', {}).get('latitude')
+        station_lon = self.config_dict.get('Station', {}).get('longitude')
+        
+        if station_lat and station_lon:
+            print(f"  Your WeeWX Station: {float(station_lat):.4f}, {float(station_lon):.4f}")
+        
+        print(f"  Location Question:")
         print()
-        print("2. WeeWX Station + NOAA Supplement")
-        print("   - Uses your weather station for local conditions")
-        print("   - Supplements with NOAA marine data")
-        print("   - Better local wind/pressure accuracy")
+        print("Is your weather station located within 5 miles of the ocean/coast?")
+        print("(This determines whether your station data is useful for marine forecasting)")
+        print()
+        print("1. Yes - My station is within 5 miles of the coast")
+        print("   → We'll use your station + NOAA data for best accuracy")
+        print()
+        print("2. No - My station is more than 5 miles inland") 
+        print("   → We'll use NOAA marine data only for best accuracy")
         print()
         
         while True:
-            choice = input("Select data source (1-2): ").strip()
-            if choice in ['1', '2']:
-                break
-            print(f"{CORE_ICONS['warning']} Please enter 1 or 2")
-        
-        if choice == '1':
-            return {'type': 'noaa_only'}
-        else:
-            return self._configure_station_integration()
+            try:
+                choice = input("Is your station within 5 miles of the coast? (1=Yes, 2=No): ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nInstallation cancelled by user.")
+                sys.exit(1)
+            
+            if choice == '1':
+                print(f"\n  {CORE_ICONS['status']} DECISION: Hybrid Approach (Station + NOAA)")
+                print(f"  Your coastal station will provide valuable local atmospheric data")
+                print(f"      - Station: Local wind/pressure accuracy")
+                print(f"      - NOAA: Marine wave/tide data")
+                print(f"      - Combined: Best forecast accuracy")
+                
+                # Call existing station integration method
+                return self._configure_station_integration()
+                
+            elif choice == '2':
+                print(f"\n  {CORE_ICONS['status']} DECISION: NOAA-Only Approach")
+                print(f"  NOAA marine buoys will provide the most accurate data")
+                print(f"      - NOAA buoys: Best marine atmospheric data")
+                print(f"      - Station: Too far inland for marine forecasts")
+                
+                return {
+                    'type': 'noaa_only',
+                    'reason': 'station_inland_user_selected'
+                }
+            else:
+                print(f"  {CORE_ICONS['warning']} Please enter 1 for Yes or 2 for No")
     
     def _configure_station_integration(self):
-        """Configure which station sensors to use"""
+        """
+        Configure which station sensors to use (supplement with NOAA)
+        Enhanced with location-based recommendations for coastal stations
+        """
         
         print(f"\n{CORE_ICONS['selection']} Station Sensor Integration")
         print("Select which station sensors to use (supplement with NOAA):")
+        print("Recommendations for coastal stations:")
         print()
+        
+        # Coastal station recommendations (since user selected coastal location)
+        recommendations = {
+            'wind': 'Highly recommended - excellent coastal wind representation',
+            'pressure': 'Highly recommended - excellent for marine pressure systems', 
+            'temperature': 'Recommended - good coastal air temperature'
+        }
         
         available_sensors = {
             'wind': 'Wind speed and direction',
@@ -339,12 +382,14 @@ class SurfFishingConfigurator:
         
         selected_sensors = {}
         for sensor_key, description in available_sensors.items():
-            use_sensor = input(f"Use station {description}? (y/n, default n): ").strip().lower()
+            recommendation = recommendations.get(sensor_key, 'Recommended')
+            use_sensor = input(f"Use station {description}? ({recommendation}) (y/n, default n): ").strip().lower()
             selected_sensors[sensor_key] = use_sensor == 'y'
             
         return {
             'type': 'station_supplement',
-            'sensors': selected_sensors
+            'sensors': selected_sensors,
+            'reason': 'station_coastal_user_selected'
         }
     
     def _configure_locations(self):
