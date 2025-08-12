@@ -1447,7 +1447,10 @@ class SurfFishingInstaller(ExtensionInstaller):
             return False
     
     def _extend_database_schema(self, config_dict, selected_locations):
-        """Create database tables for surf and fishing forecasts"""
+        """
+        Create database tables for surf and fishing forecasts
+        DATA-DRIVEN from surf_fishing_fields.yaml with MySQL compatibility
+        """
         
         print(f"\n{CORE_ICONS['selection']} Creating Database Tables")
         
@@ -1455,92 +1458,71 @@ class SurfFishingInstaller(ExtensionInstaller):
             # Get database manager using WeeWX 5.1 patterns
             with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as manager:
                 
-                # Create surf spots table
-                manager.connection.execute("""
-                    CREATE TABLE IF NOT EXISTS marine_forecast_surf_spots (
-                        id INTEGER PRIMARY KEY,
-                        name TEXT NOT NULL UNIQUE,
-                        latitude REAL NOT NULL,
-                        longitude REAL NOT NULL,
-                        bottom_type TEXT,             -- sand, reef, point, jetty, mixed
-                        exposure TEXT,                -- exposed, semi_protected, protected
-                        preferred_swell_direction REAL, -- Optimal swell direction (degrees)
-                        notes TEXT,                   -- User observations
-                        created_date INTEGER,        -- Unix timestamp
-                        active BOOLEAN DEFAULT 1     -- Enable/disable forecasting
-                    )
-                """)
+                # DATA-DRIVEN: Load table definitions from YAML
+                database_schema = self.yaml_data.get('database_schema', {})
                 
-                # Create fishing spots table
-                manager.connection.execute("""
-                    CREATE TABLE IF NOT EXISTS marine_forecast_fishing_spots (
-                        id INTEGER PRIMARY KEY,
-                        name TEXT NOT NULL UNIQUE,
-                        latitude REAL NOT NULL,
-                        longitude REAL NOT NULL,
-                        location_type TEXT,           -- shore, pier, boat, mixed
-                        target_category TEXT,         -- saltwater_inshore, freshwater_sport, etc.
-                        structure_type TEXT,          -- sandy, rocky, pier, kelp, mixed
-                        target_species TEXT,          -- JSON array of target species
-                        notes TEXT,                   -- User observations
-                        created_date INTEGER,        -- Unix timestamp
-                        active BOOLEAN DEFAULT 1     -- Enable/disable forecasting
-                    )
-                """)
+                # Get the table definitions (skip the description)
+                tables_to_create = [
+                    'surf_spots_table',
+                    'fishing_spots_table', 
+                    'surf_forecast_table',
+                    'fishing_forecast_table'
+                ]
                 
-                # Create surf forecasts table
-                manager.connection.execute("""
-                    CREATE TABLE IF NOT EXISTS marine_forecast_surf_data (
-                        id INTEGER PRIMARY KEY,
-                        spot_id INTEGER NOT NULL,
-                        forecast_time INTEGER NOT NULL,       -- Unix timestamp of forecast period
-                        generated_time INTEGER NOT NULL,      -- When forecast was created
-                        wave_height_min REAL,                -- Minimum expected wave height (feet)
-                        wave_height_max REAL,                -- Maximum expected wave height (feet)
-                        wave_period REAL,                    -- Dominant wave period (seconds)
-                        wave_direction REAL,                 -- Wave direction (degrees)
-                        wind_speed REAL,                     -- Wind speed (mph)
-                        wind_direction REAL,                 -- Wind direction (degrees)
-                        wind_condition TEXT,                 -- 'offshore', 'onshore', 'cross', 'calm'
-                        tide_height REAL,                    -- Tide level (feet above datum)
-                        tide_stage TEXT,                     -- 'rising', 'falling', 'high', 'low'
-                        quality_rating INTEGER,              -- 1-5 star rating
-                        confidence REAL,                     -- 0-1 confidence level
-                        conditions_text TEXT,                -- "Good", "Fair", "Poor", "Excellent"
-                        FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id),
-                        UNIQUE(spot_id, forecast_time)
-                    )
-                """)
+                for table_key in tables_to_create:
+                    table_config = database_schema.get(table_key, {})
+                    table_name = table_config.get('name')
+                    table_fields = table_config.get('fields', {})
+                    
+                    if table_name and table_fields:
+                        # Build CREATE TABLE SQL from YAML field definitions
+                        field_definitions = []
+                        
+                        for field_name, field_type in table_fields.items():
+                            # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
+                            if (field_name == "period_name" and 
+                                field_type == "TEXT NOT NULL" and 
+                                table_name == "marine_forecast_fishing_data"):
+                                field_type = "VARCHAR(50) NOT NULL"
+                            
+                            field_definitions.append(f"{field_name} {field_type}")
+                        
+                        # Add table-specific constraints
+                        constraints = []
+                        if table_name == "marine_forecast_surf_data":
+                            constraints.extend([
+                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
+                                "UNIQUE(spot_id, forecast_time)"
+                            ])
+                        elif table_name == "marine_forecast_fishing_data":
+                            constraints.extend([
+                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
+                                "UNIQUE(spot_id, forecast_date, period_name)"
+                            ])
+                        
+                        # Combine fields and constraints
+                        all_definitions = field_definitions + constraints
+                        
+                        # Execute CREATE TABLE
+                        create_sql = f"""
+                            CREATE TABLE IF NOT EXISTS {table_name} (
+                                {', '.join(all_definitions)}
+                            )
+                        """
+                        manager.connection.execute(create_sql)
                 
-                # Create fishing forecasts table
-                manager.connection.execute("""
-                    CREATE TABLE IF NOT EXISTS marine_forecast_fishing_data (
-                        id INTEGER PRIMARY KEY,
-                        spot_id INTEGER NOT NULL,
-                        forecast_date INTEGER NOT NULL,       -- Unix timestamp of forecast day (midnight)
-                        period_name TEXT NOT NULL,            -- 'early_morning', 'morning', 'midday', 'afternoon', 'evening', 'night'
-                        period_start_hour INTEGER,            -- 0-23 hour
-                        period_end_hour INTEGER,              -- 0-23 hour
-                        generated_time INTEGER NOT NULL,      -- When forecast was created
-                        pressure_trend TEXT,                 -- 'falling', 'rising', 'stable'
-                        pressure_change REAL,                -- 3-hour pressure change (inches Hg)
-                        tide_movement TEXT,                  -- 'incoming', 'outgoing', 'slack'
-                        species_activity TEXT,               -- 'high', 'moderate', 'low'
-                        activity_rating INTEGER,             -- 1-5 star rating
-                        conditions_text TEXT,                -- "Excellent", "Good", "Fair", "Poor"
-                        best_species TEXT,                   -- JSON array of most active species
-                        FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id),
-                        PRIMARY KEY (spot_id, forecast_date, period_name)
-                    )
-                """)
+                # Create performance indexes
+                index_sql_commands = [
+                    "CREATE INDEX IF NOT EXISTS idx_surf_spots_active ON marine_forecast_surf_spots(active)",
+                    "CREATE INDEX IF NOT EXISTS idx_fishing_spots_active ON marine_forecast_fishing_spots(active)", 
+                    "CREATE INDEX IF NOT EXISTS idx_surf_forecasts_time ON marine_forecast_surf_data(spot_id, forecast_time)",
+                    "CREATE INDEX IF NOT EXISTS idx_fishing_forecasts_date ON marine_forecast_fishing_data(spot_id, forecast_date)"
+                ]
                 
-                # Create indexes for query performance
-                manager.connection.execute("CREATE INDEX IF NOT EXISTS idx_surf_spots_active ON marine_forecast_surf_spots(active)")
-                manager.connection.execute("CREATE INDEX IF NOT EXISTS idx_fishing_spots_active ON marine_forecast_fishing_spots(active)")
-                manager.connection.execute("CREATE INDEX IF NOT EXISTS idx_surf_forecasts_time ON marine_forecast_surf_data(spot_id, forecast_time)")
-                manager.connection.execute("CREATE INDEX IF NOT EXISTS idx_fishing_forecasts_date ON marine_forecast_fishing_data(spot_id, forecast_date)")
+                for index_sql in index_sql_commands:
+                    manager.connection.execute(index_sql)
                 
-                # Insert user locations into database
+                # Insert user locations into database (existing method)
                 self._insert_user_locations(manager, selected_locations)
                 
             print(f"  {CORE_ICONS['status']} Database tables created successfully")
