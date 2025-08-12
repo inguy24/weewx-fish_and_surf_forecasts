@@ -254,7 +254,7 @@ class SurfFishingConfigurator:
         data_sources = self._configure_data_sources()
         
         # Step 4: Configure forecast types and locations (EXISTING PATTERN)
-        forecast_types = self._select_forecast_types()
+        forecast_types = self._select_location_types()
         selected_locations = {}
         
         if 'surf' in forecast_types:
