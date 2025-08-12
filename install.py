@@ -597,67 +597,106 @@ class SurfFishingConfigurator:
         
         return config
     
-    def _transform_to_weewx_conf(self, data_sources, locations, grib_available):
-        """Transform configuration to weewx.conf format"""
+    def _create_config_dict(self, forecast_types, data_sources, selected_locations, grib_available, station_analysis):
+        """
+        Create configuration dictionary for WeeWX integration
+        """
         
+        # Build the main service configuration section
         config_dict = {
             'SurfFishingService': {
                 'enable': 'true',
-                'forecast_interval': '21600',  # 6 hours
+                'forecast_interval': '21600',  # 6 hours in seconds
+                'log_success': 'false',
+                'log_errors': 'true',
+                'timeout': '60',
+                'retry_attempts': '3',
                 
-                # Data source configuration
+                # NEW: Forecast configuration based on user selections
+                'forecast_settings': {
+                    'enabled_types': ','.join(forecast_types),
+                    'forecast_hours': '72',  # 3-day forecasts
+                    'rating_system': 'five_star',
+                    'update_interval_hours': '6'
+                },
+                
+                # EXPANDED: Data source configuration 
+                'data_integration': {
+                    'method': data_sources.get('type', 'noaa_only'),
+                    'local_station_distance_km': str(station_analysis.get('distance_km', 999)),
+                    'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
+                },
+                
+                # PRESERVED: Station integration from original _transform_to_weewx_conf
                 'station_integration': {
                     'type': data_sources['type']
                 },
                 
-                # GRIB processing capability
+                # EXPANDED: GRIB processing capability 
                 'grib_processing': {
-                    'available': 'true',  # Always true if we reach this point
-                    'library': self.grib_manager.available_library
+                    'available': 'true' if grib_available else 'false',
+                    'library': self.grib_manager.available_library if grib_available else 'none',
+                    'download_timeout': '300',
+                    'cache_hours': '6'
                 },
 
-                # WaveWatch III endpoints from YAML
+                # PRESERVED: WaveWatch III endpoints from YAML (original functionality)
                 'wavewatch_endpoints': self.yaml_data.get('api_endpoints', {}).get('wavewatch_iii', {}),
                 
-                # Fish categories from YAML
+                # PRESERVED: Fish categories from YAML (original functionality)  
                 'fish_categories': self.yaml_data.get('fish_categories', {}),
                 
-                # User locations
+                # PRESERVED: User locations structure (original functionality)
                 'surf_spots': {},
                 'fishing_spots': {}
             }
         }
         
-        # Add station sensor configuration if using station integration
+        # PRESERVED: Add station sensor configuration if using station integration (original logic)
         if data_sources['type'] == 'station_supplement':
             config_dict['SurfFishingService']['station_integration']['sensors'] = data_sources.get('sensors', {})
         
-        # Add user locations to config
-        surf_count = 0
-        fishing_count = 0
+        # EXPANDED: Add surf spot configurations with proper handling
+        if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
+            for i, spot in enumerate(selected_locations['surf_spots']):
+                spot_key = f'spot_{i}'
+                config_dict['SurfFishingService']['surf_spots'][spot_key] = {
+                    'name': spot['name'],
+                    'latitude': str(spot['latitude']),
+                    'longitude': str(spot['longitude']),
+                    'bottom_type': spot.get('bottom_type', 'sand'),
+                    'exposure': spot.get('exposure', 'exposed')
+                }
         
-        for location in locations.get('surf_spots', []):
-            spot_key = f"spot_{surf_count}"
-            config_dict['SurfFishingService']['surf_spots'][spot_key] = {
-                'name': location['name'],
-                'latitude': str(location['latitude']),
-                'longitude': str(location['longitude']),
-                'bottom_type': location['bottom_type'],
-                'exposure': location['exposure']
+        # EXPANDED: Add fishing spot configurations with proper handling  
+        if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
+            for i, spot in enumerate(selected_locations['fishing_spots']):
+                spot_key = f'spot_{i}'
+                config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
+                    'name': spot['name'],
+                    'latitude': str(spot['latitude']),
+                    'longitude': str(spot['longitude']),
+                    'location_type': spot.get('location_type', 'shore'),
+                    'target_category': spot.get('target_category', 'mixed_bag')
+                }
+        
+        # NEW: Add station analysis results to configuration for service reference
+        if station_analysis:
+            config_dict['SurfFishingService']['station_analysis'] = {
+                'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
+                'accepted_recommendations': str(len(station_analysis.get('accepted_recommendations', []))),
+                'coverage_quality': station_analysis.get('coverage_summary', {}).get('quality_score', 'unknown')
             }
-            surf_count += 1
-            
-        for location in locations.get('fishing_spots', []):
-            spot_key = f"spot_{fishing_count}"
-            config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
-                'name': location['name'],
-                'latitude': str(location['latitude']),
-                'longitude': str(location['longitude']),
-                'location_type': location['location_type'],
-                'target_category': location['target_category']
-            }
-            fishing_count += 1
-    
+        
+        # NEW: Add forecast type tracking for service initialization
+        config_dict['SurfFishingService']['forecast_types'] = forecast_types
+        
+        # NEW: Add data source tracking for service reference
+        config_dict['SurfFishingService']['data_sources'] = {
+            'type': data_sources['type'],
+            'configured_at': str(int(time.time()))
+        }
+        
         return config_dict
 
     def _analyze_marine_station_integration(self, selected_locations):
