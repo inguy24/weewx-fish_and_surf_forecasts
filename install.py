@@ -1449,6 +1449,7 @@ class SurfFishingInstaller(ExtensionInstaller):
     def _extend_database_schema(self, config_dict, selected_locations):
         """
         Extend database schema for surf and fishing forecasts - reads YAML directly
+        NOTE: No longer creates location tables - user locations go in CONF
         """
         
         progress = InstallationProgressManager()
@@ -1467,10 +1468,16 @@ class SurfFishingInstaller(ExtensionInstaller):
             
             with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as manager:
                 
-                # Process each table from YAML
+                # Process each table from YAML - SKIP location tables (spots go in CONF)
                 for table_key, table_config in database_schema.items():
                     if isinstance(table_config, dict) and 'name' in table_config and 'fields' in table_config:
                         table_name = table_config['name']
+                        
+                        # SKIP location tables - these are now CONF-based
+                        if table_name in ['marine_forecast_surf_spots', 'marine_forecast_fishing_spots']:
+                            print(f"  {CORE_ICONS['navigation']} Skipping {table_name} - user locations stored in CONF")
+                            continue
+                        
                         table_fields = table_config['fields']
                         
                         # Build field definitions
@@ -1484,16 +1491,16 @@ class SurfFishingInstaller(ExtensionInstaller):
                             
                             field_definitions.append(f"{field_name} {field_type}")
                         
-                        # Add table-specific constraints
+                        # Add table-specific constraints (UPDATED for CONF-based locations)
                         constraints = []
                         if table_name == "marine_forecast_surf_data":
+                            # Remove FOREIGN KEY since surf_spots table doesn't exist
                             constraints.extend([
-                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
                                 "UNIQUE(spot_id, forecast_time)"
                             ])
                         elif table_name == "marine_forecast_fishing_data":
+                            # Remove FOREIGN KEY since fishing_spots table doesn't exist
                             constraints.extend([
-                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
                                 "UNIQUE(spot_id, forecast_date, period_name)"
                             ])
                         
@@ -1501,11 +1508,7 @@ class SurfFishingInstaller(ExtensionInstaller):
                         all_definitions = field_definitions + constraints
                         
                         # Add inline indexes to table definitions (Phase I pattern)
-                        if table_name == "marine_forecast_surf_spots":
-                            all_definitions.append("INDEX idx_surf_spots_active (active)")
-                        elif table_name == "marine_forecast_fishing_spots":
-                            all_definitions.append("INDEX idx_fishing_spots_active (active)")
-                        elif table_name == "marine_forecast_surf_data":
+                        if table_name == "marine_forecast_surf_data":
                             all_definitions.append("INDEX idx_surf_forecasts_time (spot_id, forecast_time)")
                         elif table_name == "marine_forecast_fishing_data":
                             all_definitions.append("INDEX idx_fishing_forecasts_date (spot_id, forecast_date)")
@@ -1518,10 +1521,11 @@ class SurfFishingInstaller(ExtensionInstaller):
                         """
                         manager.connection.execute(create_sql)
                 
-                # Insert user locations into database (existing method)
-                self._insert_user_locations(manager, selected_locations)
+                # Add user locations to CONF instead of database
+                self._add_user_locations_to_conf(config_dict, selected_locations)
                 
-                print(f"  {CORE_ICONS['status']} Database tables and indexes created successfully")
+                print(f"  {CORE_ICONS['status']} Database forecast tables created successfully")
+                print(f"  {CORE_ICONS['status']} User locations added to configuration")
             
             progress.complete_step("Creating Database Tables")
             
@@ -1529,77 +1533,125 @@ class SurfFishingInstaller(ExtensionInstaller):
             progress.show_error("Creating Database Tables", str(e))
             raise
     
-    def _insert_user_locations(self, manager, selected_locations):
-        """Insert user-configured locations into database"""
+    def _add_user_locations_to_conf(self, config_dict, selected_locations):
+        """
+        Add user-configured locations to WeeWX configuration (CONF-based approach)
+        Uses data-driven structure from YAML configuration
+        """
         
-        current_time = int(time.time())
+        # Ensure SurfFishingService section exists
+        if 'SurfFishingService' not in config_dict:
+            config_dict['SurfFishingService'] = {}
         
-        # Insert surf spots
-        for spot in selected_locations.get('surf_spots', []):
-            manager.connection.execute("""
-                INSERT OR REPLACE INTO marine_forecast_surf_spots 
-                (name, latitude, longitude, bottom_type, exposure, created_date, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                spot['name'],
-                spot['latitude'],
-                spot['longitude'],
-                spot['bottom_type'],
-                spot['exposure'],
-                current_time,
-                1
-            ))
+        service_config = config_dict['SurfFishingService']
         
-        # Insert fishing spots
-        for spot in selected_locations.get('fishing_spots', []):
-            manager.connection.execute("""
-                INSERT OR REPLACE INTO marine_forecast_fishing_spots 
-                (name, latitude, longitude, location_type, target_category, created_date, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                spot['name'],
-                spot['latitude'],
-                spot['longitude'],
-                spot['location_type'],
-                spot['target_category'],
-                current_time,
-                1
-            ))
+        # Get location configuration structure from YAML
+        location_config_template = self.yaml_data.get('location_config', {})
         
-        # Commit the changes
-        manager.connection.commit()
+        # Add surf spots to CONF using data-driven structure
+        if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
+            service_config['surf_spots'] = {}
+            
+            for i, spot in enumerate(selected_locations['surf_spots']):
+                spot_key = f'spot_{i+1}'
+                
+                # Use YAML template structure if available
+                spot_config = self._build_spot_config_from_yaml(spot, 'surf', location_config_template)
+                service_config['surf_spots'][spot_key] = spot_config
+        
+        # Add fishing spots to CONF using data-driven structure  
+        if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
+            service_config['fishing_spots'] = {}
+            
+            for i, spot in enumerate(selected_locations['fishing_spots']):
+                spot_key = f'spot_{i+1}'
+                
+                # Use YAML template structure if available
+                spot_config = self._build_spot_config_from_yaml(spot, 'fishing', location_config_template)
+                service_config['fishing_spots'][spot_key] = spot_config
+        
+        # Add location metadata using YAML configuration
+        location_metadata = self._get_location_metadata_from_yaml(selected_locations)
+        if location_metadata:
+            service_config['location_metadata'] = location_metadata
         
         surf_count = len(selected_locations.get('surf_spots', []))
         fishing_count = len(selected_locations.get('fishing_spots', []))
         
-        print(f"  {CORE_ICONS['status']} Inserted {surf_count} surf spots and {fishing_count} fishing spots")
+        print(f"  {CORE_ICONS['status']} Added {surf_count} surf spots and {fishing_count} fishing spots to configuration")
 
-
+    def _build_spot_config_from_yaml(self, spot_data, spot_type, location_config_template):
         """
-        Get table schemas from YAML configuration data.
-        Returns dictionary of table_name -> field_definitions
+        Build spot configuration using YAML template structure
+        Data-driven approach ensures consistency with YAML definitions
         """
         
-        # Get table schemas from YAML data
-        table_schemas = self.yaml_data.get('table_schemas', {})
+        # Get template structure from YAML
+        template = location_config_template.get(f'{spot_type}_spot_template', {})
         
-        required_tables = {}
+        # Start with required fields (always strings for CONF)
+        spot_config = {
+            'name': spot_data['name'],
+            'latitude': str(spot_data['latitude']),
+            'longitude': str(spot_data['longitude']),
+            'type': spot_type,
+            'active': 'true'
+        }
         
-        # Process each table definition from YAML
-        for table_key, table_config in table_schemas.items():
-            if isinstance(table_config, dict) and 'name' in table_config and 'fields' in table_config:
-                table_name = table_config['name']
-                table_fields = table_config['fields']
+        # Add type-specific fields based on YAML template
+        if spot_type == 'surf':
+            # Add surf-specific fields from YAML template
+            surf_fields = template.get('fields', {})
+            if 'bottom_type' in surf_fields:
+                spot_config['bottom_type'] = spot_data.get('bottom_type', surf_fields['bottom_type'].get('default', 'sand'))
+            if 'exposure' in surf_fields:
+                spot_config['exposure'] = spot_data.get('exposure', surf_fields['exposure'].get('default', 'exposed'))
                 
-                # Convert YAML field definitions to SQL format
-                if isinstance(table_fields, dict):
-                    required_tables[table_name] = table_fields
+        elif spot_type == 'fishing':
+            # Add fishing-specific fields from YAML template
+            fishing_fields = template.get('fields', {})
+            if 'location_type' in fishing_fields:
+                spot_config['location_type'] = spot_data.get('location_type', fishing_fields['location_type'].get('default', 'shore'))
+            if 'target_category' in fishing_fields:
+                spot_config['target_category'] = spot_data.get('target_category', fishing_fields['target_category'].get('default', 'mixed_bag'))
         
-        # Validate that required tables are found in YAML
-        if not required_tables:
-            raise Exception(
-                f"{CORE_ICONS['warning']} No table schemas found in YAML configuration. "
-                "The surf_fishing_fields.yaml file must contain 'table_schemas' section with table definitions."
+        # Add any additional fields defined in YAML template
+        additional_fields = template.get('additional_fields', {})
+        for field_name, field_config in additional_fields.items():
+            if field_name not in spot_config:
+                default_value = field_config.get('default', '')
+                spot_config[field_name] = str(spot_data.get(field_name, default_value))
+        
+        return spot_config
+
+    def _get_location_metadata_from_yaml(self, selected_locations):
+        """
+        Extract location metadata using YAML configuration
+        Data-driven approach for consistent metadata handling
+        """
+        
+        metadata_template = self.yaml_data.get('location_metadata', {})
+        
+        if not metadata_template:
+            return None
+        
+        metadata = {}
+        
+        # Add timestamp
+        if 'include_timestamp' in metadata_template and metadata_template['include_timestamp']:
+            metadata['configured_date'] = str(int(time.time()))
+        
+        # Add location counts
+        if 'include_counts' in metadata_template and metadata_template['include_counts']:
+            metadata['total_surf_spots'] = str(len(selected_locations.get('surf_spots', [])))
+            metadata['total_fishing_spots'] = str(len(selected_locations.get('fishing_spots', [])))
+            metadata['total_locations'] = str(
+                len(selected_locations.get('surf_spots', [])) + 
+                len(selected_locations.get('fishing_spots', []))
             )
         
-        return required_tables
+        # Add configuration version from YAML
+        if 'version' in metadata_template:
+            metadata['config_version'] = str(metadata_template['version'])
+        
+        return metadata if metadata else None
