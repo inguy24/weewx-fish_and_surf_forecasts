@@ -1566,3 +1566,33 @@ class SurfFishingInstaller(ExtensionInstaller):
         fishing_count = len(selected_locations.get('fishing_spots', []))
         
         print(f"  {CORE_ICONS['status']} Inserted {surf_count} surf spots and {fishing_count} fishing spots")
+
+    def _get_required_table_schemas(self):
+        """
+        Get table schemas from YAML configuration data.
+        Returns dictionary of table_name -> field_definitions
+        """
+        
+        # Get table schemas from YAML data
+        table_schemas = self.yaml_data.get('table_schemas', {})
+        
+        required_tables = {}
+        
+        # Process each table definition from YAML
+        for table_key, table_config in table_schemas.items():
+            if isinstance(table_config, dict) and 'name' in table_config and 'fields' in table_config:
+                table_name = table_config['name']
+                table_fields = table_config['fields']
+                
+                # Convert YAML field definitions to SQL format
+                if isinstance(table_fields, dict):
+                    required_tables[table_name] = table_fields
+        
+        # Validate that required tables are found in YAML
+        if not required_tables:
+            raise Exception(
+                f"{CORE_ICONS['warning']} No table schemas found in YAML configuration. "
+                "The surf_fishing_fields.yaml file must contain 'table_schemas' section with table definitions."
+            )
+        
+        return required_tables
