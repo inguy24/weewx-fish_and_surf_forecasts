@@ -1720,28 +1720,37 @@ class SurfForecastSearchList(SearchList):
             return [{}]
     
     def _get_active_surf_spots(self, db_manager):
-        """Get all active surf spots from database"""
+        """Get all active surf spots from CONF configuration for SearchList"""
         
-        with db_manager.connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT id, name, latitude, longitude, bottom_type, exposure 
-                FROM marine_forecast_surf_spots 
-                WHERE active = 1 
-                ORDER BY name
-            """)
+        spots = []
+        
+        try:
+            # Access config through generator
+            config_dict = self.generator.config_dict
+            service_config = config_dict.get('SurfFishingService', {})
+            surf_spots_config = service_config.get('surf_spots', {})
             
-            spots = []
-            for row in cursor.fetchall():
-                spots.append({
-                    'id': row[0],
-                    'name': row[1],
-                    'latitude': row[2],
-                    'longitude': row[3],
-                    'bottom_type': row[4],
-                    'exposure': row[5]
-                })
+            for spot_id, spot_config in surf_spots_config.items():
+                # Check if spot is active
+                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                
+                if is_active:
+                    spot = {
+                        'id': spot_id,
+                        'name': spot_config.get('name', spot_id),
+                        'latitude': float(spot_config.get('latitude', 0.0)),
+                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'bottom_type': spot_config.get('bottom_type', 'sand'),
+                        'exposure': spot_config.get('exposure', 'exposed')
+                    }
+                    spots.append(spot)
             
-            return spots
+            log.debug(f"SearchList loaded {len(spots)} surf spots from CONF")
+            
+        except Exception as e:
+            log.error(f"SearchList error getting surf spots from CONF: {e}")
+        
+        return spots
     
     def _get_spot_forecast_data(self, spot, db_manager):
         """Get complete forecast data for a specific spot"""
@@ -3356,28 +3365,37 @@ class FishingForecastSearchList(SearchList):
             return [{}]
     
     def _get_active_fishing_spots(self, db_manager):
-        """Get all active fishing spots from database"""
+        """Get all active fishing spots from CONF configuration for SearchList"""
         
-        with db_manager.connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT id, name, latitude, longitude, location_type, target_category 
-                FROM marine_forecast_fishing_spots 
-                WHERE active = 1 
-                ORDER BY name
-            """)
+        spots = []
+        
+        try:
+            # Access config through generator
+            config_dict = self.generator.config_dict
+            service_config = config_dict.get('SurfFishingService', {})
+            fishing_spots_config = service_config.get('fishing_spots', {})
             
-            spots = []
-            for row in cursor.fetchall():
-                spots.append({
-                    'id': row[0],
-                    'name': row[1],
-                    'latitude': row[2],
-                    'longitude': row[3],
-                    'location_type': row[4],
-                    'target_category': row[5]
-                })
+            for spot_id, spot_config in fishing_spots_config.items():
+                # Check if spot is active
+                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                
+                if is_active:
+                    spot = {
+                        'id': spot_id,
+                        'name': spot_config.get('name', spot_id),
+                        'latitude': float(spot_config.get('latitude', 0.0)),
+                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'location_type': spot_config.get('location_type', 'shore'),
+                        'target_category': spot_config.get('target_category', 'mixed_bag')
+                    }
+                    spots.append(spot)
             
-            return spots
+            log.debug(f"SearchList loaded {len(spots)} fishing spots from CONF")
+            
+        except Exception as e:
+            log.error(f"SearchList error getting fishing spots from CONF: {e}")
+        
+        return spots
     
     def _get_spot_forecast_data(self, spot, db_manager):
         """Get complete forecast data for a specific fishing spot"""
@@ -3586,48 +3604,72 @@ class SurfFishingService(StdService):
             log.error(f"Error in forecast generation: {e}")
     
     def _get_active_surf_spots(self):
-        """Get all active surf spots from database"""
+        """Get all active surf spots from CONF configuration"""
         
         spots = []
         
         try:
-            with self.db_manager.connection as connection:
-                cursor = connection.execute("""
-                    SELECT id, name, latitude, longitude, bottom_type, exposure
-                    FROM marine_forecast_surf_spots 
-                    WHERE active = 1
-                """)
+            # Read from CONF instead of database
+            service_config = self.config_dict.get('SurfFishingService', {})
+            surf_spots_config = service_config.get('surf_spots', {})
+            
+            for spot_id, spot_config in surf_spots_config.items():
+                # Check if spot is active (default to True if not specified)
+                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
                 
-                columns = [desc[0] for desc in cursor.description]
-                for row in cursor.fetchall():
-                    spot = dict(zip(columns, row))
+                if is_active:
+                    # Convert CONF data to expected format
+                    spot = {
+                        'id': spot_id,  # Use CONF key as ID
+                        'name': spot_config.get('name', spot_id),
+                        'latitude': float(spot_config.get('latitude', 0.0)),
+                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'bottom_type': spot_config.get('bottom_type', 'sand'),
+                        'exposure': spot_config.get('exposure', 'exposed'),
+                        'type': spot_config.get('type', 'surf')
+                    }
                     spots.append(spot)
-        
+                    
+            log.debug(f"Loaded {len(spots)} active surf spots from CONF")
+            
         except Exception as e:
-            log.error(f"Error getting surf spots: {e}")
+            log.error(f"Error getting surf spots from CONF: {e}")
+            log.warning("Using fallback empty surf spots list")
         
         return spots
-    
+
     def _get_active_fishing_spots(self):
-        """Get all active fishing spots from database"""
+        """Get all active fishing spots from CONF configuration"""
         
         spots = []
         
         try:
-            with self.db_manager.connection as connection:
-                cursor = connection.execute("""
-                    SELECT id, name, latitude, longitude, location_type, target_category
-                    FROM marine_forecast_fishing_spots 
-                    WHERE active = 1
-                """)
+            # Read from CONF instead of database
+            service_config = self.config_dict.get('SurfFishingService', {})
+            fishing_spots_config = service_config.get('fishing_spots', {})
+            
+            for spot_id, spot_config in fishing_spots_config.items():
+                # Check if spot is active (default to True if not specified)
+                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
                 
-                columns = [desc[0] for desc in cursor.description]
-                for row in cursor.fetchall():
-                    spot = dict(zip(columns, row))
+                if is_active:
+                    # Convert CONF data to expected format
+                    spot = {
+                        'id': spot_id,  # Use CONF key as ID
+                        'name': spot_config.get('name', spot_id),
+                        'latitude': float(spot_config.get('latitude', 0.0)),
+                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'location_type': spot_config.get('location_type', 'shore'),
+                        'target_category': spot_config.get('target_category', 'mixed_bag'),
+                        'type': spot_config.get('type', 'fishing')
+                    }
                     spots.append(spot)
-        
+                    
+            log.debug(f"Loaded {len(spots)} active fishing spots from CONF")
+            
         except Exception as e:
-            log.error(f"Error getting fishing spots: {e}")
+            log.error(f"Error getting fishing spots from CONF: {e}")
+            log.warning("Using fallback empty fishing spots list")
         
         return spots
     
@@ -4044,3 +4086,134 @@ class SurfFishingService(StdService):
         
         # Store forecast in database
         self._store_fishing_forecast(spot['id'], fishing_forecast)
+
+    def _get_spot_by_id(self, spot_id, spot_type='surf'):
+        """
+        Get specific spot configuration by ID from CONF
+        
+        Args:
+            spot_id: The spot identifier (CONF key)
+            spot_type: 'surf' or 'fishing'
+        
+        Returns:
+            dict: Spot configuration or None if not found
+        """
+        
+        try:
+            service_config = self.config_dict.get('SurfFishingService', {})
+            spots_config_key = f'{spot_type}_spots'
+            spots_config = service_config.get(spots_config_key, {})
+            
+            if spot_id in spots_config:
+                spot_config = spots_config[spot_id]
+                
+                # Build standardized spot data structure
+                spot = {
+                    'id': spot_id,
+                    'name': spot_config.get('name', spot_id),
+                    'latitude': float(spot_config.get('latitude', 0.0)),
+                    'longitude': float(spot_config.get('longitude', 0.0)),
+                    'type': spot_config.get('type', spot_type),
+                    'active': spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                }
+                
+                # Add type-specific fields
+                if spot_type == 'surf':
+                    spot.update({
+                        'bottom_type': spot_config.get('bottom_type', 'sand'),
+                        'exposure': spot_config.get('exposure', 'exposed')
+                    })
+                elif spot_type == 'fishing':
+                    spot.update({
+                        'location_type': spot_config.get('location_type', 'shore'),
+                        'target_category': spot_config.get('target_category', 'mixed_bag')
+                    })
+                
+                return spot
+            
+            log.warning(f"Spot {spot_id} not found in {spot_type}_spots configuration")
+            return None
+            
+        except Exception as e:
+            log.error(f"Error getting spot {spot_id} from CONF: {e}")
+            return None
+        
+    def _validate_conf_locations(self):
+        """
+        Validate that CONF contains properly formatted location data
+        
+        Returns:
+            dict: Validation results with any issues found
+        """
+        
+        validation_results = {
+            'valid': True,
+            'issues': [],
+            'surf_spots_count': 0,
+            'fishing_spots_count': 0
+        }
+        
+        try:
+            service_config = self.config_dict.get('SurfFishingService', {})
+            
+            # Validate surf spots
+            surf_spots = service_config.get('surf_spots', {})
+            for spot_id, spot_config in surf_spots.items():
+                validation_results['surf_spots_count'] += 1
+                
+                # Check required fields
+                required_fields = ['name', 'latitude', 'longitude']
+                for field in required_fields:
+                    if field not in spot_config:
+                        validation_results['valid'] = False
+                        validation_results['issues'].append(f"Surf spot {spot_id} missing required field: {field}")
+                
+                # Validate coordinate ranges
+                try:
+                    lat = float(spot_config.get('latitude', 0))
+                    lon = float(spot_config.get('longitude', 0))
+                    if not (-90 <= lat <= 90):
+                        validation_results['issues'].append(f"Surf spot {spot_id} invalid latitude: {lat}")
+                    if not (-180 <= lon <= 180):
+                        validation_results['issues'].append(f"Surf spot {spot_id} invalid longitude: {lon}")
+                except (ValueError, TypeError):
+                    validation_results['valid'] = False
+                    validation_results['issues'].append(f"Surf spot {spot_id} invalid coordinate format")
+            
+            # Validate fishing spots  
+            fishing_spots = service_config.get('fishing_spots', {})
+            for spot_id, spot_config in fishing_spots.items():
+                validation_results['fishing_spots_count'] += 1
+                
+                # Check required fields
+                required_fields = ['name', 'latitude', 'longitude']
+                for field in required_fields:
+                    if field not in spot_config:
+                        validation_results['valid'] = False
+                        validation_results['issues'].append(f"Fishing spot {spot_id} missing required field: {field}")
+                
+                # Validate coordinates
+                try:
+                    lat = float(spot_config.get('latitude', 0))
+                    lon = float(spot_config.get('longitude', 0))
+                    if not (-90 <= lat <= 90):
+                        validation_results['issues'].append(f"Fishing spot {spot_id} invalid latitude: {lat}")
+                    if not (-180 <= lon <= 180):
+                        validation_results['issues'].append(f"Fishing spot {spot_id} invalid longitude: {lon}")
+                except (ValueError, TypeError):
+                    validation_results['valid'] = False
+                    validation_results['issues'].append(f"Fishing spot {spot_id} invalid coordinate format")
+            
+            if validation_results['valid']:
+                log.info(f"CONF location validation passed: {validation_results['surf_spots_count']} surf spots, {validation_results['fishing_spots_count']} fishing spots")
+            else:
+                log.warning(f"CONF location validation failed: {len(validation_results['issues'])} issues found")
+                for issue in validation_results['issues']:
+                    log.warning(f"  - {issue}")
+            
+        except Exception as e:
+            validation_results['valid'] = False
+            validation_results['issues'].append(f"Validation error: {e}")
+            log.error(f"Error validating CONF locations: {e}")
+        
+        return validation_results
