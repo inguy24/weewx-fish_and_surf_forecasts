@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Horseshoe Crab
+# Magic Animal: Hermit Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -1448,87 +1448,78 @@ class SurfFishingInstaller(ExtensionInstaller):
     
     def _extend_database_schema(self, config_dict, selected_locations):
         """
-        Create database tables for surf and fishing forecasts
-        DATA-DRIVEN from surf_fishing_fields.yaml with MySQL compatibility
+        Extend database schema for surf and fishing forecasts with proper error handling
         """
         
-        print(f"\n{CORE_ICONS['selection']} Creating Database Tables")
+        progress = InstallationProgressManager()
         
         try:
-            # Get database manager using WeeWX 5.1 patterns
+            progress.show_step_progress("Creating Database Tables")
+            
+            # Get database binding from config
+            db_binding = config_dict.get('DataBindings', {}).get('wx_binding', {}).get('database', 'archive_sqlite')
+            
             with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as manager:
                 
-                # DATA-DRIVEN: Load table definitions from YAML
-                database_schema = self.yaml_data.get('database_schema', {})
+                # Required table schemas for surf and fishing forecasts
+                required_tables = self._get_required_table_schemas()
                 
-                # Get the table definitions (skip the description)
-                tables_to_create = [
-                    'surf_spots_table',
-                    'fishing_spots_table', 
-                    'surf_forecast_table',
-                    'fishing_forecast_table'
-                ]
-                
-                for table_key in tables_to_create:
-                    table_config = database_schema.get(table_key, {})
-                    table_name = table_config.get('name')
-                    table_fields = table_config.get('fields', {})
+                for table_name, table_fields in required_tables.items():
                     
-                    if table_name and table_fields:
-                        # Build CREATE TABLE SQL from YAML field definitions
-                        field_definitions = []
+                    # Build field definitions
+                    field_definitions = []
+                    for field_name, field_type in table_fields.items():
+                        # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
+                        if (field_name == "period_name" and 
+                            field_type == "TEXT NOT NULL" and 
+                            table_name == "marine_forecast_fishing_data"):
+                            field_type = "VARCHAR(50) NOT NULL"
                         
-                        for field_name, field_type in table_fields.items():
-                            # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
-                            if (field_name == "period_name" and 
-                                field_type == "TEXT NOT NULL" and 
-                                table_name == "marine_forecast_fishing_data"):
-                                field_type = "VARCHAR(50) NOT NULL"
-                            
-                            field_definitions.append(f"{field_name} {field_type}")
-                        
-                        # Add table-specific constraints
-                        constraints = []
-                        if table_name == "marine_forecast_surf_data":
-                            constraints.extend([
-                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
-                                "UNIQUE(spot_id, forecast_time)"
-                            ])
-                        elif table_name == "marine_forecast_fishing_data":
-                            constraints.extend([
-                                "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
-                                "UNIQUE(spot_id, forecast_date, period_name)"
-                            ])
-                        
-                        # Combine fields and constraints
-                        all_definitions = field_definitions + constraints
-                        
-                        # Execute CREATE TABLE
-                        create_sql = f"""
-                            CREATE TABLE IF NOT EXISTS {table_name} (
-                                {', '.join(all_definitions)}
-                            )
-                        """
-                        manager.connection.execute(create_sql)
-                
-                # Create performance indexes
-                index_sql_commands = [
-                    "CREATE INDEX IF NOT EXISTS idx_surf_spots_active ON marine_forecast_surf_spots(active)",
-                    "CREATE INDEX IF NOT EXISTS idx_fishing_spots_active ON marine_forecast_fishing_spots(active)", 
-                    "CREATE INDEX IF NOT EXISTS idx_surf_forecasts_time ON marine_forecast_surf_data(spot_id, forecast_time)",
-                    "CREATE INDEX IF NOT EXISTS idx_fishing_forecasts_date ON marine_forecast_fishing_data(spot_id, forecast_date)"
-                ]
-                
-                for index_sql in index_sql_commands:
-                    manager.connection.execute(index_sql)
+                        field_definitions.append(f"{field_name} {field_type}")
+                    
+                    # Add table-specific constraints
+                    constraints = []
+                    if table_name == "marine_forecast_surf_data":
+                        constraints.extend([
+                            "FOREIGN KEY(spot_id) REFERENCES marine_forecast_surf_spots(id)",
+                            "UNIQUE(spot_id, forecast_time)"
+                        ])
+                    elif table_name == "marine_forecast_fishing_data":
+                        constraints.extend([
+                            "FOREIGN KEY(spot_id) REFERENCES marine_forecast_fishing_spots(id)",
+                            "UNIQUE(spot_id, forecast_date, period_name)"
+                        ])
+                    
+                    # Combine fields and constraints
+                    all_definitions = field_definitions + constraints
+                    
+                    # Add inline indexes to table definitions (Phase I pattern)
+                    if table_name == "marine_forecast_surf_spots":
+                        all_definitions.append("INDEX idx_surf_spots_active (active)")
+                    elif table_name == "marine_forecast_fishing_spots":
+                        all_definitions.append("INDEX idx_fishing_spots_active (active)")
+                    elif table_name == "marine_forecast_surf_data":
+                        all_definitions.append("INDEX idx_surf_forecasts_time (spot_id, forecast_time)")
+                    elif table_name == "marine_forecast_fishing_data":
+                        all_definitions.append("INDEX idx_fishing_forecasts_date (spot_id, forecast_date)")
+                    
+                    # Execute CREATE TABLE with inline indexes (Phase I pattern)
+                    create_sql = f"""
+                        CREATE TABLE IF NOT EXISTS {table_name} (
+                            {', '.join(all_definitions)}
+                        )
+                    """
+                    manager.connection.execute(create_sql)
                 
                 # Insert user locations into database (existing method)
                 self._insert_user_locations(manager, selected_locations)
                 
-            print(f"  {CORE_ICONS['status']} Database tables created successfully")
+                print(f"  {CORE_ICONS['status']} Database tables and indexes created successfully")
+            
+            progress.complete_step("Creating Database Tables")
             
         except Exception as e:
-            print(f"  {CORE_ICONS['warning']} Error creating tables: {e}")
+            progress.show_error("Creating Database Tables", str(e))
             raise
     
     def _insert_user_locations(self, manager, selected_locations):
