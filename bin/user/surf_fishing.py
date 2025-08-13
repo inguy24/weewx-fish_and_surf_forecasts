@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Ostrich
+# Magic Animal: Wallaby
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1826,25 +1826,36 @@ class FishingForecastGenerator:
         self.fish_categories = service_config.get('fish_categories', {})
         self.fishing_scoring = service_config.get('fishing_scoring', {})
     
-    def generate_fishing_forecast(self, spot_config):
-        """Generate fishing forecast for a specific spot"""
+    def generate_fishing_forecast(self, spot_config, marine_conditions=None):
+        """
+        Generate fishing forecast for a specific spot
+        Uses CONF-based configuration only
         
-        pressure_analysis = self.integrate_pressure_trend_analysis(spot_config)
-        tide_analysis = self.integrate_tide_correlation_analysis(spot_config)
-        marine_conditions = self.integrate_optimal_data_sources(spot_config)
-
+        Args:
+            spot_config: Dictionary with spot configuration from CONF
+            marine_conditions: Optional marine conditions data from Phase I
+        
+        Returns:
+            List of forecast periods with ratings
+        """
+        
+        # If marine_conditions not provided, get them safely
+        if marine_conditions is None:
+            marine_conditions = self._get_marine_conditions_safe(spot_config)
+        
         try:
-            # Get target species category
+            # Get target species category from CONF
             target_category = spot_config.get('target_category', 'mixed_bag')
-            species_activity = self.calculate_species_activity_with_multi_source(
-            target_category, pressure_analysis, tide_analysis
-            )
-            category_config = self.fish_categories.get(target_category, {})
+            
+            # Get fish categories from CONF (written by installer from YAML)
+            service_config = self.config_dict.get('SurfFishingService', {})
+            fish_categories = service_config.get('fish_categories', {})
+            category_config = fish_categories.get(target_category, {})
             
             # Generate period-based forecasts (6 periods per day)
             forecast_periods = self._generate_fishing_periods()
             
-            # Score each period
+            # Score each period using CONF-based scoring
             scored_periods = []
             for period in forecast_periods:
                 period_score = self._score_fishing_period(
@@ -3468,37 +3479,59 @@ class SurfFishingService(StdService):
     """
     
     def __init__(self, engine, config_dict):
+        """
+        Initialize SurfFishingService using WeeWX patterns
+        All configuration from CONF only - no YAML access
+        """
         super(SurfFishingService, self).__init__(engine, config_dict)
+        
+        # Store references for proper WeeWX integration
+        self.engine = engine
+        self.config_dict = config_dict
         
         # Get database manager from engine (WeeWX 5.1 pattern)
         self.db_manager = self.engine.db_binder.get_manager('wx_binding')
         
-        # Read configuration from weewx.conf
+        # Read service configuration from CONF only
         self.service_config = config_dict.get('SurfFishingService', {})
-        self.station_integration = self.service_config.get('station_integration', {})
-        self.forecast_interval = int(self.service_config.get('forecast_interval', 21600))  # 6 hours
         
-        # Initialize components
+        # Initialize GRIB processor
         self.grib_processor = GRIBProcessor(config_dict)
-        self.wavewatch_collector = WaveWatchDataCollector(config_dict, self.grib_processor)
+        if self.grib_processor.is_available():
+            log.info("Using pygrib for GRIB processing")
+        else:
+            log.warning("No GRIB library available - WaveWatch III forecasts disabled")
+        
+        # Initialize forecast generators with CONF-based config
         self.surf_generator = SurfForecastGenerator(config_dict, self.db_manager)
         self.fishing_generator = FishingForecastGenerator(config_dict, self.db_manager)
-        self.field_definitions = self.service_config.get('field_definitions', {})
         
-        # Initialize station integration
-        integration_success = self.initialize_station_integration()
-        if integration_success:
-            log.info(f"{CORE_ICONS['status']} Station integration active")
-        else:
-            log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
-
-        # Background forecast generation
-        self.forecast_thread = None
+        # Set up forecast timing from CONF
+        self.forecast_interval = int(self.service_config.get('forecast_interval', 21600))  # 6 hours default
         self.shutdown_event = threading.Event()
         
-        # Start forecast generation thread
+        # Initialize station integration with CONF-based error handling
+        try:
+            log.info(f"{CORE_ICONS['status']} Initializing marine station integration...")
+            
+            # Load field definitions from CONF (written by installer)
+            field_definitions = self._load_field_definitions()
+            
+            # Initialize integration components if field definitions available
+            if field_definitions:
+                log.info(f"{CORE_ICONS['status']} Station integration initialized successfully")
+            else:
+                log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error initializing station integration: {e}")
+            log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
+        
+        # Start forecast generation
+        log.info("Starting forecast generation loop")
         self._start_forecast_thread()
         
+        log.info("Generating forecasts for all locations")
         log.info("SurfFishingService initialized successfully")
     
     def shutDown(self):
@@ -3690,88 +3723,198 @@ class SurfFishingService(StdService):
         self._store_fishing_forecast(spot['id'], fishing_forecast)
     
     def _get_phase_i_marine_conditions(self, latitude, longitude):
-        """Get current marine conditions from Phase I data"""
+        """
+        Get current marine conditions from Phase I data using field mappings from CONF
+        Reads actual database field names and table names from Phase I configuration
         
-        conditions = {}
+        Args:
+            latitude: Spot latitude (for future proximity-based selection)
+            longitude: Spot longitude (for future proximity-based selection)
+        
+        Returns:
+            Dictionary with available marine conditions
+        
+        Raises:
+            RuntimeError: If Phase I field mappings are not available
+        """
+        
+        # Get Phase I configuration from CONF
+        phase_i_config = self.config_dict.get('MarineDataService', {})
+        field_mappings = phase_i_config.get('field_mappings', {})
+        
+        # Get data source configuration from Phase II CONF
+        service_config = self.config_dict.get('SurfFishingService', {})
+        data_integration = service_config.get('data_integration', {})
+        
+        # Default conditions structure
+        conditions = {
+            'wave_height': None,
+            'wave_period': None,
+            'wind_speed': None,
+            'wind_direction': None,
+            'barometric_pressure': None,
+            'water_level': None,
+            'water_temperature': None,
+            'data_quality': 'limited',
+            'data_age_hours': 999
+        }
         
         try:
-            # Get latest NDBC data from Phase I
-            with self.db_manager.connection as connection:
-                cursor = connection.execute("""
-                    SELECT marine_wave_height, marine_wave_period, marine_wave_direction,
-                           marine_wind_speed, marine_wind_direction, marine_barometric_pressure,
-                           marine_sea_surface_temp, dateTime
-                    FROM ndbc_data 
-                    WHERE dateTime > ? 
-                    ORDER BY dateTime DESC LIMIT 1
-                """, (int(time.time()) - 3600,))  # Last hour
+            # Use existing method signature (latitude, longitude)
+            
+            # Use WeeWX database manager with proper error handling
+            if not hasattr(self, 'db_manager') or self.db_manager is None:
+                log.error("Database manager not available")
+                return conditions
+            
+            # Check if Phase I field mappings are available - REQUIRED for Phase II
+            if not field_mappings:
+                error_msg = "Phase I Marine Data Extension field mappings not found in CONF. Phase II requires Phase I to be properly installed and configured."
+                log.error(f"{CORE_ICONS['warning']} {error_msg}")
+                raise RuntimeError(error_msg)
+            
+            # Get recent data time threshold from CONF
+            max_age_hours = int(data_integration.get('max_data_age_hours', 6))
+            recent_time = int(time.time()) - (max_age_hours * 3600)
+            
+            try:
+                # Use connection for proper connection handling
+                connection = self.db_manager.connection
+                cursor = connection.cursor()
                 
-                row = cursor.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cursor.description]
-                    ndbc_data = dict(zip(columns, row))
+                # Get NDBC data using Phase I field mappings
+                ndbc_fields = field_mappings.get('ndbc_module', {})
+                if ndbc_fields:
+                    ndbc_query_fields = []
+                    ndbc_field_map = {}
                     
-                    conditions.update({
-                        'current_wave_height': ndbc_data.get('marine_wave_height'),
-                        'current_wave_period': ndbc_data.get('marine_wave_period'),
-                        'current_wave_direction': ndbc_data.get('marine_wave_direction'),
-                        'current_wind_speed': ndbc_data.get('marine_wind_speed'),
-                        'current_wind_direction': ndbc_data.get('marine_wind_direction'),
-                        'current_pressure': ndbc_data.get('marine_barometric_pressure'),
-                        'current_sea_temp': ndbc_data.get('marine_sea_surface_temp')
-                    })
-        
-        except Exception as e:
-            log.warning(f"Could not get Phase I NDBC data: {e}")
-        
-        try:
-            # Get latest CO-OPS data from Phase I
-            with self.db_manager.connection as connection:
-                cursor = connection.execute("""
-                    SELECT marine_current_water_level, marine_coastal_water_temp, dateTime
-                    FROM coops_realtime 
-                    WHERE dateTime > ? 
-                    ORDER BY dateTime DESC LIMIT 1
-                """, (int(time.time()) - 1800,))  # Last 30 minutes
-                
-                row = cursor.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cursor.description]
-                    coops_data = dict(zip(columns, row))
+                    # Build dynamic query based on Phase I field mappings
+                    for logical_name, field_config in ndbc_fields.items():
+                        if isinstance(field_config, dict) and 'database_field' in field_config:
+                            db_field = field_config['database_field']
+                            ndbc_query_fields.append(db_field)
+                            ndbc_field_map[db_field] = logical_name
                     
-                    conditions.update({
-                        'current_water_level': coops_data.get('marine_current_water_level'),
-                        'current_coastal_temp': coops_data.get('marine_coastal_water_temp')
-                    })
-        
-        except Exception as e:
-            log.warning(f"Could not get Phase I CO-OPS data: {e}")
-        
-        try:
-            # Get next tide predictions from Phase I
-            with self.db_manager.connection as connection:
-                cursor = connection.execute("""
-                    SELECT tide_time, tide_type, predicted_height
-                    FROM tide_table 
-                    WHERE tide_time > ? 
-                    ORDER BY tide_time ASC LIMIT 4
-                """, (int(time.time()),))  # Future tides
+                    if ndbc_query_fields:
+                        # Add dateTime to query
+                        ndbc_query_fields.append('dateTime')
+                        
+                        # Get table name from first field (they should all be same table)
+                        table_name = list(ndbc_fields.values())[0].get('database_table', 'ndbc_data')
+                        
+                        try:
+                            query = f"""
+                                SELECT {', '.join(ndbc_query_fields)}
+                                FROM {table_name}
+                                WHERE dateTime > ? 
+                                ORDER BY dateTime DESC 
+                                LIMIT 1
+                            """
+                            cursor.execute(query, (recent_time,))
+                            
+                            ndbc_result = cursor.fetchone()
+                            
+                            if ndbc_result and len(ndbc_result) > 0:
+                                data_age = (time.time() - ndbc_result[-1]) / 3600  # dateTime is last field
+                                
+                                # Map database results to logical names using Phase I mappings
+                                for i, db_field in enumerate(ndbc_query_fields[:-1]):  # Skip dateTime
+                                    if ndbc_result[i] is not None:
+                                        logical_name = ndbc_field_map.get(db_field)
+                                        if logical_name == 'wave_height':
+                                            conditions['wave_height'] = ndbc_result[i]
+                                        elif logical_name in ['wave_period', 'dominant_wave_period']:
+                                            conditions['wave_period'] = ndbc_result[i]
+                                        elif logical_name in ['marine_wind_speed', 'wind_speed']:
+                                            conditions['wind_speed'] = ndbc_result[i]
+                                        elif logical_name in ['marine_wind_direction', 'wind_direction']:
+                                            conditions['wind_direction'] = ndbc_result[i]
+                                        elif logical_name in ['marine_barometric_pressure', 'barometric_pressure']:
+                                            conditions['barometric_pressure'] = ndbc_result[i]
+                                        elif logical_name in ['marine_sea_surface_temp', 'sea_surface_temp']:
+                                            conditions['water_temperature'] = ndbc_result[i]
+                                
+                                conditions['data_quality'] = 'good' if data_age < 2 else 'fair'
+                                conditions['data_age_hours'] = data_age
+                                log.debug(f"Retrieved NDBC data from {data_age:.1f} hours ago using Phase I mappings")
+                            else:
+                                log.debug("No recent NDBC data available")
+                            
+                        except Exception as e:
+                            log.warning(f"Could not get Phase I NDBC data: {e}")
                 
-                tides = cursor.fetchall()
-                if tides:
-                    # Find next high and low tides
-                    for tide_time, tide_type, height in tides:
-                        if tide_type == 'H' and 'next_high_tide' not in conditions:
-                            conditions['next_high_tide'] = tide_time
-                            conditions['next_high_height'] = height
-                        elif tide_type == 'L' and 'next_low_tide' not in conditions:
-                            conditions['next_low_tide'] = tide_time
-                            conditions['next_low_height'] = height
-        
+                # Get CO-OPS data using Phase I field mappings
+                coops_fields = field_mappings.get('coops_module', {})
+                if coops_fields:
+                    coops_query_fields = []
+                    coops_field_map = {}
+                    
+                    # Build dynamic query based on Phase I field mappings
+                    for logical_name, field_config in coops_fields.items():
+                        if isinstance(field_config, dict) and 'database_field' in field_config:
+                            db_field = field_config['database_field']
+                            coops_query_fields.append(db_field)
+                            coops_field_map[db_field] = logical_name
+                    
+                    if coops_query_fields:
+                        # Add dateTime to query
+                        coops_query_fields.append('dateTime')
+                        
+                        # Get table name from first field
+                        table_name = list(coops_fields.values())[0].get('database_table', 'coops_realtime')
+                        
+                        try:
+                            query = f"""
+                                SELECT {', '.join(coops_query_fields)}
+                                FROM {table_name}
+                                WHERE dateTime > ? 
+                                ORDER BY dateTime DESC 
+                                LIMIT 1
+                            """
+                            cursor.execute(query, (recent_time,))
+                            
+                            coops_result = cursor.fetchone()
+                            
+                            if coops_result and len(coops_result) > 0:
+                                data_age = (time.time() - coops_result[-1]) / 3600  # dateTime is last field
+                                
+                                # Map database results to logical names using Phase I mappings
+                                for i, db_field in enumerate(coops_query_fields[:-1]):  # Skip dateTime
+                                    if coops_result[i] is not None:
+                                        logical_name = coops_field_map.get(db_field)
+                                        if logical_name == 'current_water_level':
+                                            conditions['water_level'] = coops_result[i]
+                                        elif logical_name in ['coastal_water_temp', 'water_temperature']:
+                                            if conditions['water_temperature'] is None:
+                                                conditions['water_temperature'] = coops_result[i]
+                                
+                                # Update data quality based on freshest data
+                                if conditions['data_age_hours'] > data_age:
+                                    conditions['data_age_hours'] = data_age
+                                    conditions['data_quality'] = 'good' if data_age < 1 else 'fair'
+                                
+                                log.debug(f"Retrieved CO-OPS data from {data_age:.1f} hours ago using Phase I mappings")
+                            else:
+                                log.debug("No recent CO-OPS data available")
+                            
+                        except Exception as e:
+                            log.warning(f"Could not get Phase I CO-OPS data: {e}")
+                
+                cursor.close()
+                
+            except Exception as e:
+                log.error(f"Database connection error: {e}")
+            
+            # Log data quality summary
+            available_fields = sum(1 for k, v in conditions.items() 
+                                if k not in ['data_quality', 'data_age_hours'] and v is not None)
+            log.debug(f"Marine conditions: {available_fields} fields available, quality: {conditions['data_quality']}")
+            
+            return conditions
+            
         except Exception as e:
-            log.warning(f"Could not get Phase I tide data: {e}")
-        
-        return conditions
+            log.error(f"Error getting marine conditions: {e}")
+            return conditions
     
     def _store_surf_forecast(self, spot_id, surf_forecast):
         """Store surf forecast in database"""
@@ -4217,3 +4360,39 @@ class SurfFishingService(StdService):
             log.error(f"Error validating CONF locations: {e}")
         
         return validation_results
+    
+    def _load_field_definitions(self):
+        """
+        Load field definitions from CONF (written by installer from YAML)
+        Service uses CONF only - NO runtime YAML access
+        
+        Phase II REQUIRES Phase I to be properly installed and configured
+        """
+        try:
+            # Get field definitions from CONF (written by installer)
+            service_config = self.config_dict.get('SurfFishingService', {})
+            field_definitions = service_config.get('field_definitions', {})
+            
+            if not field_definitions:
+                error_msg = "Phase II field definitions not found in CONF. Phase II installation may be incomplete."
+                log.error(f"{CORE_ICONS['warning']} {error_msg}")
+                raise RuntimeError(error_msg)
+            
+            # Also verify Phase I configuration exists
+            phase_i_config = self.config_dict.get('MarineDataService', {})
+            if not phase_i_config:
+                error_msg = "Phase I Marine Data Extension configuration not found. Phase II requires Phase I to be installed first."
+                log.error(f"{CORE_ICONS['warning']} {error_msg}")
+                raise RuntimeError(error_msg)
+            
+            log.info(f"{CORE_ICONS['status']} Loaded field definitions from CONF")
+            return field_definitions
+            
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                # Re-raise our specific error messages
+                raise
+            else:
+                error_msg = f"Critical error loading field definitions from CONF: {e}"
+                log.error(f"{CORE_ICONS['warning']} {error_msg}")
+                raise RuntimeError(error_msg)
