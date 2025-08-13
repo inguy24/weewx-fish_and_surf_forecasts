@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Emu
+# Magic Animal: Ostrich
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
