@@ -703,6 +703,7 @@ class SurfFishingConfigurator:
         """
         Analyze Phase I marine station coverage for user locations
         Provide recommendations for optimization if needed
+        FIXED: Properly return coverage quality data for CONF
         """
         print(f"\n{CORE_ICONS['navigation']} Marine Station Integration Analysis")
         print("Analyzing your Phase I station coverage for optimal forecasting...")
@@ -733,7 +734,17 @@ class SurfFishingConfigurator:
         
         if not all_user_locations:
             print(f"\n{CORE_ICONS['status']} No location analysis needed - no locations configured")
-            return
+            # FIXED: Return proper default analysis data
+            return {
+                'station_analysis_completed': True,
+                'accepted_recommendations': [],
+                'coverage_summary': {
+                    'quality_score': 'no_locations',
+                    'wave_quality': 0.0,
+                    'atmospheric_quality': 0.0,
+                    'tide_quality': 0.0
+                }
+            }
         
         # Generate recommendations
         recommendations = recommendation_engine.analyze_multi_location_optimization(all_user_locations)
@@ -745,6 +756,19 @@ class SurfFishingConfigurator:
         print(f"  Atmospheric data quality: {current['atmospheric_quality']:.1f}/1.0")
         print(f"  Tide data quality: {current['tide_quality']:.1f}/1.0")
         
+        # FIXED: Calculate overall quality score for CONF storage
+        overall_quality = (current['wave_quality'] + current['atmospheric_quality'] + current['tide_quality']) / 3.0
+        
+        # Determine quality level for human-readable format
+        if overall_quality >= 0.8:
+            quality_level = 'excellent'
+        elif overall_quality >= 0.6:
+            quality_level = 'good'
+        elif overall_quality >= 0.4:
+            quality_level = 'fair'
+        else:
+            quality_level = 'poor'
+        
         # Present recommendations interactively
         accepted_recommendations = recommendation_engine.display_recommendations_interactive(recommendations)
         
@@ -752,21 +776,26 @@ class SurfFishingConfigurator:
             print(f"\n{CORE_ICONS['selection']} Implementation Options")
             print("Accepted recommendations will be noted in your configuration.")
             print("You can implement these manually in Phase I after installation.")
-            print()
-            
-            # Store recommendations in configuration for reference
-            return {
-                'station_analysis_completed': True,
-                'accepted_recommendations': accepted_recommendations,
-                'coverage_summary': current
-            }
         else:
-            print(f"\n{CORE_ICONS['status']} Current configuration will be used as-is")
-            return {
-                'station_analysis_completed': True,
-                'accepted_recommendations': [],
-                'coverage_summary': current
-            }
+            print(f"\nYour Phase I station configuration provides good coverage for all locations.")
+            print("No immediate improvements needed.")
+            print(f"{CORE_ICONS['status']} Current configuration will be used as-is")
+        
+        # FIXED: Return proper station analysis data with coverage quality
+        return {
+            'station_analysis_completed': True,
+            'accepted_recommendations': accepted_recommendations or [],
+            'coverage_summary': {
+                'quality_score': quality_level,  # 'excellent', 'good', 'fair', 'poor'
+                'quality_numeric': overall_quality,  # 0.0-1.0 numeric score
+                'wave_quality': current['wave_quality'],
+                'atmospheric_quality': current['atmospheric_quality'],
+                'tide_quality': current['tide_quality'],
+                'total_locations': current['total_locations']
+            },
+            'phase_i_summary': phase_i_coverage,
+            'location_recommendations': recommendations
+        }
 
     def _display_configuration_summary(self, config_dict, station_analysis):
             """
