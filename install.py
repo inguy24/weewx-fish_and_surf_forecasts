@@ -890,6 +890,7 @@ class PhaseIAnalyzer:
         """
         Extract all Phase I selected stations with metadata from CONF
         Returns comprehensive station data without any API calls
+        FIXED: Corrected capability string matching for actual CONF data
         """
         stations = {
             'coops_stations': [],
@@ -900,25 +901,55 @@ class PhaseIAnalyzer:
         # Process CO-OPS stations from Phase I metadata
         coops_metadata = self.station_metadata.get('coops_stations', {})
         for station_id, metadata in coops_metadata.items():
+            # FIXED: Proper capability string parsing for your actual CONF data
+            capabilities_str = metadata.get('capabilities', '')
+            
+            # Your CONF has "tide_predictions" - handle both single strings and comma-separated
+            capabilities_list = []
+            if isinstance(capabilities_str, str):
+                if ',' in capabilities_str:
+                    capabilities_list = [cap.strip() for cap in capabilities_str.split(',')]
+                else:
+                    capabilities_list = [capabilities_str.strip()]
+            
+            # FIXED: Accurate capability detection for CO-OPS stations
+            has_tide_data = any(cap in ['water_level', 'predictions', 'tide_predictions'] for cap in capabilities_list)
+            has_water_temp = any(cap in ['water_temperature', 'water_temp'] for cap in capabilities_list)
+            
             station_info = {
                 'station_id': station_id,
                 'name': metadata.get('name', f'Station {station_id}'),
                 'latitude': float(metadata.get('latitude', 0)),
                 'longitude': float(metadata.get('longitude', 0)),
                 'distance_miles': float(metadata.get('distance_miles', 0)),
-                'capabilities': metadata.get('capabilities', '').split(', '),
+                'capabilities': capabilities_list,
                 'station_type': metadata.get('station_type', 'coops'),
-                'has_tide_data': 'water_level' in metadata.get('capabilities', '') or 'predictions' in metadata.get('capabilities', ''),
-                'has_water_temp': 'water_temperature' in metadata.get('capabilities', '')
+                'has_tide_data': has_tide_data,
+                'has_water_temp': has_water_temp
             }
             stations['coops_stations'].append(station_info)
         
         # Process NDBC stations from Phase I metadata  
         ndbc_metadata = self.station_metadata.get('ndbc_stations', {})
         for station_id, metadata in ndbc_metadata.items():
+            # FIXED: Direct boolean reading from CONF metadata
+            wave_capability = metadata.get('wave_capability', 'false')
+            atmospheric_capability = metadata.get('atmospheric_capability', 'false')
+            
+            # Handle both string and boolean values
+            if isinstance(wave_capability, str):
+                has_wave_data = wave_capability.lower() == 'true'
+            else:
+                has_wave_data = bool(wave_capability)
+                
+            if isinstance(atmospheric_capability, str):
+                has_atmospheric_data = atmospheric_capability.lower() == 'true'
+            else:
+                has_atmospheric_data = bool(atmospheric_capability)
+            
             capabilities = {
-                'wave_data': metadata.get('wave_capability', 'false') == 'true',
-                'atmospheric_data': metadata.get('atmospheric_capability', 'false') == 'true'
+                'wave_data': has_wave_data,
+                'atmospheric_data': has_atmospheric_data
             }
             
             station_info = {
@@ -929,8 +960,8 @@ class PhaseIAnalyzer:
                 'distance_miles': float(metadata.get('distance_miles', 0)),
                 'capabilities': capabilities,
                 'station_type': metadata.get('station_type', 'ndbc'),
-                'has_wave_data': capabilities['wave_data'],
-                'has_atmospheric_data': capabilities['atmospheric_data']
+                'has_wave_data': has_wave_data,
+                'has_atmospheric_data': has_atmospheric_data
             }
             stations['ndbc_stations'].append(station_info)
         
