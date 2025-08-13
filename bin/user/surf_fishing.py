@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Wallaby
+# Magic Animal: Kangaroo
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1858,8 +1858,8 @@ class FishingForecastGenerator:
             # Score each period using CONF-based scoring
             scored_periods = []
             for period in forecast_periods:
-                period_score = self._score_fishing_period(
-                    period, marine_conditions, category_config
+                period_score = self.score_fishing_period_complete(
+                    period, marine_conditions, category_config, self.db_manager
                 )
                 scored_periods.append(period_score)
             
@@ -2359,37 +2359,6 @@ class FishingForecastGenerator:
             components.append("during prime feeding time")
         
         return " ".join(components)
-
-    def _score_fishing_period_basic(self, period, marine_conditions, category_config):
-        """Basic scoring fallback when enhanced analysis fails"""
-        
-        # Simple time-based scoring
-        period_name = period['period_name']
-        
-        if period_name in ['early_morning', 'evening']:
-            rating = 4
-            conditions_text = "Good"
-        elif period_name in ['morning', 'afternoon']:
-            rating = 3
-            conditions_text = "Fair"
-        else:
-            rating = 2
-            conditions_text = "Poor"
-        
-        star_display = self.generate_star_display(rating)
-        
-        enhanced_period = period.copy()
-        enhanced_period.update({
-            'activity_rating': rating,
-            'activity_stars': star_display['stars_visual'],
-            'conditions_text': conditions_text,
-            'description': f"{conditions_text} fishing during {period_name.replace('_', ' ')}",
-            'species_activity': 'Moderate',
-            'confidence': 0.3,
-            'generated_time': int(time.time())
-        })
-        
-        return enhanced_period
 
     def store_fishing_forecasts(self, spot_id, forecast_data, db_manager):
         """Store fishing forecasts in database using WeeWX patterns"""
