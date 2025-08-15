@@ -3577,19 +3577,23 @@ class SurfFishingService(StdService):
         
         while not self.shutdown_event.is_set():
             try:
-                # Thread-specific database manager with proper cleanup
+                log.debug("Starting forecast generation (API calls and processing)")
+                self._generate_all_forecasts()
+                
+                log.debug("Forecast generation complete, opening database connection for storage")
                 with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                    # Store for this forecast cycle
                     self._thread_db_manager = db_manager
-                    self._generate_all_forecasts()
+                    self._store_generated_forecasts()
                 
                 log.debug(f"Forecast generation completed, sleeping for {self.forecast_interval} seconds")
                 self.shutdown_event.wait(timeout=self.forecast_interval)
                 
             except Exception as e:
                 log.error(f"Error in forecast loop: {e}")
-                self.shutdown_event.wait(timeout=300)
+                # Wait before retrying
+                self.shutdown_event.wait(timeout=300)  # 5 minutes
             finally:
+                # Clean up thread-specific db_manager
                 self._thread_db_manager = None
     
     def _generate_all_forecasts(self):
