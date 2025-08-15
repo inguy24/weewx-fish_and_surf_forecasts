@@ -3592,7 +3592,7 @@ class SurfFishingService(StdService):
                 # Generate surf forecasts (API calls, no database)
                 for spot in active_surf_spots:
                     try:
-                        surf_forecast = self._generate_spot_surf_forecast(spot)
+                        surf_forecast = self._generate_surf_forecast_for_spot(spot)
                         if surf_forecast:
                             generated_surf_forecasts[spot['id']] = surf_forecast
                             surf_count += 1
