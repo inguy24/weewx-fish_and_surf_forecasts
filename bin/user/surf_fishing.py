@@ -3444,6 +3444,7 @@ class SurfFishingService(StdService):
         """
         Initialize SurfFishingService using WeeWX patterns
         All configuration from CONF only - no YAML access
+        FIXED: Defers database manager to avoid startup timing conflicts
         """
         super(SurfFishingService, self).__init__(engine, config_dict)
         
@@ -3451,35 +3452,38 @@ class SurfFishingService(StdService):
         self.engine = engine
         self.config_dict = config_dict
         
-        # Get database manager from engine (WeeWX 5.1 pattern)
-        self.db_manager = self.engine.db_binder.get_manager('wx_binding')
+        # CRITICAL FIX: Don't get database manager here - defer it
+        self._db_manager = None
+        self._db_lock = threading.Lock()
+        self._db_initialization_complete = False
         
-        # Read service configuration from CONF only
+        # Read service configuration from CONF only - RETAINED
         self.service_config = config_dict.get('SurfFishingService', {})
         
-        # Initialize GRIB processor
+        # Initialize GRIB processor - RETAINED EXACTLY
         self.grib_processor = GRIBProcessor(config_dict)
         if self.grib_processor.is_available():
             log.info("Using pygrib for GRIB processing")
         else:
             log.warning("No GRIB library available - WaveWatch III forecasts disabled")
         
-        # Initialize forecast generators with CONF-based config
-        self.surf_generator = SurfForecastGenerator(config_dict, self.db_manager)
-        self.fishing_generator = FishingForecastGenerator(config_dict, self.db_manager)
+        # Initialize forecast generators with CONF-based config - RETAINED EXACTLY
+        # NOTE: These will use _get_db_manager() when they need database access
+        self.surf_generator = SurfForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
+        self.fishing_generator = FishingForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
         
-        # Set up forecast timing from CONF
+        # Set up forecast timing from CONF - RETAINED EXACTLY
         self.forecast_interval = int(self.service_config.get('forecast_interval', 21600))  # 6 hours default
         self.shutdown_event = threading.Event()
         
-        # Initialize station integration with CONF-based error handling
+        # Initialize station integration with CONF-based error handling - RETAINED EXACTLY
         try:
             log.info(f"{CORE_ICONS['status']} Initializing marine station integration...")
             
-            # Load field definitions from CONF (written by installer)
+            # Load field definitions from CONF (written by installer) - RETAINED
             field_definitions = self._load_field_definitions()
             
-            # Initialize integration components if field definitions available
+            # Initialize integration components if field definitions available - RETAINED
             if field_definitions:
                 log.info(f"{CORE_ICONS['status']} Station integration initialized successfully")
             else:
@@ -3489,12 +3493,47 @@ class SurfFishingService(StdService):
             log.error(f"{CORE_ICONS['warning']} Error initializing station integration: {e}")
             log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
         
-        # Start forecast generation
+        # Start forecast generation - RETAINED EXACTLY
         log.info("Starting forecast generation loop")
         self._start_forecast_thread()
         
         log.info("Generating forecasts for all locations")
-        log.info("SurfFishingService initialized successfully")
+        log.info("SurfFishingService initialized successfully - database manager will be acquired on first use")
+
+    def _get_db_manager(self):
+        """
+        Thread-safe database manager acquisition with retry logic
+        Implements Option 3: Delayed initialization pattern
+        
+        Returns:
+            Database manager instance
+            
+        Raises:
+            Exception: If database manager cannot be acquired
+        """
+        if self._db_manager is None:
+            with self._db_lock:
+                # Double-check pattern for thread safety
+                if self._db_manager is None:
+                    try:
+                        log.debug("Acquiring database manager (delayed initialization)")
+                        self._db_manager = self.engine.db_binder.get_manager('wx_binding')
+                        self._db_initialization_complete = True
+                        log.info("Database manager initialized successfully")
+                        
+                        # Update forecast generators with actual database manager
+                        if hasattr(self, 'surf_generator') and self.surf_generator:
+                            self.surf_generator.db_manager = self._db_manager
+                        if hasattr(self, 'fishing_generator') and self.fishing_generator:
+                            self.fishing_generator.db_manager = self._db_manager
+                            
+                    except Exception as e:
+                        log.error(f"Failed to initialize database manager: {e}")
+                        self._db_manager = None
+                        self._db_initialization_complete = False
+                        raise
+        
+        return self._db_manager
     
     def shutDown(self):
         """Clean shutdown of the service"""
@@ -3538,16 +3577,36 @@ class SurfFishingService(StdService):
                 log.debug(f"Station data available: {station_data}")
     
     def _start_forecast_thread(self):
-        """Start the background forecast generation thread"""
+        """
+        Start forecast generation thread
+        FIXED: Uses _get_db_manager for delayed database initialization
+        """
+        def forecast_loop():
+            """Main forecast generation loop - RETAINED EXACTLY"""
+            log.info("Forecast generation thread started")
+            
+            while not self.shutdown_event.is_set():
+                try:
+                    # CRITICAL FIX: Use _get_db_manager instead of direct access
+                    db_manager = self._get_db_manager()
+                    
+                    # Generate forecasts for all active spots - RETAINED EXACTLY
+                    self._generate_all_forecasts()
+                    
+                    log.debug(f"Forecast generation completed, sleeping for {self.forecast_interval} seconds")
+                    
+                    # Wait for next interval or shutdown signal - RETAINED EXACTLY
+                    self.shutdown_event.wait(timeout=self.forecast_interval)
+                    
+                except Exception as e:
+                    log.error(f"Error in forecast loop: {e}")
+                    # Wait before retrying - RETAINED EXACTLY
+                    self.shutdown_event.wait(timeout=300)  # 5 minutes
         
-        self.forecast_thread = threading.Thread(
-            target=self._forecast_loop,
-            name="SurfFishingForecast",
-            daemon=True
-        )
+        # Start forecast thread - RETAINED EXACTLY
+        self.forecast_thread = threading.Thread(target=forecast_loop, name='SurfFishingForecast')
+        self.forecast_thread.daemon = True
         self.forecast_thread.start()
-        
-        log.info("Forecast generation thread started")
     
     def _forecast_loop(self):
         """Main forecast generation loop"""
@@ -4358,3 +4417,11 @@ class SurfFishingService(StdService):
                 error_msg = f"Critical error loading field definitions from CONF: {e}"
                 log.error(f"{CORE_ICONS['warning']} {error_msg}")
                 raise RuntimeError(error_msg)
+            
+    @property
+    def db_manager(self):
+        """
+        Property accessor for database manager
+        Provides transparent access to delayed-initialized database manager
+        """
+        return self._get_db_manager()
