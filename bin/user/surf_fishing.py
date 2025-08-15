@@ -3572,61 +3572,63 @@ class SurfFishingService(StdService):
         self.forecast_thread.start()
     
     def _forecast_loop(self):
-        """Main forecast generation loop"""
+        """Main forecast generation loop - complete operation in one method"""
         log.info("Forecast generation thread started")
         
         while not self.shutdown_event.is_set():
             try:
+                # Step 1: Get all API data and generate forecasts (NO DATABASE)
                 log.debug("Starting forecast generation (API calls and processing)")
-                self._generate_all_forecasts()
                 
-                log.debug("Forecast generation complete, opening database connection for storage")
+                # Get active spots
+                active_surf_spots = self._get_active_surf_spots()
+                active_fishing_spots = self._get_active_fishing_spots()
+                
+                surf_count = 0
+                fishing_count = 0
+                generated_surf_forecasts = {}
+                generated_fishing_forecasts = {}
+                
+                # Generate surf forecasts (API calls, no database)
+                for spot in active_surf_spots:
+                    try:
+                        surf_forecast = self._generate_spot_surf_forecast(spot)
+                        if surf_forecast:
+                            generated_surf_forecasts[spot['id']] = surf_forecast
+                            surf_count += 1
+                    except Exception as e:
+                        log.error(f"Error generating surf forecast for {spot.get('name', 'unknown')}: {e}")
+                        continue
+                
+                # Generate fishing forecasts (API calls, no database)
+                for spot in active_fishing_spots:
+                    try:
+                        fishing_forecast = self._generate_spot_fishing_forecast(spot)
+                        if fishing_forecast:
+                            generated_fishing_forecasts[spot['id']] = fishing_forecast
+                            fishing_count += 1
+                    except Exception as e:
+                        log.error(f"Error generating fishing forecast for {spot.get('name', 'unknown')}: {e}")
+                        continue
+                
+                # Step 2: Open database ONLY when ready to write
+                log.debug("Forecast generation complete, opening database for storage")
                 with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                    self._thread_db_manager = db_manager
-                    self._store_generated_forecasts()
+                    # Store all generated forecasts
+                    for spot_id, surf_forecast in generated_surf_forecasts.items():
+                        self.surf_generator.store_surf_forecasts(spot_id, surf_forecast, db_manager)
+                    
+                    for spot_id, fishing_forecast in generated_fishing_forecasts.items():
+                        self.fishing_generator.store_fishing_forecasts(spot_id, fishing_forecast, db_manager)
                 
-                log.debug(f"Forecast generation completed, sleeping for {self.forecast_interval} seconds")
+                log.info(f"Forecast generation completed for {surf_count} surf spots and {fishing_count} fishing spots")
+                log.debug(f"Sleeping for {self.forecast_interval} seconds")
                 self.shutdown_event.wait(timeout=self.forecast_interval)
                 
             except Exception as e:
                 log.error(f"Error in forecast loop: {e}")
-                # Wait before retrying
-                self.shutdown_event.wait(timeout=300)  # 5 minutes
-            finally:
-                # Clean up thread-specific db_manager
-                self._thread_db_manager = None
-    
-    def _generate_all_forecasts(self):
-        """Generate forecasts for all active surf and fishing spots"""
+                self.shutdown_event.wait(timeout=300)
         
-        log.info("Generating forecasts for all locations")
-        
-        try:
-            # Get active surf spots
-            surf_spots = self._get_active_surf_spots()
-            
-            # Get active fishing spots
-            fishing_spots = self._get_active_fishing_spots()
-            
-            # Generate surf forecasts
-            for spot in surf_spots:
-                try:
-                    self._generate_surf_forecast_for_spot(spot)
-                except Exception as e:
-                    log.error(f"Error generating surf forecast for {spot['name']}: {e}")
-            
-            # Generate fishing forecasts
-            for spot in fishing_spots:
-                try:
-                    self._generate_fishing_forecast_for_spot(spot)
-                except Exception as e:
-                    log.error(f"Error generating fishing forecast for {spot['name']}: {e}")
-            
-            log.info(f"Forecast generation completed for {len(surf_spots)} surf spots and {len(fishing_spots)} fishing spots")
-        
-        except Exception as e:
-            log.error(f"Error in forecast generation: {e}")
-    
     def _get_active_surf_spots(self):
         """Get all active surf spots from CONF configuration"""
         
