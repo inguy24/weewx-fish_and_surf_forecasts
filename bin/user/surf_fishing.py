@@ -3502,32 +3502,20 @@ class SurfFishingService(StdService):
         log.info("SurfFishingService initialized successfully - database manager will be acquired on first use")
 
     def _get_db_manager(self):
-        """
-        Thread-safe database manager acquisition with retry logic
-        Implements Option 3: Delayed initialization pattern
+        """Get database manager - thread-specific if available, otherwise delayed initialization"""
+        # If we're in a background thread with a thread-specific manager, use that
+        if hasattr(self, '_thread_db_manager') and self._thread_db_manager is not None:
+            return self._thread_db_manager
         
-        Returns:
-            Database manager instance
-            
-        Raises:
-            Exception: If database manager cannot be acquired
-        """
+        # Otherwise use the original delayed initialization logic
         if self._db_manager is None:
             with self._db_lock:
-                # Double-check pattern for thread safety
                 if self._db_manager is None:
                     try:
                         log.debug("Acquiring database manager (delayed initialization)")
                         self._db_manager = self.engine.db_binder.get_manager('wx_binding')
                         self._db_initialization_complete = True
                         log.info("Database manager initialized successfully")
-                        
-                        # Update forecast generators with actual database manager
-                        if hasattr(self, 'surf_generator') and self.surf_generator:
-                            self.surf_generator.db_manager = self._db_manager
-                        if hasattr(self, 'fishing_generator') and self.fishing_generator:
-                            self.fishing_generator.db_manager = self._db_manager
-                            
                     except Exception as e:
                         log.error(f"Failed to initialize database manager: {e}")
                         self._db_manager = None
@@ -3578,54 +3566,31 @@ class SurfFishingService(StdService):
                 log.debug(f"Station data available: {station_data}")
     
     def _start_forecast_thread(self):
-        """
-        Start forecast generation thread
-        FIXED: Uses _get_db_manager for delayed database initialization
-        """
-        def forecast_loop():
-            """Main forecast generation loop - RETAINED EXACTLY"""
-            log.info("Forecast generation thread started")
-            
-            while not self.shutdown_event.is_set():
-                try:
-                    # CRITICAL FIX: Use _get_db_manager instead of direct access
-                    db_manager = self.engine.db_binder.get_manager('wx_binding')
-                    
-                    # Generate forecasts for all active spots - RETAINED EXACTLY
-                    self._generate_all_forecasts()
-                    
-                    log.debug(f"Forecast generation completed, sleeping for {self.forecast_interval} seconds")
-                    
-                    # Wait for next interval or shutdown signal - RETAINED EXACTLY
-                    self.shutdown_event.wait(timeout=self.forecast_interval)
-                    
-                except Exception as e:
-                    log.error(f"Error in forecast loop: {e}")
-                    # Wait before retrying - RETAINED EXACTLY
-                    self.shutdown_event.wait(timeout=300)  # 5 minutes
-        
-        # Start forecast thread - RETAINED EXACTLY
-        self.forecast_thread = threading.Thread(target=forecast_loop, name='SurfFishingForecast')
+        """Start forecast generation thread"""
+        self.forecast_thread = threading.Thread(target=self._forecast_loop, name='SurfFishingForecast')
         self.forecast_thread.daemon = True
         self.forecast_thread.start()
     
     def _forecast_loop(self):
         """Main forecast generation loop"""
-        
-        log.info("Starting forecast generation loop")
+        log.info("Forecast generation thread started")
         
         while not self.shutdown_event.is_set():
             try:
-                # Generate forecasts for all active locations
-                self._generate_all_forecasts()
+                # Thread-specific database manager with proper cleanup
+                with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                    # Store for this forecast cycle
+                    self._thread_db_manager = db_manager
+                    self._generate_all_forecasts()
                 
-                # Wait for next forecast interval or shutdown signal
+                log.debug(f"Forecast generation completed, sleeping for {self.forecast_interval} seconds")
                 self.shutdown_event.wait(timeout=self.forecast_interval)
                 
             except Exception as e:
                 log.error(f"Error in forecast loop: {e}")
-                # Wait before retrying
-                self.shutdown_event.wait(timeout=300)  # 5 minutes
+                self.shutdown_event.wait(timeout=300)
+            finally:
+                self._thread_db_manager = None
     
     def _generate_all_forecasts(self):
         """Generate forecasts for all active surf and fishing spots"""
