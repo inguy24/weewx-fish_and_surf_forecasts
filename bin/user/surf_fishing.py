@@ -3589,7 +3589,7 @@ class SurfFishingService(StdService):
             while not self.shutdown_event.is_set():
                 try:
                     # CRITICAL FIX: Use _get_db_manager instead of direct access
-                    db_manager = self._get_db_manager()
+                    db_manager = self.engine.db_binder.get_manager('wx_binding')
                     
                     # Generate forecasts for all active spots - RETAINED EXACTLY
                     self._generate_all_forecasts()
