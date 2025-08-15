@@ -3496,7 +3496,7 @@ class SurfFishingService(StdService):
         
         # Start forecast generation - RETAINED EXACTLY
         log.info("Starting forecast generation loop")
-        #self._start_forecast_thread()
+        self.bind(weewx.STARTUP, lambda event: self._start_forecast_thread())
         
         log.info("Generating forecasts for all locations")
         log.info("SurfFishingService initialized successfully - database manager will be acquired on first use")
