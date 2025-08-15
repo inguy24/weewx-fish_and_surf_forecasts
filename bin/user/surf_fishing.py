@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Asshole_AI
+# Magic Animal: Black Bear
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
