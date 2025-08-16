@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Polar Bear
+# Magic Animal: Penguin
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -3471,7 +3471,7 @@ class SurfFishingService(StdService):
         # Initialize forecast generators with CONF-based config - RETAINED EXACTLY
         # NOTE: These will use _get_db_manager() when they need database access
         self.surf_generator = SurfForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
-        self.fishing_generator = None  # Pass None, will get via _get_db_manager
+        self.fishing_generator = FishingForecastGenerator(config_dict) 
         
         # Set up forecast timing from CONF - RETAINED EXACTLY
         self.forecast_interval = int(self.service_config.get('forecast_interval', 21600))  # 6 hours default
@@ -3616,10 +3616,10 @@ class SurfFishingService(StdService):
                 with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
 
                     # ADD THIS HERE - Initialize generators with database manager if not already done
-                    if self.fishing_generator is None:
-                        self.fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
-                    if self.surf_generator is None:
-                        self.surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
+                    if not hasattr(self.fishing_generator, 'db_manager') or self.fishing_generator.db_manager is None:
+                        self.fishing_generator.db_manager = db_manager
+                    if not hasattr(self.surf_generator, 'db_manager') or self.surf_generator.db_manager is None:
+                        self.surf_generator.db_manager = db_manager
 
                     # Store all generated forecasts
                     for spot_id, surf_forecast in generated_surf_forecasts.items():
