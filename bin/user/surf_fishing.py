@@ -1783,8 +1783,8 @@ class SurfForecastSearchList(SearchList):
                     spot = {
                         'id': spot_id,
                         'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', 0.0)),
-                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'latitude': float(spot_config.get('latitude', '0.0')),
+                        'longitude': float(spot_config.get('longitude', '0.0')),
                         'bottom_type': spot_config.get('bottom_type', 'sand'),
                         'exposure': spot_config.get('exposure', 'exposed')
                     }
@@ -2915,8 +2915,8 @@ class FishingForecastGenerator:
                     spot_info = {
                         'id': spot_key,
                         'name': spot_config.get('name', spot_key),
-                        'latitude': float(spot_config.get('latitude', 0.0)),
-                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'latitude': float(spot_config.get('latitude', '0.0')),
+                        'longitude': float(spot_config.get('longitude', '0.0')),
                         'location_type': spot_config.get('location_type', 'shore'),
                         'target_category': spot_config.get('target_category', 'mixed_bag')
                     }
@@ -3414,8 +3414,8 @@ class FishingForecastSearchList(SearchList):
                     spot = {
                         'id': spot_id,
                         'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', 0.0)),
-                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'latitude': float(spot_config.get('latitude', '0.0')),
+                        'longitude': float(spot_config.get('longitude', '0.0')),
                         'location_type': spot_config.get('location_type', 'shore'),
                         'target_category': spot_config.get('target_category', 'mixed_bag')
                     }
@@ -3544,7 +3544,7 @@ class SurfFishingService(StdService):
         self.fishing_generator = FishingForecastGenerator(config_dict) 
         
         # Set up forecast timing from CONF - RETAINED EXACTLY
-        self.forecast_interval = int(self.service_config.get('forecast_interval', 21600))  # 6 hours default
+        self.forecast_interval = int(self.service_config.get('forecast_interval', '21600')) # 6 hours default
         self.shutdown_event = threading.Event()
         
         # Initialize station integration with CONF-based error handling - RETAINED EXACTLY
@@ -3735,8 +3735,8 @@ class SurfFishingService(StdService):
                     spot = {
                         'id': spot_id,  # Use CONF key as ID
                         'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', 0.0)),
-                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'latitude': float(spot_config.get('latitude', '0.0')),
+                        'longitude': float(spot_config.get('longitude', '0.0')),
                         'bottom_type': spot_config.get('bottom_type', 'sand'),
                         'exposure': spot_config.get('exposure', 'exposed'),
                         'type': spot_config.get('type', 'surf')
@@ -3770,8 +3770,8 @@ class SurfFishingService(StdService):
                     spot = {
                         'id': spot_id,  # Use CONF key as ID
                         'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', 0.0)),
-                        'longitude': float(spot_config.get('longitude', 0.0)),
+                        'latitude': float(spot_config.get('latitude', '0.0')),
+                        'longitude': float(spot_config.get('longitude', '0.0')),
                         'location_type': spot_config.get('location_type', 'shore'),
                         'target_category': spot_config.get('target_category', 'mixed_bag'),
                         'type': spot_config.get('type', 'fishing')
@@ -4264,8 +4264,8 @@ class SurfFishingService(StdService):
                 spot = {
                     'id': spot_id,
                     'name': spot_config.get('name', spot_id),
-                    'latitude': float(spot_config.get('latitude', 0.0)),
-                    'longitude': float(spot_config.get('longitude', 0.0)),
+                    'latitude': float(spot_config.get('latitude', '0.0')),
+                    'longitude': float(spot_config.get('longitude', '0.0')),
                     'type': spot_config.get('type', spot_type),
                     'active': spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
                 }
@@ -4323,8 +4323,8 @@ class SurfFishingService(StdService):
                 
                 # Validate coordinate ranges
                 try:
-                    lat = float(spot_config.get('latitude', 0))
-                    lon = float(spot_config.get('longitude', 0))
+                    lat = float(spot_config.get('latitude', '0.0'))
+                    lon = float(spot_config.get('longitude', '0.0'))
                     if not (-90 <= lat <= 90):
                         validation_results['issues'].append(f"Surf spot {spot_id} invalid latitude: {lat}")
                     if not (-180 <= lon <= 180):
@@ -4347,8 +4347,8 @@ class SurfFishingService(StdService):
                 
                 # Validate coordinates
                 try:
-                    lat = float(spot_config.get('latitude', 0))
-                    lon = float(spot_config.get('longitude', 0))
+                    lat = float(spot_config.get('latitude', '0.0'))
+                    lon = float(spot_config.get('longitude', '0.0'))
                     if not (-90 <= lat <= 90):
                         validation_results['issues'].append(f"Fishing spot {spot_id} invalid latitude: {lat}")
                     if not (-180 <= lon <= 180):
