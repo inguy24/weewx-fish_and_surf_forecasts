@@ -2033,13 +2033,20 @@ class FishingForecastGenerator:
     def analyze_pressure_trend_enhanced(self, marine_conditions, db_manager):
         """
         Analyze pressure trends using data-driven Phase I integration
-        
-        SURGICAL FIX: Removes manual cursor patterns  
-        RETAINS: All functionality, method name, parameters, return values
-        READS FROM: Existing CONF for Phase I integration settings
-        REQUIRES: Phase I Marine Data Extension must be installed and configured
+        FIXED: Added None check for db_manager and proper error handling
         """
         try:
+            # Check if db_manager is provided
+            if db_manager is None:
+                log.error("Database manager not provided to analyze_pressure_trend_enhanced")
+                return {
+                    'score': 2,
+                    'trend': 'unknown',
+                    'description': 'Pressure data unavailable',
+                    'pressure_change': 0.0,
+                    'confidence': 0.3
+                }
+            
             # Verify Phase I configuration (REQUIRED DEPENDENCY)
             phase_i_config = self.config_dict.get('MarineDataService', {})
             if not phase_i_config:
@@ -2059,7 +2066,13 @@ class FishingForecastGenerator:
             """, (history_start,)).fetchall()
             
             if len(results) < 2:
-                raise RuntimeError(f"Insufficient pressure data available from Phase I. Found {len(results)} readings, need at least 2.")
+                return {
+                    'score': 2,
+                    'trend': 'stable',
+                    'description': 'Insufficient pressure data',
+                    'pressure_change': 0.0,
+                    'confidence': 0.3
+                }
             
             # Calculate pressure trend (preserve exact algorithm)
             recent_pressure = results[0][0]
@@ -2099,21 +2112,34 @@ class FishingForecastGenerator:
                     'pressure_change': pressure_change,
                     'confidence': 0.5
                 }
-            
+                
         except Exception as e:
             log.error(f"Error analyzing pressure trend: {e}")
-            raise
+            return {
+                'score': 2,
+                'trend': 'unknown',
+                'description': 'Error retrieving pressure data',
+                'pressure_change': 0.0,
+                'confidence': 0.2
+            }
 
-    def analyze_tide_conditions_real(self, spot_config, db_manager):
+    def analyze_tide_conditions_real(self, period, db_manager):
         """
         Analyze tide conditions using data-driven Phase I integration
-        
-        SURGICAL FIX: Removes manual cursor patterns
-        RETAINS: All functionality, method name, parameters, return values
-        READS FROM: Existing CONF for Phase I integration settings  
-        REQUIRES: Phase I Marine Data Extension must be installed and configured
+        FIXED: Added None check for db_manager and proper error handling
         """
         try:
+            # Check if db_manager is provided
+            if db_manager is None:
+                log.error("Database manager not provided to analyze_tide_conditions_real")
+                return {
+                    'score': 1,
+                    'movement': 'unknown',
+                    'description': 'Tide data unavailable',
+                    'tide_events': 0,
+                    'confidence': 0.2
+                }
+            
             # Verify Phase I configuration (REQUIRED DEPENDENCY)
             phase_i_config = self.config_dict.get('MarineDataService', {})
             if not phase_i_config:
@@ -2133,7 +2159,13 @@ class FishingForecastGenerator:
             """, (current_time, search_window)).fetchall()
             
             if not results:
-                raise RuntimeError("No tide data available from Phase I tide_table for the next 12 hours.")
+                return {
+                    'score': 1,
+                    'movement': 'unknown',
+                    'description': 'No tide data available',
+                    'tide_events': 0,
+                    'confidence': 0.2
+                }
             
             # Find next tide change (preserve exact algorithm)
             next_tide = results[0]
@@ -2143,34 +2175,47 @@ class FishingForecastGenerator:
             if next_tide[1] == 'H':  # High tide
                 if time_to_tide <= 2:  # Within 2 hours
                     return {
-                        'current_movement': 'incoming',
-                        'time_to_next_tide_hours': time_to_tide,
-                        'quality': 'good',
+                        'score': 3,
+                        'movement': 'incoming',
                         'description': 'Incoming tide - active feeding',
-                        'quality_score': 0.8
+                        'tide_events': len(results),
+                        'confidence': 0.8
+                    }
+                else:
+                    return {
+                        'score': 2,
+                        'movement': 'incoming',
+                        'description': 'Incoming tide',
+                        'tide_events': len(results),
+                        'confidence': 0.6
                     }
             else:  # Low tide
                 if time_to_tide <= 2:  # Within 2 hours
                     return {
-                        'current_movement': 'outgoing',
-                        'time_to_next_tide_hours': time_to_tide,
-                        'quality': 'fair',
+                        'score': 2,
+                        'movement': 'outgoing',
                         'description': 'Outgoing tide - moderate activity',
-                        'quality_score': 0.6
+                        'tide_events': len(results),
+                        'confidence': 0.6
                     }
-            
-            # Default for distant tides
-            return {
-                'current_movement': 'slack',
-                'time_to_next_tide_hours': time_to_tide,
-                'quality': 'fair',
-                'description': 'Slack water - moderate fishing',
-                'quality_score': 0.5
-            }
-            
+                else:
+                    return {
+                        'score': 1,
+                        'movement': 'outgoing',
+                        'description': 'Outgoing tide',
+                        'tide_events': len(results),
+                        'confidence': 0.5
+                    }
+                
         except Exception as e:
             log.error(f"Error analyzing tide conditions: {e}")
-            raise
+            return {
+                'score': 1,
+                'movement': 'unknown',
+                'description': 'Error retrieving tide data',
+                'tide_events': 0,
+                'confidence': 0.1
+            }
 
     def _score_time_of_day(self, period):
         """Score based on time of day feeding patterns"""
@@ -3570,71 +3615,81 @@ class SurfFishingService(StdService):
         self.forecast_thread = threading.Thread(target=self._forecast_loop, name='SurfFishingForecast')
         self.forecast_thread.daemon = True
         self.forecast_thread.start()
-    
+
     def _forecast_loop(self):
-        """Main forecast generation loop - complete operation in one method"""
+        """
+        Main forecast generation loop - complete operation in one method
+        FIXED: Creates thread-local database manager and generators for each iteration
+        """
         log.info("Forecast generation thread started")
         
         while not self.shutdown_event.is_set():
             try:
-                # Step 1: Get all API data and generate forecasts (NO DATABASE)
                 log.debug("Starting forecast generation (API calls and processing)")
                 
-                # Get active spots
-                active_surf_spots = self._get_active_surf_spots()
-                active_fishing_spots = self._get_active_fishing_spots()
-                
-                surf_count = 0
-                fishing_count = 0
-                generated_surf_forecasts = {}
-                generated_fishing_forecasts = {}
-                
-                # Generate surf forecasts (API calls, no database)
-                for spot in active_surf_spots:
-                    try:
-                        surf_forecast = self._generate_surf_forecast_for_spot(spot)
-                        if surf_forecast:
-                            generated_surf_forecasts[spot['id']] = surf_forecast
-                            surf_count += 1
-                    except Exception as e:
-                        log.error(f"Error generating surf forecast for {spot.get('name', 'unknown')}: {e}")
-                        continue
-                
-                # Generate fishing forecasts (API calls, no database)
-                for spot in active_fishing_spots:
-                    try:
-                        fishing_forecast = self._generate_spot_fishing_forecast(spot)
-                        if fishing_forecast:
-                            generated_fishing_forecasts[spot['id']] = fishing_forecast
-                            fishing_count += 1
-                    except Exception as e:
-                        log.error(f"Error generating fishing forecast for {spot.get('name', 'unknown')}: {e}")
-                        continue
-                
-                # Step 2: Open database ONLY when ready to write
-                log.debug("Forecast generation complete, opening database for storage")
+                # Open thread-local database connection for entire forecast cycle
                 with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-
-                    # ADD THIS HERE - Initialize generators with database manager if not already done
-                    if self.fishing_generator is None:
-                        self.fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
-                    if self.surf_generator is None:
-                        self.surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
-
-                    # Store all generated forecasts
-                    for spot_id, surf_forecast in generated_surf_forecasts.items():
-                        self.surf_generator.store_surf_forecasts(spot_id, surf_forecast, db_manager)
                     
-                    for spot_id, fishing_forecast in generated_fishing_forecasts.items():
-                        self.fishing_generator.store_fishing_forecasts(spot_id, fishing_forecast, db_manager)
+                    # Create thread-local generators with database manager
+                    surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
+                    fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
+                    
+                    # Get active spots
+                    active_surf_spots = self._get_active_surf_spots()
+                    active_fishing_spots = self._get_active_fishing_spots()
+                    
+                    surf_count = 0
+                    fishing_count = 0
+                    
+                    # Generate surf forecasts
+                    for spot in active_surf_spots:
+                        try:
+                            # Get WaveWatch III data if available
+                            wavewatch_data = []
+                            if self.grib_processor.is_available():
+                                wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
+                                wavewatch_data = wavewatch_collector.fetch_forecast_data(
+                                    spot['latitude'], spot['longitude']
+                                )
+                            
+                            # Generate surf forecast
+                            surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
+                            
+                            if surf_forecast:
+                                # Store directly with the generator's method
+                                surf_generator.store_surf_forecasts(spot['id'], surf_forecast, db_manager)
+                                surf_count += 1
+                                
+                        except Exception as e:
+                            log.error(f"Error generating surf forecast for {spot.get('name', 'unknown')}: {e}")
+                            continue
+                    
+                    # Generate fishing forecasts
+                    for spot in active_fishing_spots:
+                        try:
+                            # Generate fishing forecast
+                            fishing_forecast = fishing_generator.generate_fishing_forecast(spot)
+                            
+                            if fishing_forecast:
+                                # Store directly with the generator's method
+                                fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast, db_manager)
+                                fishing_count += 1
+                                
+                        except Exception as e:
+                            log.error(f"Error generating fishing forecast for {spot.get('name', 'unknown')}: {e}")
+                            continue
+                    
+                    log.info(f"Forecast generation completed for {surf_count} surf spots and {fishing_count} fishing spots")
                 
-                log.info(f"Forecast generation completed for {surf_count} surf spots and {fishing_count} fishing spots")
+                # Sleep outside of database context
                 log.debug(f"Sleeping for {self.forecast_interval} seconds")
                 self.shutdown_event.wait(timeout=self.forecast_interval)
                 
             except Exception as e:
                 log.error(f"Error in forecast loop: {e}")
                 self.shutdown_event.wait(timeout=300)
+        
+        log.info("Forecast generation thread stopped")
         
     def _get_active_surf_spots(self):
         """Get all active surf spots from CONF configuration"""
