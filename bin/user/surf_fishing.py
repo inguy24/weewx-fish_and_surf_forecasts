@@ -699,7 +699,7 @@ class WaveWatchDataCollector:
         return grib_files
     
     def _organize_forecast_data(self, data_points):
-        """Organize raw GRIB data into forecast periods"""
+        """Organize raw GRIB data into forecast periods with proper type conversion"""
         
         # Group data by forecast time
         forecast_periods = {}
@@ -710,23 +710,48 @@ class WaveWatchDataCollector:
             if forecast_time not in forecast_periods:
                 forecast_periods[forecast_time] = {}
             
-            forecast_periods[forecast_time][point['parameter']] = point['value']
+            # SURGICAL FIX: Ensure numeric conversion of GRIB values
+            try:
+                value = float(point['value']) if point['value'] is not None else 0.0
+            except (ValueError, TypeError):
+                log.warning(f"Non-numeric GRIB value for {point['parameter']}: {point['value']}, using 0.0")
+                value = 0.0
+            
+            forecast_periods[forecast_time][point['parameter']] = value
         
         # Convert to list format with unit conversions
         organized_data = []
         
         for forecast_time, parameters in forecast_periods.items():
-            # Apply unit conversions
-            converted_data = {
-                'forecast_time': forecast_time,
-                'wave_height': parameters.get('wave_height', 0) * 3.28084,  # m to ft
-                'wave_period': parameters.get('wave_period', 0),  # seconds
-                'wave_direction': parameters.get('wave_direction', 0),  # degrees
-                'wind_speed': self._calculate_wind_speed(parameters),  # m/s to mph
-                'wind_direction': self._calculate_wind_direction(parameters)  # degrees
-            }
-            
-            organized_data.append(converted_data)
+            try:
+                # SURGICAL FIX: Safe numeric extraction with type conversion
+                wave_height = float(parameters.get('wave_height', 0))
+                wave_period = float(parameters.get('wave_period', 0))
+                wave_direction = float(parameters.get('wave_direction', 0))
+                
+                # Apply unit conversions with safe numeric values
+                converted_data = {
+                    'forecast_time': forecast_time,
+                    'wave_height': wave_height * 3.28084,  # m to ft - now safe
+                    'wave_period': wave_period,  # seconds
+                    'wave_direction': wave_direction,  # degrees
+                    'wind_speed': self._calculate_wind_speed(parameters),  # m/s to mph
+                    'wind_direction': self._calculate_wind_direction(parameters)  # degrees
+                }
+                
+                organized_data.append(converted_data)
+                
+            except (ValueError, TypeError) as e:
+                log.error(f"Error converting GRIB data for forecast time {forecast_time}: {e}")
+                # Add fallback data point
+                organized_data.append({
+                    'forecast_time': forecast_time,
+                    'wave_height': 0.0,
+                    'wave_period': 0.0,
+                    'wave_direction': 0.0,
+                    'wind_speed': 0.0,
+                    'wind_direction': 0.0
+                })
         
         # Sort by forecast time
         organized_data.sort(key=lambda x: x['forecast_time'])
@@ -798,7 +823,7 @@ class SurfForecastGenerator:
             )
             
             # Apply wind quality assessment
-            surf_forecast = self._assess_surf_quality(
+            surf_forecast = self.assess_surf_quality_complete(
                 local_surf_forecast, current_wind, spot_config
             )
             
