@@ -5,316 +5,223 @@
 # This file is read by install.py during installation to configure
 # the extension. The service reads configuration from weewx.conf only.
 
-# WaveWatch III API Configuration
+# UPDATED: GFS Wave API Configuration (replaces deprecated WaveWatch III)
 api_endpoints:
-  wavewatch_iii:
-    description: "NOAA WaveWatch III Global Wave Model"
-    base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/wave/prod/"
-    documentation: "https://polar.ncep.noaa.gov/waves/wavewatch/"
+  gfs_wave:
+    description: "NOAA GFS-Wave Model (WaveWatch III coupled with GFS)"
+    base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
+    url_pattern: "gfs.{yyyymmdd}/{hh}/wave/gridded/"
+    file_pattern: "gfswave.t{hh}z.{grid_name}.f{fff}.grib2"
+    documentation: "https://polar.ncep.noaa.gov/waves/Model_Description.pdf"
     
-    # Regional grids for improved resolution
+    # Updated regional grids based on GFS Wave system
     grids:
-      us_east:
-        description: "US East Coast (7km resolution)"
-        grid_name: "nah"
-        bounds: [24.0, 50.0, -95.0, -65.0]
-        resolution: 0.067  # degrees
-        file_pattern: "nww3.{yyyymmdd}/nah.t{hh}z.grib2"
+      us_east_coast:
+        description: "US East Coast & Gulf (16km resolution)"
+        grid_name: "atlocn.0p16"
+        bounds: [0, 55, -100, -50]  # 0-55N, 100W-50W
+        resolution: 0.16  # degrees (~16km)
+        update_frequency: "6_hours"
+        coverage: "US East Coast, Gulf of Mexico, Western Atlantic"
+        priority: 1
         
-      us_west:
-        description: "US West Coast (7km resolution)" 
-        grid_name: "nep"
-        bounds: [24.0, 50.0, -130.0, -95.0]
-        resolution: 0.067  # degrees
-        file_pattern: "nww3.{yyyymmdd}/nep.t{hh}z.grib2"
+      us_west_coast:
+        description: "US West Coast (16km resolution)" 
+        grid_name: "wcoast.0p16"
+        bounds: [25, 50, -150, -110]  # 25-50N, 150W-110W
+        resolution: 0.16  # degrees (~16km)
+        update_frequency: "6_hours"
+        coverage: "California, Oregon, Washington coasts"
+        priority: 1
         
-      great_lakes:
-        description: "Great Lakes (2.5km resolution)"
-        grid_name: "glw"
-        bounds: [41.0, 49.0, -93.0, -76.0]
-        resolution: 0.027  # degrees
-        file_pattern: "nww3.{yyyymmdd}/glw.t{hh}z.grib2"
+      hawaii_pacific:
+        description: "Hawaii & Eastern Pacific (16km resolution)"
+        grid_name: "epacif.0p16"
+        bounds: [-20, 30, -180, -130]  # 20S-30N, 180W-130W
+        resolution: 0.16  # degrees (~16km)
+        update_frequency: "6_hours"
+        coverage: "Hawaii, Eastern Pacific"
+        priority: 1
         
-      global_30m:
-        description: "Global 30 arc-minute"
-        grid_name: "glo_30m"
-        bounds: [-90.0, 90.0, -180.0, 180.0]
-        resolution: 0.5  # degrees
-        file_pattern: "nww3.{yyyymmdd}/glo_30m.t{hh}z.grib2"
+      alaska_arctic:
+        description: "Alaska & Arctic (9km resolution)"
+        grid_name: "arctic.9km"
+        bounds: [50, 90, -180, 180]  # 50-90N, global longitude
+        resolution: 0.083  # degrees (~9km)
+        update_frequency: "6_hours"
+        coverage: "Alaska, Arctic Ocean"
+        priority: 1
+        
+      global_primary:
+        description: "Global mid-latitudes (16km resolution)"
+        grid_name: "global.0p16"
+        bounds: [-15, 52.5, -180, 180]  # 15S-52.5N, global
+        resolution: 0.16  # degrees (~16km)
+        update_frequency: "6_hours"
+        coverage: "Global primary computational grid"
+        priority: 2
+        
+      global_fallback:
+        description: "Global interpolated (25km resolution)"
+        grid_name: "global.0p25"
+        bounds: [-90, 90, -180, 180]  # Global coverage
+        resolution: 0.25  # degrees (~25km)
+        update_frequency: "6_hours"
+        coverage: "Global fallback grid"
+        priority: 3
+        
+      southern_ocean:
+        description: "Southern Ocean (25km resolution)"
+        grid_name: "gsouth.0p25"
+        bounds: [-79.5, -10.5, -180, 180]  # 79.5S-10.5S, global
+        resolution: 0.25  # degrees (~25km)
+        update_frequency: "6_hours"
+        coverage: "Southern Ocean, Antarctica"
+        priority: 2
     
-    # Wave parameters available in GRIB files
+    # Schedule configuration
+    schedule:
+      run_cycles: ["00", "06", "12", "18"]
+      update_frequency: "6_hours"
+      forecast_hours: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
+      data_availability_delay: "4.5_hours"  # Model available ~4.5 hours after run time
+    
+    # Wave parameters to extract from GRIB2 files
     parameters:
+      # Essential parameters (HIGH priority)
       - name: "Significant height of combined wind waves and swell"
         field: "wave_height"
         units: "meters"
         conversion_factor: 3.28084  # Convert to feet
         grib_parameter: "HTSGW"
+        priority: "HIGH"
         
-      - name: "Primary wave mean period" 
+      - name: "Mean period of combined wind waves and swell"
         field: "wave_period"
         units: "seconds"
         grib_parameter: "PERPW"
+        priority: "HIGH"
         
-      - name: "Primary wave direction"
+      - name: "Direction of combined wind waves and swell"
         field: "wave_direction"
         units: "degrees"
         grib_parameter: "DIRPW"
+        priority: "HIGH"
         
-      - name: "Wind wave height"
+      - name: "Wind speed"
+        field: "wind_speed"
+        units: "m/s"
+        conversion_factor: 2.23694  # Convert to mph
+        grib_parameter: "WIND"
+        priority: "HIGH"
+        
+      - name: "Wind direction"
+        field: "wind_direction"
+        units: "degrees"
+        grib_parameter: "WDIR"
+        priority: "HIGH"
+        
+      # Swell components (HIGH priority for surf forecasting)
+      - name: "Significant wave height of first swell partition"
+        field: "swell_1_height"
+        units: "meters"
+        conversion_factor: 3.28084  # Convert to feet
+        grib_parameter: "SWELL:1"
+        priority: "HIGH"
+        
+      - name: "Mean wave period of first swell partition"
+        field: "swell_1_period"
+        units: "seconds"
+        grib_parameter: "SWPER:1"
+        priority: "HIGH"
+        
+      - name: "Mean wave direction of first swell partition"
+        field: "swell_1_direction"
+        units: "degrees"
+        grib_parameter: "SWDIR:1"
+        priority: "HIGH"
+        
+      # Wind wave components (MEDIUM priority)
+      - name: "Significant height of wind waves"
         field: "wind_wave_height"
         units: "meters"
-        conversion_factor: 3.28084
+        conversion_factor: 3.28084  # Convert to feet
         grib_parameter: "WVHGT"
+        priority: "MEDIUM"
         
-      - name: "Swell height"
-        field: "swell_height" 
+      - name: "Mean period of wind waves"
+        field: "wind_wave_period"
+        units: "seconds"
+        grib_parameter: "WVPER"
+        priority: "MEDIUM"
+        
+      - name: "Direction of wind waves"
+        field: "wind_wave_direction"
+        units: "degrees"
+        grib_parameter: "WVDIR"
+        priority: "MEDIUM"
+        
+      # Secondary swell components (MEDIUM priority)
+      - name: "Significant wave height of second swell partition"
+        field: "swell_2_height"
         units: "meters"
-        conversion_factor: 3.28084
-        grib_parameter: "SWELL"
+        conversion_factor: 3.28084  # Convert to feet
+        grib_parameter: "SWELL:2"
+        priority: "MEDIUM"
+        
+      - name: "Mean wave period of second swell partition"
+        field: "swell_2_period"
+        units: "seconds"
+        grib_parameter: "SWPER:2"
+        priority: "MEDIUM"
+        
+      - name: "Mean wave direction of second swell partition"
+        field: "swell_2_direction"
+        units: "degrees"
+        grib_parameter: "SWDIR:2"
+        priority: "MEDIUM"
 
-# GFS Wind Data (atmospheric component)
-gfs_atmospheric:
-  description: "NOAA GFS Model for wind data"
-  base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
-  file_pattern: "gfs.{yyyymmdd}/{hh}/atmos/gfs.t{hh}z.pgrb2.0p25.f{fff}"
-  parameters:
-    - "UGRD:10 m above ground"
-    - "VGRD:10 m above ground"
+# Grid selection logic for location-based queries
+grid_selection:
+  method: "geographic_priority"
+  fallback_enabled: true
+  
+  regional_mappings:
+    us_east_coast:
+      bounds: [24.0, 50.0, -95.0, -65.0]
+      primary_grid: "atlocn.0p16"
+      backup_grid: "global.0p16"
+      
+    us_west_coast:
+      bounds: [24.0, 50.0, -130.0, -95.0]
+      primary_grid: "wcoast.0p16"
+      backup_grid: "global.0p16"
+      
+    us_gulf_coast:
+      bounds: [24.0, 32.0, -100.0, -80.0]
+      primary_grid: "atlocn.0p16"
+      backup_grid: "global.0p16"
+      
+    great_lakes:
+      bounds: [41.0, 49.0, -93.0, -76.0]
+      primary_grid: "global.0p16"
+      backup_grid: "global.0p25"
+      
+    alaska:
+      bounds: [55.0, 72.0, -180.0, -130.0]
+      primary_grid: "arctic.9km"
+      backup_grid: "global.0p16"
+      
+    hawaii:
+      bounds: [18.0, 23.0, -162.0, -154.0]
+      primary_grid: "epacif.0p16"
+      backup_grid: "global.0p16"
 
-# Fish Category Definitions
-fish_categories:
-  freshwater_sport:
-    display_name: "Freshwater Sport Fish"
-    description: "Bass, trout, pike, and other freshwater species"
-    species: ["Largemouth Bass", "Smallmouth Bass", "Trout", "Pike", "Walleye", "Perch"]
-    pressure_preference: "falling"
-    tide_relevance: false
-    optimal_conditions:
-      - "Dawn and dusk feeding periods"
-      - "Falling barometric pressure"
-      - "Overcast skies"
-      - "Water temperature 55-75°F"
-    
-  saltwater_inshore:
-    display_name: "Saltwater Inshore"
-    description: "Near-shore saltwater species"
-    species: ["Striped Bass", "Redfish", "Snook", "Flounder", "Sea Trout", "Bluefish"]
-    pressure_preference: "falling"
-    tide_relevance: true
-    optimal_conditions:
-      - "Moving water (2 hours before/after tide change)"
-      - "Falling barometric pressure"
-      - "Dawn and dusk periods"
-      - "Water temperature 60-80°F"
-    
-  saltwater_offshore:
-    display_name: "Saltwater Offshore"
-    description: "Deep water and pelagic species"
-    species: ["Tuna", "Mahi-mahi", "Marlin", "Sailfish", "Wahoo", "Shark"]
-    pressure_preference: "stable"
-    tide_relevance: false
-    optimal_conditions:
-      - "Stable weather systems"
-      - "Clear water conditions"
-      - "Baitfish activity"
-      - "Water temperature 70-85°F"
-      
-  surf_fishing:
-    display_name: "Surf Fishing"
-    description: "Beach and surf zone fishing"
-    species: ["Striped Bass", "Bluefish", "Flounder", "Pompano", "Whiting", "Drum"]
-    pressure_preference: "falling"
-    tide_relevance: true
-    optimal_conditions:
-      - "Incoming tide for 2 hours"
-      - "Wave height 2-5 feet"
-      - "Falling pressure"
-      - "Early morning or evening"
-      
-  pier_fishing:
-    display_name: "Pier Fishing"
-    description: "Fishing from piers and jetties"
-    species: ["Mackerel", "Croaker", "Spot", "Flounder", "Sheepshead", "Triggerfish"]
-    pressure_preference: "stable"
-    tide_relevance: true
-    optimal_conditions:
-      - "Moving water periods"
-      - "Moderate wave action"
-      - "Stable to falling pressure"
-      - "Dawn, dusk, and night fishing"
-      
-  mixed_bag:
-    display_name: "Mixed Species"
-    description: "General fishing for various species"
-    species: ["Various", "Seasonal Species", "Local Favorites"]
-    pressure_preference: "stable"
-    tide_relevance: true
-    optimal_conditions:
-      - "Early morning and evening"
-      - "Changing tides"
-      - "Stable weather patterns"
-      - "Local baitfish activity"
-
-# Surf Rating Factors and Weights
-surf_rating_factors:
-  description: "Factors used in surf quality assessment"
-  
-  # Weighting for overall surf quality calculation
-  rating_weights:
-    period: 0.4     # Wave period most important (40%)
-    size: 0.3       # Wave size second most important (30%)
-    wind: 0.2       # Wind conditions third (20%)
-    consistency: 0.1 # Wave consistency least weighted (10%)
-  
-  # Wave period quality thresholds
-  period_thresholds:
-    excellent: 14    # 14+ seconds = excellent groundswell
-    good: 11        # 11-13 seconds = good swell
-    fair: 8         # 8-10 seconds = fair swell
-    poor: 6         # 6-7 seconds = poor wind swell
-    # <6 seconds = very poor/flat
-  
-  # Spot-specific size preferences (feet)
-  size_preferences:
-    reef_breaks:
-      optimal_min: 3.0
-      optimal_max: 8.0
-      description: "Reef breaks handle bigger waves"
-      
-    beach_breaks:
-      optimal_min: 1.5
-      optimal_max: 5.0
-      description: "Beach breaks versatile size range"
-      
-    point_breaks:
-      optimal_min: 2.0
-      optimal_max: 6.0
-      description: "Point breaks work in medium range"
-      
-    jetty_breaks:
-      optimal_min: 2.0
-      optimal_max: 5.0
-      description: "Jetties work best smaller"
-  
-  # Wind effect classifications
-  wind_effects:
-    offshore:
-      description: "Wind blowing from land to ocean"
-      effect: "Clean, groomed wave faces"
-      quality_impact: "very_positive"
-      ideal_speed_range: [5, 15]  # mph
-      
-    onshore:
-      description: "Wind blowing from ocean to land"
-      effect: "Choppy, blown out conditions"
-      quality_impact: "negative"
-      max_acceptable_speed: 10  # mph
-      
-    cross_shore:
-      description: "Wind blowing parallel to shore"
-      effect: "Variable impact on wave quality"
-      quality_impact: "neutral"
-      acceptable_speed_range: [0, 20]  # mph
-      
-    glassy:
-      description: "No wind or very light wind"
-      effect: "Smooth, clean wave faces"
-      quality_impact: "positive"
-      speed_range: [0, 3]  # mph
-
-# Forecast Algorithm Parameters
-forecast_algorithms:
-  surf_rating:
-    # Star rating thresholds (1-5 stars)
-    excellent_threshold: 4.5
-    good_threshold: 3.5
-    fair_threshold: 2.5
-    poor_threshold: 1.5
-    
-    # Quality descriptors
-    quality_terms:
-      5: "Epic"
-      4: "Excellent" 
-      3: "Good"
-      2: "Fair"
-      1: "Poor"
-      0: "Flat"
-  
-  fishing_rating:
-    # Activity rating thresholds (1-5 stars)
-    excellent_threshold: 4.5
-    good_threshold: 3.5
-    fair_threshold: 2.5
-    slow_threshold: 1.5
-    
-    # Activity descriptors
-    activity_terms:
-      5: "Excellent"
-      4: "Good"
-      3: "Fair"
-      2: "Slow"
-      1: "Poor"
-
-# Station Integration Parameters
-station_integration:
-  description: "Configuration for integrating WeeWX station data"
-  
-  # Distance thresholds for station data relevance
-  relevance_thresholds:
-    pressure_useful_km: 25       # 15+ miles - Pressure systems regional  
-    temperature_useful_km: 5     # 3 miles - Air temperature local variations
-    tide_useful_km: 8            # 5 miles - Pressure data highly valuable within 5km
-    wind_useful_km: 8            # 5 miles - Wind data useful within 5km coastal zone
-    
-  # Quality control parameters
-  quality_control:
-    max_data_age_hours: 6        # Operational requirement for fresh data
-    pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
-    consistency_check_required: true
-
-# WaveWatch III Configuration
-wavewatch_endpoints:
-  base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/wave/prod/"
-  grids:
-    us_east:
-      description: "US East Coast (7km resolution)"
-      bounds: [24, 50, -95, -65]
-      update_frequency: "6_hours"
-    us_west: 
-      description: "US West Coast (7km resolution)"
-      bounds: [24, 50, -130, -95]
-      update_frequency: "6_hours"
-    glo_30m:
-      description: "Global 30 arc-minute"
-      bounds: [-90, 90, -180, 180]
-      update_frequency: "6_hours"
-  
-  # Wave parameters to extract from GRIB files
-  parameters:
-    - name: "Significant height of combined wind waves and swell"
-      field: "wave_height"
-      units: "meters"
-      conversion_factor: 3.28084  # Convert to feet
-      grib_parameter: "HTSGW"
-    - name: "Primary wave mean period" 
-      field: "wave_period"
-      units: "seconds"
-      grib_parameter: "PERPW"
-    - name: "Primary wave direction"
-      field: "wave_direction"
-      units: "degrees"
-      grib_parameter: "DIRPW"
-    - name: "Wind wave height"
-      field: "wind_wave_height"
-      units: "meters"
-      conversion_factor: 3.28084
-      grib_parameter: "WVHGT"
-
-# Data Source Methods
+# PRESERVED: Data Source Methods (keep existing)
 data_source_methods:
   noaa_only:
     display_name: "NOAA APIs Only"
-    description: "Use NDBC, CO-OPS, and WaveWatch III data"
+    description: "Use NDBC, CO-OPS, and GFS Wave data"
     sensors:
       wind: false
       pressure: false
@@ -334,85 +241,70 @@ data_source_methods:
       pressure: true
       temperature: true
     advantages:
-      - "Hyper-local wind conditions"
-      - "Real-time pressure trends"
-      - "Site-specific temperature"
+      - "Enhanced local accuracy"
+      - "Fill coverage gaps"
+      - "Cross-validation capability"
     requirements:
-      - "WeeWX station within 5km of forecast location"
-      - "Wind and barometric pressure sensors required"
+      - "Internet connection"
+      - "Local weather station"
     
-  station_primary:
-    display_name: "Station Primary"
-    description: "Use station as primary data source"
+  hybrid_integration:
+    display_name: "Hybrid Integration"
+    description: "Intelligent fusion of marine and local data"
     sensors:
       wind: true
       pressure: true
       temperature: true
     advantages:
-      - "Hyper-local conditions"
-      - "Real-time updates"
-      - "Custom sensor integration"
+      - "Best possible accuracy"
+      - "Redundant data sources"
+      - "Advanced quality control"
     requirements:
-      - "WeeWX station at forecast location"
-      - "Full weather sensor suite required"
-      - "Less accurate for offshore conditions"
+      - "Internet connection"
+      - "Multiple data sources"
 
-# Forecast Periods Configuration
-forecast_periods:
-  surf:
-    description: "Surf forecast periods (hourly)"
-    periods_per_day: 8
-    interval_hours: 3
-    start_hour: 0   # UTC
-    periods: ["00:00", "03:00", "06:00", "09:00", "12:00", "15:00", "18:00", "21:00"]
-    forecast_days: 3
-    
-  fishing:
-    description: "Fishing forecast periods (activity-based)"
-    periods_per_day: 6
-    periods:
-      early_morning:
-        start_hour: 4
-        end_hour: 8
-        description: "Dawn feeding period"
-        
-      morning:
-        start_hour: 8
-        end_hour: 12
-        description: "Morning activity"
-        
-      midday:
-        start_hour: 12
-        end_hour: 16
-        description: "Midday period"
-        
-      afternoon:
-        start_hour: 16
-        end_hour: 20
-        description: "Afternoon activity"
-        
-      evening:
-        start_hour: 20
-        end_hour: 24
-        description: "Evening feeding period"
-        
-      night:
-        start_hour: 0
-        end_hour: 4
-        description: "Night fishing"
-    forecast_days: 3
+# PRESERVED: Quality Control Parameters
+quality_control:
+  max_data_age_hours: 6        # Operational requirement for fresh data
+  pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
+  consistency_check_required: true
 
-# Required field configuration
+# PRESERVED: Coverage Thresholds for Field Adequacy Assessment
+coverage_thresholds:
+  critical_field_coverage: 1.0      # Must have ALL critical fields
+  recommended_field_coverage: 0.75  # Should have 75%+ of recommended
+  minimum_overall_coverage: 0.8     # 80% of total required fields
+
+# PRESERVED: Field Priority Rankings for Recommendations
+field_priorities:
+  surf_priority:
+    1: wave_height
+    2: wave_period  
+    3: wind_speed
+    4: wind_direction
+    5: wave_direction
+  
+  fishing_priority:
+    1: barometric_pressure
+    2: tide_predictions
+    3: current_water_level
+    4: wind_speed
+    5: sea_surface_temp
+
+# PRESERVED: Required Fields for Surf & Fishing Forecasting
 required_fields:
   surf_forecasting:
     critical:
-      - wave_height               # Primary surf quality factor
-      - wave_period               # Surf quality indicator
+      - wave_height              # Primary surf indicator
+      - wave_period               # Wave quality determination
       - wind_speed                # Surface conditions
       - wind_direction            # Onshore/offshore assessment
     
     recommended:
       - wave_direction            # Swell direction for spot-specific forecasts
+      - swell_1_height            # Primary swell component
+      - swell_1_period            # Primary swell period
+      - swell_1_direction         # Primary swell direction
       - sea_surface_temp          # Seasonal surf quality factors
       - barometric_pressure       # Weather pattern stability
       - current_water_level       # Beach access, rip current assessment
@@ -429,29 +321,92 @@ required_fields:
       - sea_surface_temp         # Species activity indicator
       - coastal_water_temp       # Seasonal fishing patterns
 
-# Coverage Thresholds for Field Adequacy Assessment
-coverage_thresholds:
-  critical_field_coverage: 1.0      # Must have ALL critical fields
-  recommended_field_coverage: 0.75  # Should have 75%+ of recommended
-  minimum_overall_coverage: 0.8     # 80% of total required fields
+# PRESERVED: Fish Categories for Forecasting
+fish_categories:
+  freshwater_sport:
+    display_name: "Freshwater Sport Fish"
+    species: ["Bass", "Trout", "Pike", "Walleye"]
+    pressure_preference: "falling"
+    tide_relevance: false
+    
+  saltwater_inshore:
+    display_name: "Saltwater Inshore"
+    species: ["Redfish", "Snook", "Flounder", "Spotted Sea Trout"]
+    pressure_preference: "stable_high"
+    tide_relevance: true
+    
+  saltwater_offshore:
+    display_name: "Saltwater Offshore"
+    species: ["Mahi", "Tuna", "Marlin", "Wahoo"]
+    pressure_preference: "stable"
+    tide_relevance: false
+    
+  bottom_fish:
+    display_name: "Bottom Fish"
+    species: ["Grouper", "Snapper", "Halibut", "Cod"]
+    pressure_preference: "stable_high"
+    tide_relevance: true
 
-# Field Priority Rankings for Recommendations
-field_priorities:
-  surf_priority:
-    1: wave_height
-    2: wave_period  
-    3: wind_speed
-    4: wind_direction
-    5: wave_direction
-  
-  fishing_priority:
-    1: barometric_pressure
-    2: tide_predictions
-    3: current_water_level
-    4: wind_speed
-    5: sea_surface_temp
+# PRESERVED: Surf Quality Scoring Parameters
+surf_scoring:
+  wave_height_scoring:
+    # Score multipliers based on wave height (feet)
+    0-1: 0.1     # Flat conditions
+    1-3: 0.6     # Small surf
+    3-6: 1.0     # Good surf
+    6-10: 0.9    # Large surf
+    10-15: 0.7   # Very large
+    15+: 0.3     # Dangerous conditions
+    
+  wave_period_scoring:
+    # Score multipliers based on wave period (seconds)
+    0-8: 0.3     # Wind swell (poor quality)
+    8-12: 0.7    # Mixed swell
+    12-16: 1.0   # Good ground swell
+    16-20: 0.9   # Very long period
+    20+: 0.8     # Extremely long period
+    
+  wind_scoring:
+    # Wind direction relative to surf spot orientation
+    offshore: 1.0      # Clean conditions
+    cross_shore: 0.6   # Manageable
+    onshore: 0.2       # Poor conditions
+    
+  wind_speed_scoring:
+    # Score multipliers based on wind speed (mph)
+    0-5: 1.0     # Glassy conditions
+    5-10: 0.9    # Light offshore
+    10-15: 0.7   # Moderate wind
+    15-20: 0.4   # Strong wind
+    20+: 0.1     # Dangerous conditions
 
-# Multi-Source Data Fusion Parameters
+# PRESERVED: Fishing Quality Scoring Parameters
+fishing_scoring:
+  pressure_trend_scoring:
+    rising_fast: 0.3      # Fish shut down
+    rising_slow: 0.7      # Decent fishing
+    stable_high: 1.0      # Excellent conditions
+    stable_low: 0.6       # Fair conditions
+    falling_slow: 0.9     # Very good fishing
+    falling_fast: 0.8     # Good before front
+    
+  tide_phase_scoring:
+    # Relative to high/low tide timing
+    incoming: 0.9         # Fish feeding as water rises
+    high_slack: 0.6       # Slower fishing at high tide
+    outgoing: 1.0         # Peak fishing as tide drops
+    low_slack: 0.4        # Typically slower fishing
+    
+  time_of_day_scoring:
+    # Based on typical fish feeding patterns
+    dawn: 1.0            # Prime feeding time
+    morning: 0.8         # Good fishing
+    midday: 0.4          # Typically slower
+    afternoon: 0.6       # Moderate fishing
+    dusk: 1.0            # Prime feeding time
+    night: 0.7           # Species dependent
+
+# PRESERVED: Multi-Source Data Fusion Parameters
 fusion_parameters:
   atmospheric_fusion:
     distance_weight_enabled: true
@@ -468,81 +423,29 @@ fusion_parameters:
       two_sources: 0.9
       three_plus_sources: 1.0
 
-# Station Calibration Factors (Thomas et al. 2011 methodology)
-calibration_factors:
-  buoy_types:
-    standard_buoy: 1.0
-    cman_station: 0.95
-    coastal_station: 0.9
+# PRESERVED: Station Distance Analysis Parameters
+distance_analysis:
+  wave_data_distance_quality:
+    excellent: [0, 25]      # 0-25 miles: excellent correlation
+    good: [25, 50]          # 25-50 miles: good correlation
+    fair: [50, 100]         # 50-100 miles: fair correlation
+    poor: [100, 999]        # 100+ miles: poor correlation
     
-  measurement_corrections:
-    wind_speed_systematic: 1.05     # Buoy wind speed correction
-    pressure_offset: 0.0            # No systematic pressure correction needed
-
-# Quality Control Parameters
-quality_control:
-  max_data_age_hours: 6        # Operational requirement for fresh data
-  pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
-  consistency_check_required: true
-  outlier_detection_enabled: true
-
-# Database Schema - FORECAST DATA ONLY (locations stored in CONF)
-database_schema:
-  surf_forecast_table:
-    name: "marine_forecast_surf_data"
-    fields:
-      id: "INTEGER PRIMARY KEY"
-      spot_id: "TEXT NOT NULL"          # References CONF location ID
-      forecast_time: "INTEGER NOT NULL"
-      generated_time: "INTEGER NOT NULL"
-      wave_height_min: "REAL"
-      wave_height_max: "REAL"
-      wave_height_range: "TEXT"
-      wave_period: "REAL"
-      wave_direction: "REAL"
-      wind_speed: "REAL"
-      wind_direction: "REAL"
-      wind_condition: "TEXT"
-      quality_rating: "INTEGER"
-      quality_stars: "TEXT"
-      quality_text: "TEXT"
-      conditions_description: "TEXT"
-      confidence: "REAL"
-      
-  fishing_forecast_table:
-    name: "marine_forecast_fishing_data"
-    fields:
-      id: "INTEGER PRIMARY KEY"
-      spot_id: "TEXT NOT NULL"          # References CONF location ID
-      forecast_date: "INTEGER NOT NULL"
-      period_name: "VARCHAR(50) NOT NULL"
-      period_start_hour: "INTEGER"
-      period_end_hour: "INTEGER"
-      generated_time: "INTEGER NOT NULL"
-      pressure_trend: "TEXT"
-      pressure_change: "REAL"
-      pressure_score: "INTEGER"
-      tide_stage: "TEXT"
-      tide_flow: "TEXT"
-      tide_score: "INTEGER"
-      species_activity: "TEXT"
-      activity_rating: "INTEGER"
-      best_species_json: "TEXT"
-      conditions_text: "TEXT"
-      overall_score: "REAL"
-      confidence: "REAL"
-
-# Installation Messages
-installation_messages:
-  pre_install:
-    - "Installing Phase II: Surf & Fishing Forecast System"
-    - "This extension requires Phase I Marine Data Extension"
-    - "GRIB processing libraries will be detected automatically"
-    - "User locations will be configured in WeeWX configuration file"
+  atmospheric_data_distance_quality:
+    excellent: [0, 50]      # 0-50 miles: excellent correlation
+    good: [50, 100]         # 50-100 miles: good correlation
+    fair: [100, 200]        # 100-200 miles: fair correlation
+    poor: [200, 999]        # 200+ miles: poor correlation
     
-  post_install:
-    - "Installation completed successfully!"
-    - "Forecast data tables created in database"
-    - "User locations stored in WeeWX configuration"
-    - "Database contains NO user location tables (CONF-based storage)"
-    - "Restart WeeWX to activate the surf and fishing forecasts"
+  local_station_value:
+    extremely_valuable: [0, 1]    # 0-1 mile: local microclimate
+    good_backup: [1, 5]           # 1-5 miles: good backup data
+    pressure_trends_only: [5, 15] # 5-15 miles: pressure trends only
+
+# PRESERVED: User Experience Configuration
+user_experience:
+  default_forecast_periods: 8      # Number of forecast periods to show
+  forecast_interval_hours: 3       # Hours between forecast periods
+  rating_system: "5_star"          # 1-5 star rating system
+  condition_descriptions: true     # Include text descriptions
+  confidence_indicators: true      # Show forecast confidence levels
