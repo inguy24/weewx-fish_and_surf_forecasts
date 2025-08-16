@@ -644,7 +644,7 @@ class WaveWatchDataCollector:
                 
             bounds = grid_config.get('bounds', [])
             if len(bounds) == 4:
-                lat_min, lat_max, lon_min, lon_max = bounds
+                lat_min, lat_max, lon_min, lon_max = [float(b) for b in bounds]
                 if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
                     return grid_name
         
