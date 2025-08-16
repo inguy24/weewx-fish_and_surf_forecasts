@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Polar Bear
+# Magic Animal: Penguin
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -573,7 +573,7 @@ class DataFusionProcessor:
     
     def check_data_freshness(self, source_data, current_time):
         """Check if data meets freshness requirements"""
-        max_age_hours = self.quality_control.get('max_data_age_hours', 6)
+        max_age_hours = float(self.quality_control.get('max_data_age_hours', 6))
         max_age_seconds = max_age_hours * 3600
         
         data_time = source_data.get('observation_time')
