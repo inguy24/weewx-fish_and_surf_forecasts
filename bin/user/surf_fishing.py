@@ -652,38 +652,57 @@ class WaveWatchDataCollector:
         return 'glo_30m'
     
     def _download_grib_files(self, grid_name):
-        """Download latest WaveWatch III GRIB files"""
+        """Download latest WaveWatch III GRIB files using configuration from CONF (YAML-driven)"""
         
         grib_files = []
         
-        # Get latest model run (typically 00, 06, 12, 18 UTC)
-        current_time = time.gmtime()
-        model_hours = [0, 6, 12, 18]
+        # Get grid configuration from CONF (written by installer from YAML)
+        grids = self.wavewatch_config.get('grids', {})
+        grid_config = grids.get(grid_name, {})
         
-        # Find most recent model run
+        # Get file pattern from CONF - NO HARDCODING
+        file_pattern = grid_config.get('file_pattern', '')
+        if not file_pattern:
+            log.error(f"No file pattern found for grid {grid_name} in configuration")
+            return []
+        
+        # Get model run configuration from CONF with defaults
+        model_hours = self.wavewatch_config.get('model_runs', [0, 6, 12, 18])
+        forecast_hours = self.wavewatch_config.get('forecast_hours', [0, 3, 6, 9, 12])
+        
+        # Get latest model run (same logic as before)
+        current_time = time.gmtime()
         current_hour = current_time.tm_hour
         latest_run = max([h for h in model_hours if h <= current_hour], default=model_hours[-1])
         
-        # If no run today yet, use last run from yesterday
+        # If no run today yet, use last run from yesterday (same logic as before)
         if current_hour < min(model_hours):
             run_date = time.gmtime(time.time() - 86400)  # Yesterday
             latest_run = model_hours[-1]
         else:
             run_date = current_time
         
+        # Format date and run strings (same logic as before)
         date_str = time.strftime('%Y%m%d', run_date)
         run_str = f"{latest_run:02d}"
         
-        # Download first few forecast hours (0, 3, 6, 9, 12 hours)
-        forecast_hours = [0, 3, 6, 9, 12]
-        
+        # Download forecast hours using CONF-defined pattern
         for fhr in forecast_hours:
             try:
-                # Construct GRIB file URL
-                filename = f"multi_1.{grid_name}.t{run_str}z.f{fhr:03d}.grib2"
-                url = f"{self.base_url}wave{date_str}/{filename}"
+                # Use file pattern from CONF with placeholder replacement
+                filename = file_pattern.format(
+                    yyyymmdd=date_str,
+                    yyyy=date_str[:4],
+                    mm=date_str[4:6], 
+                    dd=date_str[6:8],
+                    hh=run_str,
+                    fhr=f"{fhr:03d}",
+                    grid_name=grid_name
+                )
                 
-                # Download to temporary file
+                url = f"{self.base_url}{filename}"
+                
+                # Download to temporary file (same logic as before)
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
                 temp_file.close()
                 
