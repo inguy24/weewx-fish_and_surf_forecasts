@@ -91,18 +91,16 @@ class GRIBProcessor:
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
         
         # SURGICAL FIX: Handle nested dictionary structure from CONF
-        # Change from: parameters_config = gfs_wave_config.get('parameters', [])
-        # To handle dict structure: parameters_config = gfs_wave_config.get('parameters', {})
         parameters_config = gfs_wave_config.get('parameters', {})
         
-        # Build parameter mapping from CONF
-        parameter_mapping = {}
-        priority_parameters = {}  # Track priority levels
+        # Build DUAL parameter mappings from CONF - data-driven
+        parameter_mapping = {}      # Official parameter names
+        short_name_mapping = {}     # Short name fallbacks
+        priority_parameters = {}    # Track priority levels
         
         # SURGICAL FIX: Iterate over parameter dictionary values, not keys
-        # Change from: for param_config in parameters_config:
-        # To: for param_key, param_config in parameters_config.items():
         for param_key, param_config in parameters_config.items():
+            # Official parameter name mapping
             grib_param = param_config.get('grib_parameter')
             field_name = param_config.get('field')
             priority = param_config.get('priority', 'MEDIUM')
@@ -110,8 +108,14 @@ class GRIBProcessor:
             if grib_param and field_name:
                 parameter_mapping[grib_param] = field_name
                 priority_parameters[grib_param] = priority
+            
+            # SURGICAL FIX: Add short name mapping as fallback
+            grib_short_name = param_config.get('grib_short_name')
+            if grib_short_name and field_name:
+                short_name_mapping[grib_short_name] = field_name
+                priority_parameters[grib_short_name] = priority
         
-        # Process GRIB file with data-driven mapping
+        # Process GRIB file with dual mapping approach
         data_points = []
         
         with open(grib_file_path, 'rb') as f:
@@ -121,46 +125,69 @@ class GRIBProcessor:
                     break
                 
                 try:
-                    # Use data-driven parameter mapping
-                    param_name = eccodes.codes_get(grib_id, 'parameterName')
-                    if param_name in parameter_mapping:
-                        field_name = parameter_mapping[param_name]
-                        priority = priority_parameters.get(param_name, 'MEDIUM')
-                        
-                        # PRESERVE: Existing coordinate finding logic
-                        ni = eccodes.codes_get(grib_id, 'Ni')
-                        nj = eccodes.codes_get(grib_id, 'Nj')
-                        
-                        lat_first = eccodes.codes_get(grib_id, 'latitudeOfFirstGridPointInDegrees')
-                        lon_first = eccodes.codes_get(grib_id, 'longitudeOfFirstGridPointInDegrees')
-                        lat_last = eccodes.codes_get(grib_id, 'latitudeOfLastGridPointInDegrees')
-                        lon_last = eccodes.codes_get(grib_id, 'longitudeOfLastGridPointInDegrees')
-                        
-                        # Find nearest grid point
-                        lat_step = (lat_last - lat_first) / (nj - 1)
-                        lon_step = (lon_last - lon_first) / (ni - 1)
-                        
-                        lat_idx = int(round((target_lat - lat_first) / lat_step))
-                        lon_idx = int(round((target_lon - lon_first) / lon_step))
-                        
-                        # Bounds checking
-                        if 0 <= lat_idx < nj and 0 <= lon_idx < ni:
-                            values = eccodes.codes_get_values(grib_id)
-                            point_idx = lat_idx * ni + lon_idx
+                    # SURGICAL FIX: Try official parameter name first, then short name fallback
+                    field_name = None
+                    priority = 'MEDIUM'
+                    
+                    # Method 1: Try official parameter name (preserves GRIB standards)
+                    try:
+                        param_name = eccodes.codes_get(grib_id, 'parameterName')
+                        if param_name in parameter_mapping:
+                            field_name = parameter_mapping[param_name]
+                            priority = priority_parameters.get(param_name, 'MEDIUM')
+                            log.debug(f"Matched parameter via parameterName: {param_name}")
+                    except Exception:
+                        pass
+                    
+                    # Method 2: Try short name fallback (handles reality)
+                    if field_name is None:
+                        try:
+                            short_name = eccodes.codes_get(grib_id, 'shortName')
+                            if short_name in short_name_mapping:
+                                field_name = short_name_mapping[short_name]
+                                priority = priority_parameters.get(short_name, 'MEDIUM')
+                                log.debug(f"Matched parameter via shortName: {short_name}")
+                        except Exception:
+                            pass
+                    
+                    # Skip if no mapping found
+                    if field_name is None:
+                        continue
                             
-                            if point_idx < len(values):
-                                # PRESERVE: Existing forecast time extraction
-                                forecast_time = eccodes.codes_get(grib_id, 'validityTime')
-                                
-                                data_points.append({
-                                    'parameter': field_name,
-                                    'value': values[point_idx],
-                                    'forecast_time': forecast_time,
-                                    'priority': priority,
-                                    'latitude': target_lat,
-                                    'longitude': target_lon
-                                })
+                    # PRESERVE: Existing coordinate finding logic
+                    ni = eccodes.codes_get(grib_id, 'Ni')
+                    nj = eccodes.codes_get(grib_id, 'Nj')
+                    
+                    lat_first = eccodes.codes_get(grib_id, 'latitudeOfFirstGridPointInDegrees')
+                    lon_first = eccodes.codes_get(grib_id, 'longitudeOfFirstGridPointInDegrees')
+                    lat_last = eccodes.codes_get(grib_id, 'latitudeOfLastGridPointInDegrees')
+                    lon_last = eccodes.codes_get(grib_id, 'longitudeOfLastGridPointInDegrees')
+                    
+                    # Find nearest grid point
+                    lat_step = (lat_last - lat_first) / (nj - 1)
+                    lon_step = (lon_last - lon_first) / (ni - 1)
+                    
+                    lat_idx = int(round((target_lat - lat_first) / lat_step))
+                    lon_idx = int(round((target_lon - lon_first) / lon_step))
+                    
+                    # Bounds checking
+                    if 0 <= lat_idx < nj and 0 <= lon_idx < ni:
+                        values = eccodes.codes_get_values(grib_id)
+                        point_idx = lat_idx * ni + lon_idx
                         
+                        if point_idx < len(values):
+                            # PRESERVE: Existing forecast time extraction
+                            forecast_time = eccodes.codes_get(grib_id, 'validityTime')
+                            
+                            data_points.append({
+                                'parameter': field_name,
+                                'value': values[point_idx],
+                                'forecast_time': forecast_time,
+                                'priority': priority,
+                                'latitude': target_lat,
+                                'longitude': target_lon
+                            })
+                            
                 finally:
                     eccodes.codes_release(grib_id)
         
@@ -174,21 +201,25 @@ class GRIBProcessor:
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
         
         # SURGICAL FIX: Handle nested dictionary structure from CONF
-        # Change from: parameters_config = gfs_wave_config.get('parameters', [])
-        # To: parameters_config = gfs_wave_config.get('parameters', {})
         parameters_config = gfs_wave_config.get('parameters', {})
         
-        # Build parameter mapping from CONF
-        parameter_mapping = {}
+        # Build DUAL parameter mappings from CONF - data-driven
+        parameter_mapping = {}      # Official parameter names
+        short_name_mapping = {}     # Short name fallbacks
         
         # SURGICAL FIX: Iterate over parameter dictionary values, not keys
-        # Change from: for param_config in parameters_config:
-        # To: for param_key, param_config in parameters_config.items():
         for param_key, param_config in parameters_config.items():
+            # Official parameter name mapping
             grib_param = param_config.get('grib_parameter')
             field_name = param_config.get('field')
+            
             if grib_param and field_name:
                 parameter_mapping[grib_param] = field_name
+            
+            # SURGICAL FIX: Add short name mapping as fallback
+            grib_short_name = param_config.get('grib_short_name')
+            if grib_short_name and field_name:
+                short_name_mapping[grib_short_name] = field_name
         
         data_points = []
         
@@ -196,33 +227,55 @@ class GRIBProcessor:
             grbs = pygrib.open(grib_file_path)
             
             for grb in grbs:
-                param_name = grb.parameterName
-                if param_name in parameter_mapping:
-                    field_name = parameter_mapping[param_name]
+                # SURGICAL FIX: Try official parameter name first, then short name fallback
+                field_name = None
+                
+                # Method 1: Try official parameter name (preserves GRIB standards)
+                try:
+                    param_name = grb.parameterName
+                    if param_name in parameter_mapping:
+                        field_name = parameter_mapping[param_name]
+                        log.debug(f"Matched parameter via parameterName: {param_name}")
+                except Exception:
+                    pass
+                
+                # Method 2: Try short name fallback (handles reality)
+                if field_name is None:
+                    try:
+                        short_name = grb.shortName
+                        if short_name in short_name_mapping:
+                            field_name = short_name_mapping[short_name]
+                            log.debug(f"Matched parameter via shortName: {short_name}")
+                    except Exception:
+                        pass
+                
+                # Skip if no mapping found
+                if field_name is None:
+                    continue
                     
-                    # PRESERVE: Existing pygrib coordinate finding logic
-                    lats, lons = grb.latlons()
-                    
-                    # Find nearest point
-                    lat_diff = abs(lats - target_lat)
-                    lon_diff = abs(lons - target_lon)
-                    distance = lat_diff + lon_diff
-                    
-                    min_idx = distance.argmin()
-                    lat_idx, lon_idx = divmod(min_idx, lons.shape[1])
-                    
-                    value = grb.values[lat_idx, lon_idx]
-                    
-                    # PRESERVE: Existing time handling
-                    forecast_time = grb.validityTime
-                    
-                    data_points.append({
-                        'parameter': field_name,
-                        'value': value,
-                        'forecast_time': forecast_time,
-                        'latitude': target_lat,
-                        'longitude': target_lon
-                    })
+                # PRESERVE: Existing pygrib coordinate finding logic
+                lats, lons = grb.latlons()
+                
+                # Find nearest point
+                lat_diff = abs(lats - target_lat)
+                lon_diff = abs(lons - target_lon)
+                distance = lat_diff + lon_diff
+                
+                min_idx = distance.argmin()
+                lat_idx, lon_idx = divmod(min_idx, lons.shape[1])
+                
+                value = grb.values[lat_idx, lon_idx]
+                
+                # PRESERVE: Existing time handling
+                forecast_time = grb.validityTime
+                
+                data_points.append({
+                    'parameter': field_name,
+                    'value': value,
+                    'forecast_time': forecast_time,
+                    'latitude': target_lat,
+                    'longitude': target_lon
+                })
             
             grbs.close()
             
