@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Seagull
+# Magic Animal: Zebra
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -782,48 +782,86 @@ class WaveWatchDataCollector:
         return 'global.0p16'
     
     def _download_grib_files(self, grid_name):
-        """Download GFS Wave GRIB files using updated URL structure and data-driven hours"""
+        """Download GFS Wave GRIB files with robust model run fallback"""
+        
+        import urllib.request
+        from datetime import datetime, timedelta
+        import tempfile
         
         grib_files = []
-        
-        # Find most recent model run
         current_time = datetime.utcnow()
-        latest_run = None
         
+        # Create list of potential model runs to try (most recent first)
+        potential_runs = []
+        
+        # Try current day runs first (with 4.5 hour buffer)
         for run_hour in reversed(self.run_cycles):
             potential_run = current_time.replace(hour=run_hour, minute=0, second=0, microsecond=0)
-            if potential_run <= current_time - timedelta(hours=3):  # Allow processing time
-                latest_run = potential_run
+            if potential_run <= current_time - timedelta(hours=4.5):  # GFS Wave processing time
+                potential_runs.append(potential_run)
+        
+        # Add previous day runs as fallbacks
+        previous_day = current_time - timedelta(days=1)
+        for run_hour in reversed(self.run_cycles):
+            fallback_run = previous_day.replace(hour=run_hour, minute=0, second=0, microsecond=0)
+            potential_runs.append(fallback_run)
+        
+        # Add day before previous as final fallbacks
+        two_days_ago = current_time - timedelta(days=2)
+        for run_hour in reversed(self.run_cycles):
+            final_fallback = two_days_ago.replace(hour=run_hour, minute=0, second=0, microsecond=0)
+            potential_runs.append(final_fallback)
+        
+        # Try each model run until one works
+        for latest_run in potential_runs:
+            run_str = latest_run.strftime("%Y%m%d")
+            run_hour_str = f"{latest_run.hour:02d}"
+            
+            log.debug(f"Attempting to download GFS Wave data from {run_str} {run_hour_str}Z run")
+            
+            successful_downloads = 0
+            run_grib_files = []
+            
+            # Try to download forecast hours for this model run
+            for fhr in self.forecast_hours:
+                try:
+                    # GFS Wave filename format
+                    filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
+                    # GFS Wave URL structure  
+                    url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
+                    
+                    # Create temporary file
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
+                    temp_file.close()
+                    
+                    # Download file
+                    urllib.request.urlretrieve(url, temp_file.name)
+                    run_grib_files.append(temp_file.name)
+                    successful_downloads += 1
+                    
+                    log.debug(f"Downloaded GFS Wave file: {filename}")
+                    
+                except Exception as e:
+                    log.debug(f"Could not download {filename}: {e}")
+                    continue
+            
+            # If we got at least some files from this run, use it
+            if successful_downloads >= 3:  # Need at least 3 forecast hours to be useful
+                log.info(f"Successfully downloaded {successful_downloads} GFS Wave files from {run_str} {run_hour_str}Z run")
+                grib_files.extend(run_grib_files)
                 break
+            else:
+                # This model run didn't work, clean up temp files and try next one
+                log.debug(f"Only got {successful_downloads} files from {run_str} {run_hour_str}Z run, trying previous run")
+                for temp_file in run_grib_files:
+                    try:
+                        import os
+                        os.unlink(temp_file)
+                    except:
+                        pass
         
-        if not latest_run:
-            # Fall back to previous day's last run
-            latest_run = current_time.replace(hour=self.run_cycles[-1], minute=0, second=0, microsecond=0) - timedelta(days=1)
-        
-        # UPDATED: Construct GFS Wave URLs
-        run_str = latest_run.strftime("%Y%m%d")
-        run_hour_str = f"{latest_run.hour:02d}"
-        
-        # DATA-DRIVEN: Use forecast hours from CONF
-        for fhr in self.forecast_hours:
-            try:
-                # UPDATED: GFS Wave filename format
-                filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
-                # UPDATED: GFS Wave URL structure
-                url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
-                
-                # Download to temporary file (preserve existing download logic)
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
-                temp_file.close()
-                
-                urllib.request.urlretrieve(url, temp_file.name)
-                grib_files.append(temp_file.name)
-                
-                log.debug(f"Downloaded GFS Wave file: {filename}")
-                
-            except Exception as e:
-                log.warning(f"Could not download {filename}: {e}")
-                continue
+        if not grib_files:
+            log.warning("Could not download any GFS Wave files from any available model runs")
         
         return grib_files
     
