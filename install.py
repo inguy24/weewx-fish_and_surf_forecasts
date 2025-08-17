@@ -649,6 +649,7 @@ class SurfFishingConfigurator:
                             'field': param.get('field', ''),
                             'units': param.get('units', ''),
                             'grib_parameter': param.get('grib_parameter', ''),
+                            'grib_short_name': param.get('grib_short_name', ''),  # SURGICAL FIX: ADD grib_short_name
                             'priority': param.get('priority', 'MEDIUM'),
                             'conversion_factor': str(param.get('conversion_factor', 1.0))
                         }
