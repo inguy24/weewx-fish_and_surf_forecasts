@@ -1576,7 +1576,11 @@ class SurfFishingInstaller(ExtensionInstaller):
                                 field_type == "TEXT NOT NULL" and 
                                 table_name == "marine_forecast_fishing_data"):
                                 field_type = "VARCHAR(50) NOT NULL"
-                            
+
+                            # NEW: Escape MySQL/MariaDB reserved words
+                            if field_name in ['interval', 'order', 'group', 'select', 'from', 'where', 'desc', 'asc', 'key']:
+                                field_name = f"`{field_name}`"
+           
                             field_definitions.append(f"{field_name} {field_type}")
                         
                         # Add table-specific constraints (UPDATED for CONF-based locations)
