@@ -93,32 +93,37 @@ api_endpoints:
         field: "wave_height"
         units: "meters"
         conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "HTSGW"
+        grib_parameter: "HTSGW"     # Official parameter name
+        grib_short_name: "swh"      # Actual short name in GRIB files
         priority: "HIGH"
         
       - name: "Mean period of combined wind waves and swell"
         field: "wave_period"
         units: "seconds"
-        grib_parameter: "PERPW"
+        grib_parameter: "PERPW"     # Official parameter name
+        grib_short_name: "perpw"    # Actual short name in GRIB files
         priority: "HIGH"
         
       - name: "Direction of combined wind waves and swell"
         field: "wave_direction"
         units: "degrees"
-        grib_parameter: "DIRPW"
+        grib_parameter: "DIRPW"     # Official parameter name
+        grib_short_name: "dirpw"    # Actual short name in GRIB files
         priority: "HIGH"
         
       - name: "Wind speed"
         field: "wind_speed"
         units: "m/s"
         conversion_factor: 2.23694  # Convert to mph
-        grib_parameter: "WIND"
+        grib_parameter: "WIND"      # Official parameter name
+        grib_short_name: "ws"       # Actual short name in GRIB files
         priority: "HIGH"
         
       - name: "Wind direction"
         field: "wind_direction"
         units: "degrees"
-        grib_parameter: "WDIR"
+        grib_parameter: "WDIR"      # Official parameter name
+        grib_short_name: "wdir"     # Actual short name in GRIB files
         priority: "HIGH"
         
       # Swell components (HIGH priority for surf forecasting)
@@ -126,19 +131,22 @@ api_endpoints:
         field: "swell_1_height"
         units: "meters"
         conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "SWELL:1"
+        grib_parameter: "SWELL:1"   # Official parameter name
+        grib_short_name: "shts"     # Actual short name in GRIB files (level 1)
         priority: "HIGH"
         
       - name: "Mean wave period of first swell partition"
         field: "swell_1_period"
         units: "seconds"
-        grib_parameter: "SWPER:1"
+        grib_parameter: "SWPER:1"   # Official parameter name
+        grib_short_name: "mpts"     # Actual short name in GRIB files (level 1)
         priority: "HIGH"
         
       - name: "Mean wave direction of first swell partition"
         field: "swell_1_direction"
         units: "degrees"
-        grib_parameter: "SWDIR:1"
+        grib_parameter: "SWDIR:1"   # Official parameter name
+        grib_short_name: "swdir"    # Actual short name in GRIB files (level 1)
         priority: "HIGH"
         
       # Wind wave components (MEDIUM priority)
@@ -146,19 +154,22 @@ api_endpoints:
         field: "wind_wave_height"
         units: "meters"
         conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "WVHGT"
+        grib_parameter: "WVHGT"     # Official parameter name
+        grib_short_name: "shww"     # Actual short name in GRIB files
         priority: "MEDIUM"
         
       - name: "Mean period of wind waves"
         field: "wind_wave_period"
         units: "seconds"
-        grib_parameter: "WVPER"
+        grib_parameter: "WVPER"     # Official parameter name
+        grib_short_name: "mpww"     # Actual short name in GRIB files
         priority: "MEDIUM"
         
       - name: "Direction of wind waves"
         field: "wind_wave_direction"
         units: "degrees"
-        grib_parameter: "WVDIR"
+        grib_parameter: "WVDIR"     # Official parameter name
+        grib_short_name: "wvdir"    # Actual short name in GRIB files
         priority: "MEDIUM"
         
       # Secondary swell components (MEDIUM priority)
@@ -166,20 +177,40 @@ api_endpoints:
         field: "swell_2_height"
         units: "meters"
         conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "SWELL:2"
+        grib_parameter: "SWELL:2"   # Official parameter name
+        grib_short_name: "shts"     # Actual short name in GRIB files (level 2)
         priority: "MEDIUM"
         
       - name: "Mean wave period of second swell partition"
         field: "swell_2_period"
         units: "seconds"
-        grib_parameter: "SWPER:2"
+        grib_parameter: "SWPER:2"   # Official parameter name
+        grib_short_name: "mpts"     # Actual short name in GRIB files (level 2)
         priority: "MEDIUM"
         
       - name: "Mean wave direction of second swell partition"
         field: "swell_2_direction"
         units: "degrees"
-        grib_parameter: "SWDIR:2"
+        grib_parameter: "SWDIR:2"   # Official parameter name
+        grib_short_name: "swdir"    # Actual short name in GRIB files (level 2)
         priority: "MEDIUM"
+        
+      # Wind components (LOW priority - fallback for calculations)
+      - name: "U-component of wind"
+        field: "wind_u"
+        units: "m/s"
+        conversion_factor: 2.23694  # Convert to mph
+        grib_parameter: "UGRD"      # Official parameter name
+        grib_short_name: "u"        # Actual short name in GRIB files
+        priority: "LOW"
+        
+      - name: "V-component of wind"
+        field: "wind_v"
+        units: "m/s"
+        conversion_factor: 2.23694  # Convert to mph
+        grib_parameter: "VGRD"      # Official parameter name
+        grib_short_name: "v"        # Actual short name in GRIB files
+        priority: "LOW"
 
 # Grid selection logic for location-based queries
 grid_selection:
