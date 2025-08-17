@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Pelican
+# Magic Animal: Seagull
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -89,13 +89,20 @@ class GRIBProcessor:
         
         # READ PARAMETER MAPPING FROM CONF (data-driven)
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        parameters_config = gfs_wave_config.get('parameters', [])
+        
+        # SURGICAL FIX: Handle nested dictionary structure from CONF
+        # Change from: parameters_config = gfs_wave_config.get('parameters', [])
+        # To handle dict structure: parameters_config = gfs_wave_config.get('parameters', {})
+        parameters_config = gfs_wave_config.get('parameters', {})
         
         # Build parameter mapping from CONF
         parameter_mapping = {}
         priority_parameters = {}  # Track priority levels
         
-        for param_config in parameters_config:
+        # SURGICAL FIX: Iterate over parameter dictionary values, not keys
+        # Change from: for param_config in parameters_config:
+        # To: for param_key, param_config in parameters_config.items():
+        for param_key, param_config in parameters_config.items():
             grib_param = param_config.get('grib_parameter')
             field_name = param_config.get('field')
             priority = param_config.get('priority', 'MEDIUM')
@@ -165,11 +172,19 @@ class GRIBProcessor:
         
         # READ PARAMETER MAPPING FROM CONF (same as eccodes method)
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        parameters_config = gfs_wave_config.get('parameters', [])
+        
+        # SURGICAL FIX: Handle nested dictionary structure from CONF
+        # Change from: parameters_config = gfs_wave_config.get('parameters', [])
+        # To: parameters_config = gfs_wave_config.get('parameters', {})
+        parameters_config = gfs_wave_config.get('parameters', {})
         
         # Build parameter mapping from CONF
         parameter_mapping = {}
-        for param_config in parameters_config:
+        
+        # SURGICAL FIX: Iterate over parameter dictionary values, not keys
+        # Change from: for param_config in parameters_config:
+        # To: for param_key, param_config in parameters_config.items():
+        for param_key, param_config in parameters_config.items():
             grib_param = param_config.get('grib_parameter')
             field_name = param_config.get('field')
             if grib_param and field_name:
@@ -3789,7 +3804,7 @@ class SurfFishingService(StdService):
         log.info("Forecast generation thread stopped")
         
     def _get_active_surf_spots(self):
-        """Get all active surf spots from CONF configuration"""
+        """Get all surf spots from CONF configuration"""
         
         spots = []
         
@@ -3798,24 +3813,25 @@ class SurfFishingService(StdService):
             service_config = self.config_dict.get('SurfFishingService', {})
             surf_spots_config = service_config.get('surf_spots', {})
             
+            log.debug(f"Found surf_spots_config: {surf_spots_config}")
+            
             for spot_id, spot_config in surf_spots_config.items():
-                # Check if spot is active (default to True if not specified)
-                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                log.debug(f"Processing spot {spot_id}: {spot_config}")
                 
-                if is_active:
-                    # Convert CONF data to expected format
-                    spot = {
-                        'id': spot_id,  # Use CONF key as ID
-                        'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', '0.0')),
-                        'longitude': float(spot_config.get('longitude', '0.0')),
-                        'bottom_type': spot_config.get('bottom_type', 'sand'),
-                        'exposure': spot_config.get('exposure', 'exposed'),
-                        'type': spot_config.get('type', 'surf')
-                    }
-                    spots.append(spot)
+                # Convert CONF data to expected format - all spots in CONF are active
+                spot = {
+                    'id': spot_id,  # Use CONF key as ID
+                    'name': spot_config.get('name', spot_id),
+                    'latitude': float(spot_config.get('latitude', '0.0')),
+                    'longitude': float(spot_config.get('longitude', '0.0')),
+                    'bottom_type': spot_config.get('bottom_type', 'sand'),
+                    'exposure': spot_config.get('exposure', 'exposed'),
+                    'type': spot_config.get('type', 'surf')
+                }
+                spots.append(spot)
+                log.debug(f"Added surf spot: {spot['name']} at {spot['latitude']}, {spot['longitude']}")
                     
-            log.debug(f"Loaded {len(spots)} active surf spots from CONF")
+            log.info(f"Loaded {len(spots)} surf spots from CONF")
             
         except Exception as e:
             log.error(f"Error getting surf spots from CONF: {e}")
@@ -3824,7 +3840,7 @@ class SurfFishingService(StdService):
         return spots
 
     def _get_active_fishing_spots(self):
-        """Get all active fishing spots from CONF configuration"""
+        """Get all fishing spots from CONF configuration"""
         
         spots = []
         
@@ -3833,24 +3849,25 @@ class SurfFishingService(StdService):
             service_config = self.config_dict.get('SurfFishingService', {})
             fishing_spots_config = service_config.get('fishing_spots', {})
             
+            log.debug(f"Found fishing_spots_config: {fishing_spots_config}")
+            
             for spot_id, spot_config in fishing_spots_config.items():
-                # Check if spot is active (default to True if not specified)
-                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                log.debug(f"Processing fishing spot {spot_id}: {spot_config}")
                 
-                if is_active:
-                    # Convert CONF data to expected format
-                    spot = {
-                        'id': spot_id,  # Use CONF key as ID
-                        'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', '0.0')),
-                        'longitude': float(spot_config.get('longitude', '0.0')),
-                        'location_type': spot_config.get('location_type', 'shore'),
-                        'target_category': spot_config.get('target_category', 'mixed_bag'),
-                        'type': spot_config.get('type', 'fishing')
-                    }
-                    spots.append(spot)
+                # Convert CONF data to expected format - all spots in CONF are active
+                spot = {
+                    'id': spot_id,  # Use CONF key as ID
+                    'name': spot_config.get('name', spot_id),
+                    'latitude': float(spot_config.get('latitude', '0.0')),
+                    'longitude': float(spot_config.get('longitude', '0.0')),
+                    'location_type': spot_config.get('location_type', 'shore'),
+                    'target_category': spot_config.get('target_category', 'mixed_bag'),
+                    'type': spot_config.get('type', 'fishing')
+                }
+                spots.append(spot)
+                log.debug(f"Added fishing spot: {spot['name']} at {spot['latitude']}, {spot['longitude']}")
                     
-            log.debug(f"Loaded {len(spots)} active fishing spots from CONF")
+            log.info(f"Loaded {len(spots)} fishing spots from CONF")
             
         except Exception as e:
             log.error(f"Error getting fishing spots from CONF: {e}")
