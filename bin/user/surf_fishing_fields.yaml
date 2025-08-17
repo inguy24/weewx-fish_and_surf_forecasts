@@ -485,7 +485,7 @@ database_schema:
   marine_forecast_surf_data:
     name: "marine_forecast_surf_data"
     fields:
-      dateTime: "INTEGER NOT NULL UNIQUE PRIMARY KEY"
+      dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
       interval: "INTEGER NOT NULL"
       spot_id: "TEXT NOT NULL"
@@ -506,7 +506,7 @@ database_schema:
   marine_forecast_fishing_data:
     name: "marine_forecast_fishing_data"
     fields:
-      dateTime: "INTEGER NOT NULL UNIQUE PRIMARY KEY"
+      dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
       interval: "INTEGER NOT NULL"
       spot_id: "TEXT NOT NULL"
