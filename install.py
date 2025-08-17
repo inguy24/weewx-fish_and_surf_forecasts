@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Alaskan King Crab
+# Magic Animal: Blue Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -100,7 +100,7 @@ class GRIBLibraryManager:
         """Check GRIB library availability and exit if not found"""
         
         print(f"\n{CORE_ICONS['selection']} GRIB Processing Library Check")
-        print("WaveWatch III forecast data requires GRIB file processing capability.")
+        print("GFS Wave forecast data requires GRIB file processing capability.")
         print()
         
         if self.detect_grib_libraries():
@@ -111,7 +111,7 @@ class GRIBLibraryManager:
             print()
             print("PREREQUISITE MISSING:")
             print("This extension requires pygrib or eccodes-python to process")
-            print("WaveWatch III GRIB forecast data for beach-specific surf forecasts.")
+            print("GFS Wave GRIB forecast data for beach-specific surf forecasts.")
             print()
             print("Installation options:")
             print("  1. Recommended (lightweight - 161MB):")
@@ -122,7 +122,7 @@ class GRIBLibraryManager:
             print("     pip install pygrib")
             print()
             print("The python3-grib package provides pygrib with reasonable dependencies.")
-            print("This enables 7km resolution WaveWatch III forecasts for your surf spots.")
+            print("This enables 16km resolution GFS Wave forecasts for your surf spots.")
             print()
             print("Please install a GRIB library and run the installer again.")
             print("See README.md for detailed installation instructions.")
@@ -641,11 +641,37 @@ class SurfFishingConfigurator:
                 },
 
                 # PRESERVED: WaveWatch III endpoints from YAML (original functionality)
-                'wavewatch_endpoints': self.yaml_data.get('api_endpoints', {}).get('wavewatch_iii', {}),
+                'gfs_wave': self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}),
                 
                 # PRESERVED: Fish categories from YAML (original functionality)  
                 'fish_categories': self.yaml_data.get('fish_categories', {}),
                 
+
+                # NEW: Grid selection configuration (surf_fishing.py needs this)
+                'grid_selection': self.yaml_data.get('grid_selection', {}),
+
+                # NEW: Scoring weights for fishing forecasts (surf_fishing.py reads these)
+                'fishing_scoring': self.yaml_data.get('fishing_scoring', {
+                    'pressure_weight': '0.4',
+                    'tide_weight': '0.3', 
+                    'time_weight': '0.2',
+                    'species_weight': '0.1'
+                }),
+
+                # NEW: Scoring weights for surf forecasts
+                'surf_scoring': self.yaml_data.get('surf_scoring', {
+                    'wave_period_weight': '0.4',
+                    'wind_weight': '0.3',
+                    'wave_size_weight': '0.2',
+                    'tide_weight': '0.1'
+                }),
+
+                # NEW: Fishing periods (surf_fishing.py needs this)
+                'fishing_periods': self.yaml_data.get('fishing_periods', {}),
+
+                # NEW: Forecast retention settings
+                'forecast_retention_days': str(self.yaml_data.get('forecast_retention_days', 7)),
+
                 # PRESERVED: User locations structure (original functionality)
                 'surf_spots': {},
                 'fishing_spots': {}
@@ -1421,42 +1447,44 @@ class SurfFishingInstaller(ExtensionInstaller):
     
     def _load_yaml_data(self):
         """Load YAML configuration data for installation"""
-        
         yaml_file = 'bin/user/surf_fishing_fields.yaml'
         
         try:
-            if os.path.exists(yaml_file):
-                with open(yaml_file, 'r') as f:
-                    return yaml.safe_load(f)
-            else:
-                # Default minimal configuration if YAML not found
-                return {
-                    'api_endpoints': {
-                        'wavewatch_iii': {
-                            'base_url': 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/wave/prod/',
-                            'grids': {
-                                'us_east': {'bounds': [24, 50, -95, -65]},
-                                'us_west': {'bounds': [24, 50, -130, -95]},
-                                'glo_30m': {'bounds': [-90, 90, -180, 180]}
-                            }
-                        }
-                    },
-                    'fish_categories': {
-                        'saltwater_inshore': {
-                            'display_name': 'Saltwater Inshore',
-                            'species': ['Striped Bass', 'Redfish', 'Snook'],
-                            'pressure_preference': 'falling'
-                        },
-                        'mixed_bag': {
-                            'display_name': 'Mixed Species',
-                            'species': ['Various'],
-                            'pressure_preference': 'stable'
-                        }
-                    }
-                }
+            if not os.path.exists(yaml_file):
+                log.error(f"YAML configuration file not found: {yaml_file}")
+                print(f"\n{CORE_ICONS['warning']} ERROR: Required YAML file not found: {yaml_file}")
+                print("Installation cannot proceed without configuration file.")
+                sys.exit(1)
+                
+            with open(yaml_file, 'r') as f:
+                yaml_data = yaml.safe_load(f)
+                
+            # Validate required sections exist
+            if not yaml_data:
+                log.error("YAML file is empty or invalid")
+                print(f"\n{CORE_ICONS['warning']} ERROR: YAML file is empty or invalid")
+                sys.exit(1)
+                
+            if 'api_endpoints' not in yaml_data:
+                log.error("YAML missing required 'api_endpoints' section")
+                print(f"\n{CORE_ICONS['warning']} ERROR: YAML missing 'api_endpoints' section")
+                sys.exit(1)
+                
+            if 'gfs_wave' not in yaml_data['api_endpoints']:
+                log.error("YAML missing required 'api_endpoints.gfs_wave' section")
+                print(f"\n{CORE_ICONS['warning']} ERROR: YAML missing GFS Wave configuration")
+                sys.exit(1)
+                
+            return yaml_data
+            
+        except yaml.YAMLError as e:
+            log.error(f"YAML configuration error: {e}")
+            print(f"\n{CORE_ICONS['warning']} ERROR: YAML configuration error: {e}")
+            sys.exit(1)
         except Exception as e:
-            print(f"Warning: Could not load YAML data: {e}")
-            return {}
+            log.error(f"Failed to load YAML: {e}")
+            print(f"\n{CORE_ICONS['warning']} ERROR: Could not load YAML: {e}")
+            sys.exit(1)
     
     def configure(self, engine):
         """
