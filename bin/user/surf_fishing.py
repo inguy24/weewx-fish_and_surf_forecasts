@@ -268,6 +268,10 @@ class GRIBProcessor:
                 lat_idx, lon_idx = divmod(min_idx, lons.shape[1])
                 
                 value = grb.values[lat_idx, lon_idx]
+                if hasattr(value, 'mask') and value.mask:
+                    value = 0.0  # Use 0 for masked/missing data
+                else:
+                    value = float(value)
                 
                 # PRESERVE: Existing time handling
                 forecast_time = grb.validityTime
@@ -967,23 +971,40 @@ class SurfForecastGenerator:
             for field_name in self.surf_recommended:
                 forecast_values[field_name] = period_data.get(field_name, 0)
             
-            # PRESERVE: Use existing scoring methods (no changes to algorithms)
-            rating = self._calculate_surf_rating(
-                forecast_values.get('wave_height', 0),
-                forecast_values.get('wave_period', 0), 
-                forecast_values.get('wind_speed', 0),
-                forecast_values.get('wind_direction', 0),
-                spot
+            # Create basic forecast structure for assess_surf_quality_complete
+            basic_forecast = [{
+                'forecast_time': period_data['forecast_time'],
+                'wave_height_min': forecast_values.get('wave_height', 0) * 0.8,  # Create range
+                'wave_height_max': forecast_values.get('wave_height', 0) * 1.2,
+                'wave_period': forecast_values.get('wave_period', 0),
+                'wave_direction': forecast_values.get('wave_direction', 0),
+                'wind_speed': forecast_values.get('wind_speed', 0),
+                'wind_direction': forecast_values.get('wind_direction', 0)
+            }]
+            
+            # Use comprehensive surf quality assessment (handles everything correctly)
+            enhanced_forecast = self.assess_surf_quality_complete(
+                basic_forecast, 
+                current_wind={
+                    'wind_speed': forecast_values.get('wind_speed', 0),
+                    'wind_direction': forecast_values.get('wind_direction', 0)
+                }, 
+                spot_config=spot
             )
             
-            # Build forecast with available data (data-driven)
-            forecast = {
-                'forecast_time': period_data['forecast_time'],
-                'rating': rating
-            }
-            
-            # Add all available forecast values dynamically
-            forecast.update(forecast_values)
+            # Extract the enhanced forecast data
+            if enhanced_forecast:
+                forecast = enhanced_forecast[0]  # Get the enhanced period
+                # Add any additional forecast values dynamically
+                forecast.update(forecast_values)
+            else:
+                # Fallback if assessment fails
+                forecast = {
+                    'forecast_time': period_data['forecast_time'],
+                    'rating': 1,
+                    'quality_text': 'Assessment Failed'
+                }
+                forecast.update(forecast_values)
             
             forecasts.append(forecast)
         
