@@ -195,6 +195,7 @@ class GRIBProcessor:
     
     def _process_with_pygrib(self, grib_file_path, target_lat, target_lon):
         """Process GRIB file using pygrib library with data-driven parameter mapping"""
+        log.info(f"Processing GRIB file: {grib_file_path} for location {target_lat}, {target_lon}")
         import pygrib
         
         # READ PARAMETER MAPPING FROM CONF (same as eccodes method)
@@ -220,7 +221,9 @@ class GRIBProcessor:
             grib_short_name = param_config.get('grib_short_name')
             if grib_short_name and field_name:
                 short_name_mapping[grib_short_name] = field_name
-        
+
+        log.debug(f"Built parameter_mapping: {parameter_mapping}")
+        log.debug(f"Built short_name_mapping: {short_name_mapping}")
         data_points = []
         
         try:
