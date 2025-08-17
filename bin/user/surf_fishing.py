@@ -626,7 +626,8 @@ class WaveWatchDataCollector:
         # READ FROM CONF: Schedule configuration
         schedule_config = self.gfs_wave_config.get('schedule', {})
         self.run_cycles = [int(cycle) for cycle in schedule_config.get('run_cycles', ['00', '06', '12', '18'])]
-        self.forecast_hours = schedule_config.get('forecast_hours', [0, 3, 6, 9, 12, 15, 18, 21, 24])
+        forecast_hours_raw = schedule_config.get('forecast_hours', [0, 3, 6, 9, 12, 15, 18, 21, 24])
+        self.forecast_hours = [int(h) if isinstance(h, str) else h for h in forecast_hours_raw]
         
         # READ FROM CONF: Grid selection configuration
         self.grids_config = self.gfs_wave_config.get('grids', {})
@@ -676,7 +677,10 @@ class WaveWatchDataCollector:
         for region_name, region_config in self.regional_mappings.items():
             bounds = region_config.get('bounds', [])
             if len(bounds) == 4:
-                lat_min, lat_max, lon_min, lon_max = bounds
+                lat_min = float(bounds[0])
+                lat_max = float(bounds[1])
+                lon_min = float(bounds[2])
+                lon_max = float(bounds[3])
                 if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
                     primary_grid = region_config.get('primary_grid')
                     if primary_grid and primary_grid in self.grids_config:
@@ -684,10 +688,14 @@ class WaveWatchDataCollector:
         
         # DATA-DRIVEN: Check grid coverage from CONF
         for grid_name, grid_config in self.grids_config.items():
-            if grid_config.get('priority', 999) <= 2:  # Priority 1-2 grids
+            priority = float(grid_config.get('priority', 999))
+            if priority <= 2: # Priority 1-2 grids
                 bounds = grid_config.get('bounds', [])
                 if len(bounds) == 4:
-                    lat_min, lat_max, lon_min, lon_max = bounds
+                    lat_min = float(bounds[0])
+                    lat_max = float(bounds[1])
+                    lon_min = float(bounds[2])
+                    lon_max = float(bounds[3])
                     if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
                         return grid_config.get('grid_name', grid_name)
         
@@ -1791,7 +1799,6 @@ class SurfForecastGenerator:
 
 class SurfForecastSearchList(SearchList):
     """
-    NEW CLASS: SearchList extension for WeeWX template integration
     Provides surf forecast data to WeeWX templates
     """
     
@@ -3424,7 +3431,6 @@ class FishingForecastGenerator:
 
 class FishingForecastSearchList(SearchList):
     """
-    NEW CLASS: SearchList extension for WeeWX template integration
     Provides fishing forecast data to WeeWX templates
     """
     
@@ -3575,7 +3581,6 @@ class FishingForecastSearchList(SearchList):
 class SurfFishingService(StdService):
     """
     Main service class for surf and fishing forecasts
-    Follows WeeWX 5.1 service patterns exactly
     """
     
     def __init__(self, engine, config_dict):
