@@ -640,38 +640,27 @@ class SurfFishingConfigurator:
                     'cache_hours': '6'
                 },
 
-                # PRESERVED: WaveWatch III endpoints from YAML (original functionality)
-                'gfs_wave': self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}),
+                # SURGICAL FIX: Process GFS Wave config from YAML into CONF-compatible structure (inline)
+                'gfs_wave': (lambda: {
+                    **{k: v for k, v in self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}).items() if k != 'parameters'},
+                    'parameters': {
+                        f'param_{i:02d}': {
+                            'name': param.get('name', ''),
+                            'field': param.get('field', ''),
+                            'units': param.get('units', ''),
+                            'grib_parameter': param.get('grib_parameter', ''),
+                            'priority': param.get('priority', 'MEDIUM'),
+                            'conversion_factor': str(param.get('conversion_factor', 1.0))
+                        }
+                        for i, param in enumerate(self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}).get('parameters', []))
+                        if isinstance(param, dict)
+                    }
+                } if 'parameters' in self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}) else 
+                self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}))(),
                 
                 # PRESERVED: Fish categories from YAML (original functionality)  
                 'fish_categories': self.yaml_data.get('fish_categories', {}),
                 
-
-                # NEW: Grid selection configuration (surf_fishing.py needs this)
-                'grid_selection': self.yaml_data.get('grid_selection', {}),
-
-                # NEW: Scoring weights for fishing forecasts (surf_fishing.py reads these)
-                'fishing_scoring': self.yaml_data.get('fishing_scoring', {
-                    'pressure_weight': '0.4',
-                    'tide_weight': '0.3', 
-                    'time_weight': '0.2',
-                    'species_weight': '0.1'
-                }),
-
-                # NEW: Scoring weights for surf forecasts
-                'surf_scoring': self.yaml_data.get('surf_scoring', {
-                    'wave_period_weight': '0.4',
-                    'wind_weight': '0.3',
-                    'wave_size_weight': '0.2',
-                    'tide_weight': '0.1'
-                }),
-
-                # NEW: Fishing periods (surf_fishing.py needs this)
-                'fishing_periods': self.yaml_data.get('fishing_periods', {}),
-
-                # NEW: Forecast retention settings
-                'forecast_retention_days': str(self.yaml_data.get('forecast_retention_days', 7)),
-
                 # PRESERVED: User locations structure (original functionality)
                 'surf_spots': {},
                 'fishing_spots': {}
@@ -1580,6 +1569,7 @@ class SurfFishingInstaller(ExtensionInstaller):
                             # NEW: Escape MySQL/MariaDB reserved words
                             if field_name in ['interval', 'order', 'group', 'select', 'from', 'where', 'desc', 'asc', 'key']:
                                 field_name = f"`{field_name}`"
+
            
                             field_definitions.append(f"{field_name} {field_type}")
                         
