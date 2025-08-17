@@ -768,11 +768,11 @@ class WaveWatchDataCollector:
         
         # READ FROM CONF: Field conversion configuration
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        parameters_config = gfs_wave_config.get('parameters', [])
+        parameters_config = gfs_wave_config.get('parameters', {})
         
         # Build field processing configuration from CONF
         field_conversions = {}
-        for param_config in parameters_config:
+        for param_key, param_config in parameters_config.items():
             field_name = param_config.get('field')
             conversion_factor = float(param_config.get('conversion_factor', 1.0))
             units = param_config.get('units')
