@@ -285,6 +285,10 @@ class GRIBProcessor:
         except Exception as e:
             log.error(f"Error processing GRIB file with pygrib: {e}")
         
+        log.debug(f"GRIB processing complete: extracted {len(data_points)} data points")
+        if data_points:
+            log.debug(f"Sample data point: {data_points[0]}")
+
         return data_points
     
     def _find_nearest_grid_point(self, target_lat, target_lon, lats, lons):
