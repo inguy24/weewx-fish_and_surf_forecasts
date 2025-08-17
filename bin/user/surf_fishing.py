@@ -782,7 +782,7 @@ class WaveWatchDataCollector:
         return 'global.0p16'
     
     def _download_grib_files(self, grid_name):
-        """Download GFS Wave GRIB files with robust model run fallback"""
+        """Download GFS Wave GRIB files with robust fallback and limited file downloads"""
         
         import urllib.request
         from datetime import datetime, timedelta
@@ -791,13 +791,13 @@ class WaveWatchDataCollector:
         grib_files = []
         current_time = datetime.utcnow()
         
-        # Create list of potential model runs to try (most recent first)
+        # KEEP: Robust fallback list (this is good logic)
         potential_runs = []
         
         # Try current day runs first (with 4.5 hour buffer)
         for run_hour in reversed(self.run_cycles):
             potential_run = current_time.replace(hour=run_hour, minute=0, second=0, microsecond=0)
-            if potential_run <= current_time - timedelta(hours=4.5):  # GFS Wave processing time
+            if potential_run <= current_time - timedelta(hours=4.5):  # Fixed timing
                 potential_runs.append(potential_run)
         
         # Add previous day runs as fallbacks
@@ -806,24 +806,24 @@ class WaveWatchDataCollector:
             fallback_run = previous_day.replace(hour=run_hour, minute=0, second=0, microsecond=0)
             potential_runs.append(fallback_run)
         
-        # Add day before previous as final fallbacks
-        two_days_ago = current_time - timedelta(days=2)
-        for run_hour in reversed(self.run_cycles):
-            final_fallback = two_days_ago.replace(hour=run_hour, minute=0, second=0, microsecond=0)
-            potential_runs.append(final_fallback)
-        
-        # Try each model run until one works
+        # KEEP: Try each model run until one works
         for latest_run in potential_runs:
             run_str = latest_run.strftime("%Y%m%d")
             run_hour_str = f"{latest_run.hour:02d}"
             
-            log.debug(f"Attempting to download GFS Wave data from {run_str} {run_hour_str}Z run")
+            log.debug(f"Attempting GFS Wave download from {run_str} {run_hour_str}Z")
             
+            # FIX: Limit forecast hours per attempt (like original code)
+            limited_hours = [0, 3, 6, 12, 24, 48]  # Only 6 essential hours
             successful_downloads = 0
             run_grib_files = []
             
-            # Try to download forecast hours for this model run
-            for fhr in self.forecast_hours:
+            # Download LIMITED forecast hours for this model run
+            for fhr in limited_hours:
+                # Skip if not in configured hours
+                if fhr not in self.forecast_hours:
+                    continue
+                    
                 try:
                     # GFS Wave filename format
                     filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
@@ -845,13 +845,13 @@ class WaveWatchDataCollector:
                     log.debug(f"Could not download {filename}: {e}")
                     continue
             
-            # If we got at least some files from this run, use it
-            if successful_downloads >= 3:  # Need at least 3 forecast hours to be useful
+            # If we got at least 3 files from this run, use it and STOP
+            if successful_downloads >= 3:
                 log.info(f"Successfully downloaded {successful_downloads} GFS Wave files from {run_str} {run_hour_str}Z run")
                 grib_files.extend(run_grib_files)
-                break
+                break  # STOP trying more model runs
             else:
-                # This model run didn't work, clean up temp files and try next one
+                # This model run didn't work, clean up and try next one
                 log.debug(f"Only got {successful_downloads} files from {run_str} {run_hour_str}Z run, trying previous run")
                 for temp_file in run_grib_files:
                     try:
