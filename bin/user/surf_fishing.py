@@ -751,7 +751,7 @@ class WaveWatchDataCollector:
         field_conversions = {}
         for param_config in parameters_config:
             field_name = param_config.get('field')
-            conversion_factor = param_config.get('conversion_factor', 1.0)
+            conversion_factor = float(param_config.get('conversion_factor', 1.0))
             units = param_config.get('units')
             
             if field_name:
@@ -789,7 +789,7 @@ class WaveWatchDataCollector:
                 for field_name, conversion_config in field_conversions.items():
                     if field_name in parameters:
                         raw_value = float(parameters.get(field_name, 0))
-                        conversion_factor = conversion_config.get('conversion_factor', 1.0)
+                        conversion_factor = float(conversion_config.get('conversion_factor', 1.0))
                         converted_data[field_name] = raw_value * conversion_factor
                 
                 # PRESERVE: Keep existing wind calculation methods as fallback
