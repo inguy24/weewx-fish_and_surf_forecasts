@@ -1440,15 +1440,18 @@ class SurfForecastGenerator:
             # Insert new forecast data - WeeWX 5.1 pattern (no manual cursor/commit)
             for forecast_period in forecast_data:
                 db_manager.connection.execute("""
-                    INSERT INTO marine_forecast_surf_data (
-                        spot_id, forecast_time, generated_time,
-                        wave_height_min, wave_height_max, wave_height_range,
-                        wave_period, wave_direction, 
-                        wind_speed, wind_direction, wind_condition,
-                        quality_rating, quality_stars, quality_text,
-                        conditions_description, confidence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO marine_forecast_surf_data (
+                    dateTime, usUnits,
+                    spot_id, forecast_time, generated_time,
+                    wave_height_min, wave_height_max, wave_height_range,
+                    wave_period, wave_direction, 
+                    wind_speed, wind_direction, wind_condition,
+                    quality_rating, quality_stars, quality_text,
+                    conditions_description, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
+                    int(time.time()),                                    # dateTime (new)
+                    1,                                                   # usUnits (new - hardcoded imperial)
                     spot_id,
                     forecast_period.get('forecast_time'),
                     forecast_period.get('generated_time', int(time.time())),
@@ -2646,14 +2649,17 @@ class FishingForecastGenerator:
             # Insert new forecast data - WeeWX 5.1 pattern (no manual cursor/commit)
             for forecast_period in forecast_data:
                 db_manager.connection.execute("""
-                    INSERT INTO marine_forecast_fishing_data (
-                        spot_id, forecast_date, period_name, generated_time,
-                        pressure_trend, pressure_change, pressure_score,
-                        tide_stage, tide_flow, tide_score,
-                        species_activity, activity_rating, best_species_json,
-                        conditions_text, overall_score, confidence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO marine_forecast_fishing_data (
+                    dateTime, usUnits,
+                    spot_id, forecast_date, period_name, generated_time,
+                    pressure_trend, pressure_change, pressure_score,
+                    tide_stage, tide_flow, tide_score,
+                    species_activity, activity_rating, best_species_json,
+                    conditions_text, overall_score, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
+                    int(time.time()),                    # dateTime
+                    1,                                   # usUnits (hardcoded imperial)
                     spot_id,
                     forecast_period.get('forecast_date'),
                     forecast_period.get('period_name'),
