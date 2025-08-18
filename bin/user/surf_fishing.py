@@ -728,6 +728,11 @@ class WaveWatchDataCollector:
             # Download GRIB files with updated URL structure
             grib_files = self._download_grib_files(grid_name)
             
+            # SURGICAL FIX 1: ADD FAIL-FAST CHECK FOR EMPTY GRIB FILES
+            if not grib_files:
+                log.error("No GRIB files downloaded - failing forecast generation")
+                return []
+            
             # Process GRIB files with data-driven parameter mapping
             forecast_data = []
             for grib_file in grib_files:
@@ -965,6 +970,11 @@ class WaveWatchDataCollector:
     def _organize_forecast_data(self, data_points):
         """Organize raw GRIB data into forecast periods with data-driven field processing"""
         
+        # SURGICAL FIX 2: FAIL IMMEDIATELY IF NO DATA POINTS PROVIDED
+        if not data_points:
+            log.error("No data points provided to _organize_forecast_data - returning empty list")
+            return []
+        
         # READ FROM CONF: Field conversion configuration
         gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
         parameters_config = gfs_wave_config.get('parameters', {})
@@ -1011,32 +1021,28 @@ class WaveWatchDataCollector:
                 for field_name, conversion_config in field_conversions.items():
                     if field_name in parameters:
                         raw_value = float(parameters.get(field_name, 0))
-                        conversion_factor = float(conversion_config.get('conversion_factor', 1.0))
-                        converted_data[field_name] = raw_value * conversion_factor
+                        converted_value = raw_value * conversion_config['conversion_factor']
+                        converted_data[field_name] = converted_value
                 
-                # PRESERVE: Keep existing wind calculation methods as fallback
-                if 'wind_speed' not in converted_data:
-                    converted_data['wind_speed'] = self._calculate_wind_speed(parameters)
-                if 'wind_direction' not in converted_data:
-                    converted_data['wind_direction'] = self._calculate_wind_direction(parameters)
+                # PRESERVE: Add legacy computed fields if original parameters exist
+                if 'u_wind' in parameters and 'v_wind' in parameters:
+                    u_wind = parameters['u_wind']
+                    v_wind = parameters['v_wind']
+                    converted_data['wind_speed'] = math.sqrt(u_wind**2 + v_wind**2)
+                    converted_data['wind_direction'] = self._calculate_wind_direction_from_components(u_wind, v_wind)
                 
                 organized_data.append(converted_data)
                 
-            except (ValueError, TypeError) as e:
-                log.error(f"Error converting GRIB data for forecast time {forecast_time}: {e}")
-                # PRESERVE: Add fallback data point
-                organized_data.append({
-                    'forecast_time': forecast_time,
-                    'wave_height': 0.0,
-                    'wave_period': 0.0,
-                    'wave_direction': 0.0,
-                    'wind_speed': 0.0,
-                    'wind_direction': 0.0
-                })
+            except Exception as e:
+                log.warning(f"Error processing forecast time {forecast_time}: {e}")
+                continue
         
-        # PRESERVE: Sort by forecast time
-        organized_data.sort(key=lambda x: x['forecast_time'])
+        # SURGICAL FIX 2 VERIFICATION: Ensure we never return synthetic data
+        if not organized_data:
+            log.error("No valid forecast data could be organized from GRIB data points")
+            return []
         
+        log.debug(f"Organized {len(organized_data)} forecast periods from {len(data_points)} data points")
         return organized_data
     
     def _calculate_wind_speed(self, parameters):
