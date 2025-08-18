@@ -845,23 +845,22 @@ class WaveWatchDataCollector:
                     
                     log.error(f"DEBUG: Attempting download: {url}")
                     
-                    # Download to temporary file
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
-                    temp_file.close()
-                    
-                    urllib.request.urlretrieve(url, temp_file.name)
+                    # Download to permanent location for debugging
+                    debug_filename = f"/tmp/debug_grib_{run_str}_{run_hour_str}_{grid_name}_f{fhr:03d}.grib2"
+                    urllib.request.urlretrieve(url, debug_filename)
+                    temp_file_name = debug_filename
                     
                     # Check file size
-                    file_size = os.path.getsize(temp_file.name)
-                    log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes")
+                    file_size = os.path.getsize(debug_filename)
+                    log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes to {debug_filename}")
                     
                     if file_size >= min_file_size:
-                        cycle_files.append(temp_file.name)
+                        cycle_files.append(debug_filename)
                         valid_files_count += 1
                         log.error(f"DEBUG: Valid file added to cycle_files. Total valid: {valid_files_count}")
                     else:
                         log.error(f"DEBUG: File too small ({file_size} < {min_file_size}), deleting")
-                        os.unlink(temp_file.name)
+                        os.unlink(debug_filename)
                         
                 except urllib.error.HTTPError as e:
                     log.error(f"DEBUG: HTTP Error downloading {filename}: {e.code} {e.reason}")
@@ -892,19 +891,18 @@ class WaveWatchDataCollector:
                         
                         log.error(f"DEBUG: Downloading remaining file: {url}")
                         
-                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
-                        temp_file.close()
-                        
-                        urllib.request.urlretrieve(url, temp_file.name)
+                        # Download to permanent location for debugging
+                        debug_filename = f"/tmp/debug_grib_{run_str}_{run_hour_str}_{grid_name}_f{fhr:03d}.grib2"
+                        urllib.request.urlretrieve(url, debug_filename)
                         
                         # Check file size
-                        file_size = os.path.getsize(temp_file.name)
+                        file_size = os.path.getsize(debug_filename)
                         if file_size >= min_file_size:
-                            cycle_files.append(temp_file.name)
-                            log.error(f"DEBUG: Added remaining file {filename} ({file_size} bytes)")
+                            cycle_files.append(debug_filename)
+                            log.error(f"DEBUG: Added remaining file {filename} ({file_size} bytes) to {debug_filename}")
                         else:
                             log.error(f"DEBUG: Remaining file too small: {filename} ({file_size} bytes)")
-                            os.unlink(temp_file.name)
+                            os.unlink(debug_filename)
                             
                     except urllib.error.HTTPError as e:
                         log.error(f"DEBUG: HTTP Error downloading remaining file {filename}: {e.code} {e.reason}")
