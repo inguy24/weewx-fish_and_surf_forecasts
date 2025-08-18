@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Wood Duck
+# Magic Animal: Chimp
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
