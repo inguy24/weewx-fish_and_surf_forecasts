@@ -485,10 +485,9 @@ database_schema:
   marine_forecast_surf_data:
     name: "marine_forecast_surf_data"
     fields:
-      # WeeWX standard fields
+      # Standard WeeWX fields
       dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
-      interval: "INTEGER NOT NULL"
       
       # Spot identification and timing
       spot_id: "VARCHAR(50) NOT NULL"
@@ -522,10 +521,9 @@ database_schema:
   marine_forecast_fishing_data:
     name: "marine_forecast_fishing_data"
     fields:
-      # WeeWX standard fields
+      # Standard WeeWX fields
       dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
-      interval: "INTEGER NOT NULL"
       
       # Spot identification and timing
       spot_id: "VARCHAR(50) NOT NULL"
