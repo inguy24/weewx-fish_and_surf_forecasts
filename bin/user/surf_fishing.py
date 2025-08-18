@@ -784,6 +784,8 @@ class WaveWatchDataCollector:
     def _download_grib_files(self, grid_name):
         """Download GFS Wave GRIB files with proper timing and file size validation"""
         
+        log.error(f"DEBUG: _download_grib_files called with grid_name={grid_name}")
+        
         grib_files = []
         
         # Get configuration
@@ -791,7 +793,13 @@ class WaveWatchDataCollector:
         processing_delay_hours = float(gfs_wave_config.get('data_availability_delay', '3.0'))
         min_file_size = int(gfs_wave_config.get('min_file_size_bytes', '10000'))  # 10KB minimum
         
+        log.error(f"DEBUG: processing_delay_hours={processing_delay_hours}, min_file_size={min_file_size}")
+        log.error(f"DEBUG: base_url='{self.base_url}'")
+        log.error(f"DEBUG: run_cycles={self.run_cycles}")
+        log.error(f"DEBUG: forecast_hours={self.forecast_hours}")
+        
         current_time = datetime.utcnow()
+        log.error(f"DEBUG: current_time={current_time}")
         
         # Try multiple cycles until we find usable data
         cycles_to_try = []
@@ -804,12 +812,21 @@ class WaveWatchDataCollector:
                 # Check if cycle should be available (with processing delay)
                 if current_time >= potential_run + timedelta(hours=processing_delay_hours):
                     cycles_to_try.append(potential_run)
+                    log.error(f"DEBUG: Added cycle {potential_run.strftime('%Y%m%d %HZ')} to try list")
+                else:
+                    log.error(f"DEBUG: Cycle {potential_run.strftime('%Y%m%d %HZ')} too recent (needs {processing_delay_hours}h delay)")
+        
+        log.error(f"DEBUG: Found {len(cycles_to_try)} cycles to try")
+        
+        if not cycles_to_try:
+            log.error("DEBUG: No cycles to try - all cycles too recent!")
+            return []
         
         successful_cycle = None
         
         # Try each cycle until we find usable files
         for cycle_time in cycles_to_try:
-            log.debug(f"Trying GFS Wave cycle: {cycle_time.strftime('%Y%m%d %HZ')}")
+            log.error(f"DEBUG: Trying cycle: {cycle_time.strftime('%Y%m%d %HZ')}")
             
             run_str = cycle_time.strftime("%Y%m%d")
             run_hour_str = f"{cycle_time.hour:02d}"
@@ -819,10 +836,14 @@ class WaveWatchDataCollector:
             # Try to download a few forecast hours to test cycle viability
             test_hours = self.forecast_hours[:3]  # Test first 3 hours (f000, f003, f006)
             
+            log.error(f"DEBUG: Testing {len(test_hours)} hours: {test_hours}")
+            
             for fhr in test_hours:
                 try:
                     filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
                     url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
+                    
+                    log.error(f"DEBUG: Attempting download: {url}")
                     
                     # Download to temporary file
                     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
@@ -832,31 +853,44 @@ class WaveWatchDataCollector:
                     
                     # Check file size
                     file_size = os.path.getsize(temp_file.name)
-                    log.debug(f"Downloaded {filename}: {file_size} bytes")
+                    log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes")
                     
                     if file_size >= min_file_size:
                         cycle_files.append(temp_file.name)
                         valid_files_count += 1
-                        log.debug(f"Valid GRIB file: {filename} ({file_size} bytes)")
+                        log.error(f"DEBUG: Valid file added to cycle_files. Total valid: {valid_files_count}")
                     else:
-                        log.warning(f"File too small: {filename} ({file_size} bytes < {min_file_size})")
-                        os.unlink(temp_file.name)  # Delete small file
+                        log.error(f"DEBUG: File too small ({file_size} < {min_file_size}), deleting")
+                        os.unlink(temp_file.name)
                         
-                except Exception as e:
-                    log.warning(f"Could not download {filename}: {e}")
+                except urllib.error.HTTPError as e:
+                    log.error(f"DEBUG: HTTP Error downloading {filename}: {e.code} {e.reason}")
                     continue
+                except urllib.error.URLError as e:
+                    log.error(f"DEBUG: URL Error downloading {filename}: {e.reason}")
+                    continue
+                except Exception as e:
+                    log.error(f"DEBUG: Download failed for {filename}: {type(e).__name__}: {e}")
+                    continue
+            
+            log.error(f"DEBUG: Cycle test complete. valid_files_count={valid_files_count}")
             
             # If we got valid files, this cycle is good - download the rest
             if valid_files_count >= 2:  # Need at least 2 valid files to consider cycle usable
+                log.error(f"DEBUG: Cycle {cycle_time.strftime('%Y%m%d %HZ')} is good, downloading remaining files")
                 log.info(f"Using GFS Wave cycle: {cycle_time.strftime('%Y%m%d %HZ')} ({valid_files_count} test files valid)")
                 successful_cycle = cycle_time
                 
                 # Download remaining forecast hours
                 remaining_hours = self.forecast_hours[len(test_hours):]
+                log.error(f"DEBUG: Downloading {len(remaining_hours)} remaining hours: {remaining_hours}")
+                
                 for fhr in remaining_hours:
                     try:
                         filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
                         url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
+                        
+                        log.error(f"DEBUG: Downloading remaining file: {url}")
                         
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
                         temp_file.close()
@@ -867,19 +901,28 @@ class WaveWatchDataCollector:
                         file_size = os.path.getsize(temp_file.name)
                         if file_size >= min_file_size:
                             cycle_files.append(temp_file.name)
+                            log.error(f"DEBUG: Added remaining file {filename} ({file_size} bytes)")
                         else:
-                            log.warning(f"Skipping small file: {filename} ({file_size} bytes)")
+                            log.error(f"DEBUG: Remaining file too small: {filename} ({file_size} bytes)")
                             os.unlink(temp_file.name)
                             
+                    except urllib.error.HTTPError as e:
+                        log.error(f"DEBUG: HTTP Error downloading remaining file {filename}: {e.code} {e.reason}")
+                        continue
+                    except urllib.error.URLError as e:
+                        log.error(f"DEBUG: URL Error downloading remaining file {filename}: {e.reason}")
+                        continue
                     except Exception as e:
-                        log.warning(f"Could not download {filename}: {e}")
+                        log.error(f"DEBUG: Failed to download remaining file {filename}: {type(e).__name__}: {e}")
                         continue
                 
                 grib_files = cycle_files
+                log.error(f"DEBUG: Setting grib_files = cycle_files. Total files: {len(grib_files)}")
                 break  # Success - stop trying older cycles
                 
             else:
                 # Clean up failed cycle files
+                log.error(f"DEBUG: Cycle failed ({valid_files_count} < 2), cleaning up {len(cycle_files)} files")
                 for temp_file in cycle_files:
                     try:
                         os.unlink(temp_file)
@@ -887,11 +930,19 @@ class WaveWatchDataCollector:
                         pass
                 log.warning(f"Cycle {cycle_time.strftime('%Y%m%d %HZ')} unusable ({valid_files_count} valid files)")
         
+        # Final results
         if not grib_files:
+            log.error("DEBUG: No usable GFS Wave data found after trying all available cycles")
             log.error("No usable GFS Wave data found after trying all available cycles")
         else:
-            log.info(f"Successfully downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
+            if successful_cycle:
+                log.error(f"DEBUG: SUCCESS! Downloaded {len(grib_files)} files from {successful_cycle.strftime('%Y%m%d %HZ')}")
+                log.info(f"Successfully downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
+            else:
+                log.error(f"DEBUG: SUCCESS! Downloaded {len(grib_files)} files (no successful_cycle set)")
+                log.info(f"Successfully downloaded {len(grib_files)} GRIB files")
         
+        log.error(f"DEBUG: Returning {len(grib_files)} grib files")
         return grib_files
     
     def _organize_forecast_data(self, data_points):
