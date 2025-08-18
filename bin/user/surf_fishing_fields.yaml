@@ -485,39 +485,73 @@ database_schema:
   marine_forecast_surf_data:
     name: "marine_forecast_surf_data"
     fields:
+      # WeeWX standard fields
       dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
       interval: "INTEGER NOT NULL"
+      
+      # Spot identification and timing
       spot_id: "VARCHAR(50) NOT NULL"
       forecast_time: "INTEGER NOT NULL"
-      wave_height: "REAL"
-      wave_period: "REAL"
-      wave_direction: "REAL"
-      wind_speed: "REAL"
-      wind_direction: "REAL"
-      swell_height: "REAL"
-      swell_period: "REAL"
-      swell_direction: "REAL"
-      surf_rating: "INTEGER"
-      conditions_text: "TEXT"
-      forecast_json: "TEXT"
-      created_at: "INTEGER"
+      generated_time: "INTEGER NOT NULL"
+      
+      # NOAA/GFS Wave data (from parameters section)
+      wave_height: "REAL"                    # Combined wave height
+      wave_period: "REAL"                    # Combined wave period
+      wave_direction: "REAL"                 # Combined wave direction
+      wind_speed: "REAL"                     # Wind speed
+      wind_direction: "REAL"                 # Wind direction
+      swell_1_height: "REAL"                 # Primary swell height (matches parameters)
+      swell_1_period: "REAL"                 # Primary swell period (matches parameters)
+      swell_1_direction: "REAL"              # Primary swell direction (matches parameters)
+      
+      # Our calculated fields (what the code actually inserts)
+      wave_height_min: "REAL"                # Calculated minimum wave height
+      wave_height_max: "REAL"                # Calculated maximum wave height
+      wave_height_range: "TEXT"              # Text description of wave range
+      wind_condition: "TEXT"                 # Calculated wind condition (offshore/onshore/etc)
+      quality_rating: "INTEGER"              # Our 1-5 surf quality rating
+      quality_stars: "TEXT"                  # Star representation (★★★★☆)
+      quality_text: "TEXT"                   # Text quality description
+      conditions_description: "TEXT"         # Detailed conditions text
+      confidence: "REAL"                     # Forecast confidence (0-1)
+      
+      # General conditions summary
+      conditions_text: "TEXT"                # Used by code for general conditions
   
   marine_forecast_fishing_data:
     name: "marine_forecast_fishing_data"
     fields:
+      # WeeWX standard fields
       dateTime: "INTEGER NOT NULL"
       usUnits: "INTEGER NOT NULL"
       interval: "INTEGER NOT NULL"
+      
+      # Spot identification and timing
       spot_id: "VARCHAR(50) NOT NULL"
       forecast_date: "INTEGER NOT NULL"
       period_name: "VARCHAR(50) NOT NULL"
-      fishing_rating: "INTEGER"
-      conditions_text: "TEXT"
-      best_times: "TEXT"
-      target_species: "TEXT"
-      pressure_trend: "TEXT"
-      tide_stage: "TEXT"
-      species_activity: "TEXT"
-      forecast_json: "TEXT"
-      created_at: "INTEGER"
+      period_start_hour: "INTEGER"
+      period_end_hour: "INTEGER"
+      generated_time: "INTEGER NOT NULL"
+      
+      # Pressure analysis (our calculations from NOAA data)
+      pressure_trend: "TEXT"                 # rising/falling/stable
+      pressure_change: "REAL"                # 3-hour pressure change
+      pressure_score: "INTEGER"              # Our pressure rating
+      
+      # Tide analysis (our calculations from NOAA data)
+      tide_stage: "TEXT"                     # high/low/rising/falling
+      tide_flow: "TEXT"                      # incoming/outgoing/slack
+      tide_score: "INTEGER"                  # Our tide rating
+      
+      # Species and activity analysis (our calculations)
+      species_activity: "TEXT"               # Activity level description
+      activity_rating: "INTEGER"             # Our activity rating
+      best_species_json: "TEXT"              # JSON list of target species
+      conditions_text: "TEXT"                # Overall conditions text
+      overall_score: "INTEGER"               # Combined fishing score
+      confidence: "REAL"                     # Forecast confidence (0-1)
+      
+      # General conditions summary
+      conditions_text: "TEXT"                # Used by code for overall conditions
