@@ -847,20 +847,39 @@ class WaveWatchDataCollector:
                     
                     # Download to permanent location for debugging
                     debug_filename = f"/tmp/debug_grib_{run_str}_{run_hour_str}_{grid_name}_f{fhr:03d}.grib2"
-                    urllib.request.urlretrieve(url, debug_filename)
-                    temp_file_name = debug_filename
+                    
+                    log.error(f"DEBUG: About to call urllib.request.urlretrieve")
+                    log.error(f"DEBUG: URL: {url}")
+                    log.error(f"DEBUG: Target file: {debug_filename}")
+                    
+                    # Test if the download actually happens
+                    try:
+                        result = urllib.request.urlretrieve(url, debug_filename)
+                        log.error(f"DEBUG: urlretrieve returned: {result}")
+                        log.error(f"DEBUG: File exists after download: {os.path.exists(debug_filename)}")
+                        if os.path.exists(debug_filename):
+                            actual_size = os.path.getsize(debug_filename)
+                            log.error(f"DEBUG: Actual file size: {actual_size}")
+                        else:
+                            log.error(f"DEBUG: FILE DOES NOT EXIST after urlretrieve!")
+                    except Exception as download_error:
+                        log.error(f"DEBUG: urlretrieve FAILED: {type(download_error).__name__}: {download_error}")
+                        raise download_error
                     
                     # Check file size
-                    file_size = os.path.getsize(debug_filename)
-                    log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes to {debug_filename}")
-                    
-                    if file_size >= min_file_size:
-                        cycle_files.append(debug_filename)
-                        valid_files_count += 1
-                        log.error(f"DEBUG: Valid file added to cycle_files. Total valid: {valid_files_count}")
+                    if os.path.exists(debug_filename):
+                        file_size = os.path.getsize(debug_filename)
+                        log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes to {debug_filename}")
+                        
+                        if file_size >= min_file_size:
+                            cycle_files.append(debug_filename)
+                            valid_files_count += 1
+                            log.error(f"DEBUG: Valid file added to cycle_files. Total valid: {valid_files_count}")
+                        else:
+                            log.error(f"DEBUG: File too small ({file_size} < {min_file_size}), deleting")
+                            os.unlink(debug_filename)
                     else:
-                        log.error(f"DEBUG: File too small ({file_size} < {min_file_size}), deleting")
-                        os.unlink(debug_filename)
+                        log.error(f"DEBUG: CRITICAL - File does not exist after download attempt!")
                         
                 except urllib.error.HTTPError as e:
                     log.error(f"DEBUG: HTTP Error downloading {filename}: {e.code} {e.reason}")
