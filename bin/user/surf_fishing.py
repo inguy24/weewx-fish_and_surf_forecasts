@@ -2718,8 +2718,6 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-            # THREAD SAFE: Get fresh database manager for this thread
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
                 connection = db_manager.connection
             
             # Clear existing forecasts for this spot (current forecasts only)
@@ -2770,15 +2768,15 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-            result = db_manager.connection.execute("""
-                SELECT forecast_date, period_name, period_start_hour, period_end_hour,
-                       pressure_trend, tide_movement, species_activity, activity_rating,
-                       conditions_text, best_species, generated_time
-                FROM marine_forecast_fishing_data 
-                WHERE spot_id = ? AND forecast_date BETWEEN ? AND ?
-                ORDER BY forecast_date ASC, period_start_hour ASC
-            """, (spot_id, current_time, end_time))
-            
+                result = db_manager.connection.execute("""
+                    SELECT forecast_date, period_name, period_start_hour, period_end_hour,
+                        pressure_trend, tide_movement, species_activity, activity_rating,
+                        conditions_text, best_species, generated_time
+                    FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ? AND forecast_date BETWEEN ? AND ?
+                    ORDER BY forecast_date ASC, period_start_hour ASC
+                """, (spot_id, current_time, end_time))
+                
             rows = result.fetchall()
             
             forecasts = []
@@ -2820,14 +2818,14 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-            result = db_manager.connection.execute("""
-                SELECT forecast_date, period_name, period_start_hour, period_end_hour,
-                       activity_rating, conditions_text, best_species
-                FROM marine_forecast_fishing_data 
-                WHERE spot_id = ? AND forecast_date >= ? AND activity_rating >= ?
-                ORDER BY forecast_date ASC, period_start_hour ASC
-                LIMIT 1
-            """, (spot_id, current_time, min_rating))
+                result = db_manager.connection.execute("""
+                    SELECT forecast_date, period_name, period_start_hour, period_end_hour,
+                        activity_rating, conditions_text, best_species
+                    FROM marine_forecast_fishing_data 
+                    WHERE spot_id = ? AND forecast_date >= ? AND activity_rating >= ?
+                    ORDER BY forecast_date ASC, period_start_hour ASC
+                    LIMIT 1
+                """, (spot_id, current_time, min_rating))
             
             row = result.fetchone()
             
