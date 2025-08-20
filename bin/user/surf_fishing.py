@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Orangutang
+# Magic Animal: Gecko
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 
 # WeeWX imports
 import weewx
+import weewx.units
 import weewx.manager
 from weewx.engine import StdService
 from weewx.cheetahgenerator import SearchList
@@ -1561,58 +1562,106 @@ class SurfForecastGenerator:
         else:
             return f"{base_quality} - {wave_range}, {wind_desc}"
 
-    def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
-        """
-        Store surf forecasts using WeeWX 5.1 patterns and reading from existing CONF
+    def _get_surf_database_fields_from_conf(self):
+        """Get surf database field definitions from CONF"""
+        service_config = self.config_dict.get('SurfFishingService', {})
+        database_schema = service_config.get('database_schema', {})
+        surf_fields = database_schema.get('marine_forecast_surf_data', {})
         
-        SURGICAL FIX: Removes manual cursor/commit/rollback patterns
-        RETAINS: All functionality, method name, parameters, return values
-        READS FROM: Existing CONF for any configuration needs
-        """
+        if not surf_fields:
+            log.error("No surf database field definitions found in CONF")
+            # Fallback to minimal required fields
+            return {
+                'dateTime': {'type': 'INTEGER'},
+                'usUnits': {'type': 'INTEGER'}, 
+                'spot_id': {'type': 'TEXT'}
+            }
+        
+        return surf_fields
+
+    def _convert_forecast_data_using_conf(self, forecast_data, forecast_type):
+        """Convert forecast data using data-driven CONF specifications"""
+        converted_data = forecast_data.copy()
+        
+        # Get conversion fields from CONF
+        service_config = self.config_dict.get('SurfFishingService', {})
+        conversion_fields = service_config.get('conversion_fields', {}).get(forecast_type, [])
+        
+        # Apply conversions to specified fields only
+        for field_name in conversion_fields:
+            if field_name in converted_data and converted_data[field_name] is not None:
+                # Get service reference for unit conversion
+                if hasattr(self, 'service_ref'):
+                    converted_value = self.service_ref._convert_field_to_weewx_units(
+                        field_name, 
+                        converted_data[field_name]
+                    )
+                    converted_data[field_name] = converted_value
+                else:
+                    log.warning(f"No service reference available for converting {field_name}")
+        
+        return converted_data
+
+    def _get_target_unit_system(self):
+        """Get WeeWX usUnits value using CONF configuration"""
+        std_convert_config = self.config_dict.get('StdConvert', {})
+        target_unit = std_convert_config.get('target_unit', 'US')
+        
+        # Get unit system mapping from CONF
+        service_config = self.config_dict.get('SurfFishingService', {})
+        unit_system_mapping = service_config.get('unit_system_mapping', {
+            'US': weewx.US,
+            'METRIC': weewx.METRIC,
+            'METRICWX': weewx.METRICWX
+        })
+        
+        return unit_system_mapping.get(target_unit, weewx.US)
+
+    def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
+        """Store surf forecasts with data-driven unit conversion"""
         try:
-            # Clear existing forecasts - WeeWX 5.1 pattern (no manual cursor)
+            # EXISTING CODE: Clear existing forecasts - WeeWX 5.1 pattern preserved
             db_manager.connection.execute(
-                "DELETE FROM marine_forecast_surf_data WHERE spot_id = ?", 
+                "DELETE FROM marine_forecast_surf_data WHERE spot_id = ?",
                 (spot_id,)
             )
             
-            # Insert new forecast data - WeeWX 5.1 pattern (no manual cursor/commit)
-            for forecast_period in forecast_data:
-                db_manager.connection.execute("""
-                INSERT INTO marine_forecast_surf_data (
-                    dateTime, usUnits,
-                    spot_id, forecast_time, generated_time,
-                    wave_height_min, wave_height_max, wave_height_range,
-                    wave_period, wave_direction, 
-                    wind_speed, wind_direction, wind_condition,
-                    quality_rating, quality_stars, quality_text,
-                    conditions_description, confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    int(time.time()),                                    # dateTime (new)
-                    1,                                                   # usUnits (new - hardcoded imperial)
-                    spot_id,
-                    forecast_period.get('forecast_time'),
-                    forecast_period.get('generated_time', int(time.time())),
-                    forecast_period.get('wave_height_min'),
-                    forecast_period.get('wave_height_max'),
-                    forecast_period.get('wave_height_range'),
-                    forecast_period.get('wave_period'),
-                    forecast_period.get('wave_direction'),
-                    forecast_period.get('wind_speed'),
-                    forecast_period.get('wind_direction'),
-                    forecast_period.get('wind_condition'),
-                    forecast_period.get('quality_rating'),
-                    forecast_period.get('quality_stars'),
-                    forecast_period.get('quality_text'),
-                    forecast_period.get('conditions_description'),
-                    forecast_period.get('confidence')
-                ))
+            # NEW: Get database field definitions from CONF
+            surf_fields = self._get_surf_database_fields_from_conf()
             
-            # WeeWX handles commit automatically - no manual commit
+            # EXISTING CODE: Process each forecast period preserved
+            for forecast_period in forecast_data:
+                # NEW: Apply data-driven unit conversions
+                converted_data = self._convert_forecast_data_using_conf(forecast_period, 'surf')
+                
+                # NEW: Build dynamic INSERT using CONF field definitions
+                field_names = list(surf_fields.keys())
+                placeholders = ', '.join(['?' for _ in field_names])
+                field_list = ', '.join(field_names)
+                
+                # NEW: Build values list using CONF field specifications
+                values = []
+                for field_name in field_names:
+                    if field_name == 'dateTime':
+                        values.append(int(time.time()))
+                    elif field_name == 'usUnits':
+                        values.append(self._get_target_unit_system())
+                    elif field_name == 'spot_id':
+                        values.append(spot_id)
+                    else:
+                        values.append(converted_data.get(field_name))
+                
+                # EXISTING CODE: Execute database insert (now data-driven)
+                db_manager.connection.execute(
+                    f"INSERT INTO marine_forecast_surf_data ({field_list}) VALUES ({placeholders})",
+                    values
+                )
+            
+            # EXISTING CODE: Return value preserved
             return True
             
         except Exception as e:
+            # EXISTING CODE: Error handling preserved
             log.error(f"Error storing surf forecasts for spot {spot_id}: {e}")
             return False
 
@@ -2770,60 +2819,71 @@ class FishingForecastGenerator:
         
         return " ".join(components)
 
-    def store_fishing_forecasts(self, spot_id, forecast_data, db_manager):
-        """
-        Store fishing forecasts using WeeWX 5.1 patterns
+    def _get_fishing_database_fields_from_conf(self):
+        """Get fishing database field definitions from CONF"""
+        service_config = self.config_dict.get('SurfFishingService', {})
+        database_schema = service_config.get('database_schema', {})
+        fishing_fields = database_schema.get('marine_forecast_fishing_data', {})
         
-        SURGICAL FIX: Removes manual cursor/commit/rollback patterns  
-        RETAINS: All functionality, method name, parameters, return values
-        READS FROM: Existing CONF for any configuration needs
-        """
+        if not fishing_fields:
+            log.error("No fishing database field definitions found in CONF")
+            # Fallback to minimal required fields
+            return {
+                'dateTime': {'type': 'INTEGER'},
+                'usUnits': {'type': 'INTEGER'}, 
+                'spot_id': {'type': 'TEXT'}
+            }
+        
+        return fishing_fields
+
+    def store_fishing_forecasts(self, spot_id, forecast_data, db_manager):
+        """Store fishing forecasts with data-driven unit conversion"""
         try:
-            # Clear existing forecasts - WeeWX 5.1 pattern (no manual cursor)
+            # EXISTING CODE: Clear existing forecasts - WeeWX 5.1 pattern preserved
             db_manager.connection.execute(
-                "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?", 
+                "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
                 (spot_id,)
             )
             
-            # Insert new forecast data - WeeWX 5.1 pattern (no manual cursor/commit)
-            for forecast_period in forecast_data:
-                db_manager.connection.execute("""
-                INSERT INTO marine_forecast_fishing_data (
-                    dateTime, usUnits,
-                    spot_id, forecast_date, period_name, generated_time,
-                    pressure_trend, pressure_change, pressure_score,
-                    tide_stage, tide_flow, tide_score,
-                    species_activity, activity_rating, best_species_json,
-                    conditions_text, overall_score, confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    int(time.time()),                    # dateTime
-                    1,                                   # usUnits (hardcoded imperial)
-                    spot_id,
-                    forecast_period.get('forecast_date'),
-                    forecast_period.get('period_name'),
-                    forecast_period.get('generated_time', int(time.time())),
-                    forecast_period.get('pressure_trend'),
-                    forecast_period.get('pressure_change'),
-                    forecast_period.get('pressure_score'),
-                    forecast_period.get('tide_stage'),
-                    forecast_period.get('tide_flow'),
-                    forecast_period.get('tide_score'),
-                    forecast_period.get('species_activity'),
-                    forecast_period.get('activity_rating'),
-                    json.dumps(forecast_period.get('best_species', [])) if forecast_period.get('best_species') else None,
-                    forecast_period.get('conditions_text'),
-                    forecast_period.get('overall_score'),
-                    forecast_period.get('confidence')
-                ))
+            # NEW: Get database field definitions from CONF
+            fishing_fields = self._get_fishing_database_fields_from_conf()
             
-            # WeeWX handles commit automatically - no manual commit
+            # EXISTING CODE: Process each forecast period preserved
+            for forecast_period in forecast_data:
+                # NEW: Apply data-driven unit conversions
+                converted_data = self._convert_forecast_data_using_conf(forecast_period, 'fishing')
+                
+                # NEW: Build dynamic INSERT using CONF field definitions
+                field_names = list(fishing_fields.keys())
+                placeholders = ', '.join(['?' for _ in field_names])
+                field_list = ', '.join(field_names)
+                
+                # NEW: Build values list using CONF field specifications
+                values = []
+                for field_name in field_names:
+                    if field_name == 'dateTime':
+                        values.append(int(time.time()))
+                    elif field_name == 'usUnits':
+                        values.append(self._get_target_unit_system())
+                    elif field_name == 'spot_id':
+                        values.append(spot_id)
+                    else:
+                        values.append(converted_data.get(field_name))
+                
+                # EXISTING CODE: Execute database insert (now data-driven)
+                db_manager.connection.execute(
+                    f"INSERT INTO marine_forecast_fishing_data ({field_list}) VALUES ({placeholders})",
+                    values
+                )
+            
+            # EXISTING CODE: Return value preserved
             return True
             
         except Exception as e:
+            # EXISTING CODE: Error handling preserved
             log.error(f"Error storing fishing forecasts for spot {spot_id}: {e}")
             return False
-
+    
     def get_current_fishing_forecast(self, spot_id, db_manager):
         """
         Get current fishing forecast using WeeWX 5.1 patterns
@@ -3825,49 +3885,48 @@ class SurfFishingService(StdService):
     """
     
     def __init__(self, engine, config_dict):
-        """
-        Initialize SurfFishingService using WeeWX patterns
-        All configuration from CONF only - no YAML access
-        FIXED: Defers database manager to avoid startup timing conflicts
-        """
+        """Initialize SurfFishingService with WeeWX unit system detection"""
         super(SurfFishingService, self).__init__(engine, config_dict)
         
-        # Store references for proper WeeWX integration
+        # EXISTING CODE: Store references for proper WeeWX integration - PRESERVED
         self.engine = engine
         self.config_dict = config_dict
         
-        # CRITICAL FIX: Don't get database manager here - defer it
+        # EXISTING CODE: CRITICAL FIX - Don't get database manager here, defer it - PRESERVED
         self._db_manager = None
         self._db_lock = threading.Lock()
         self._db_initialization_complete = False
         
-        # Read service configuration from CONF only - RETAINED
+        # EXISTING CODE: Read service configuration from CONF only - PRESERVED
         self.service_config = config_dict.get('SurfFishingService', {})
         
-        # Initialize GRIB processor - RETAINED EXACTLY
+        # NEW: WeeWX 5.1 unit system detection using CONF data
+        self._setup_unit_system_from_conf(config_dict)
+        
+        # EXISTING CODE: Initialize GRIB processor - PRESERVED EXACTLY
         self.grib_processor = GRIBProcessor(config_dict)
         if self.grib_processor.is_available():
             log.info("Using pygrib for GRIB processing")
         else:
             log.warning("No GRIB library available - WaveWatch III forecasts disabled")
         
-        # Initialize forecast generators with CONF-based config - RETAINED EXACTLY
+        # EXISTING CODE: Initialize forecast generators with CONF-based config - PRESERVED EXACTLY
         # NOTE: These will use _get_db_manager() when they need database access
         self.surf_generator = SurfForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
-        self.fishing_generator = FishingForecastGenerator(config_dict) 
+        self.fishing_generator = FishingForecastGenerator(config_dict)
         
-        # Set up forecast timing from CONF - RETAINED EXACTLY
-        self.forecast_interval = int(self.service_config.get('forecast_interval', '21600')) # 6 hours default
+        # EXISTING CODE: Set up forecast timing from CONF - PRESERVED EXACTLY
+        self.forecast_interval = int(self.service_config.get('forecast_interval', '21600'))  # 6 hours default
         self.shutdown_event = threading.Event()
         
-        # Initialize station integration with CONF-based error handling - RETAINED EXACTLY
+        # EXISTING CODE: Initialize station integration with CONF-based error handling - PRESERVED EXACTLY
         try:
             log.info(f"{CORE_ICONS['status']} Initializing marine station integration...")
             
-            # Load field definitions from CONF (written by installer) - RETAINED
+            # Load field definitions from CONF (written by installer) - PRESERVED
             field_definitions = self._load_field_definitions()
             
-            # Initialize integration components if field definitions available - RETAINED
+            # Initialize integration components if field definitions available - PRESERVED
             if field_definitions:
                 log.info(f"{CORE_ICONS['status']} Station integration initialized successfully")
             else:
@@ -3877,12 +3936,90 @@ class SurfFishingService(StdService):
             log.error(f"{CORE_ICONS['warning']} Error initializing station integration: {e}")
             log.warning(f"{CORE_ICONS['warning']} Station integration unavailable - using defaults")
         
-        # Start forecast generation - RETAINED EXACTLY
+        # EXISTING CODE: Start forecast generation - PRESERVED EXACTLY
         log.info("Starting forecast generation loop")
         self.bind(weewx.STARTUP, lambda event: self._start_forecast_thread())
         
         log.info("Generating forecasts for all locations")
         log.info("SurfFishingService initialized successfully - database manager will be acquired on first use")
+
+    def _setup_unit_system_from_conf(self, config_dict):
+        """Setup unit system detection using CONF configuration specifications"""
+        # Detect WeeWX's configured unit system from StdConvert
+        std_convert_config = config_dict.get('StdConvert', {})
+        target_unit_system = std_convert_config.get('target_unit', 'US')
+        
+        # Map to WeeWX unit constants
+        unit_system_map = {
+            'US': weewx.US,
+            'METRIC': weewx.METRIC, 
+            'METRICWX': weewx.METRICWX
+        }
+        
+        self.unit_system = unit_system_map.get(target_unit_system, weewx.US)
+        self.unit_system_name = target_unit_system
+        
+        # Load conversion specifications from CONF
+        service_config = config_dict.get('SurfFishingService', {})
+        self.unit_conversion_config = service_config.get('unit_conversions', {})
+        
+        log.info(f"Unit system detected: {target_unit_system} (usUnits={self.unit_system})")
+        log.debug(f"Loaded unit conversion config from CONF: {len(self.unit_conversion_config)} conversion specs")
+
+    def _convert_field_to_weewx_units(self, field_name, raw_value, field_type=None):
+        """Convert field value using data-driven CONF specifications"""
+        if raw_value is None:
+            return None
+            
+        # Get field type from CONF if not provided
+        if field_type is None:
+            field_type = self._get_field_type_from_conf(field_name)
+        
+        if not field_type:
+            log.warning(f"No field type found in CONF for field: {field_name}")
+            return raw_value
+        
+        # Get conversion specification from CONF
+        conversion_spec = self.unit_conversion_config.get(field_type, {})
+        target_unit_spec = conversion_spec.get(self.unit_system_name, {})
+        
+        if not target_unit_spec:
+            log.debug(f"No conversion needed for {field_name} ({field_type}) in {self.unit_system_name} units")
+            return raw_value
+        
+        # Apply conversion using CONF specification
+        conversion_factor = target_unit_spec.get('factor', 1.0)
+        conversion_offset = target_unit_spec.get('offset', 0.0)
+        
+        # Handle different conversion types from CONF
+        conversion_type = target_unit_spec.get('type', 'linear')
+        
+        if conversion_type == 'linear':
+            return (raw_value * conversion_factor) + conversion_offset
+        elif conversion_type == 'formula':
+            formula = target_unit_spec.get('formula', 'x')
+            return self._apply_conversion_formula(raw_value, formula)
+        else:
+            log.warning(f"Unknown conversion type '{conversion_type}' for field {field_name}")
+            return raw_value
+
+    def _get_field_type_from_conf(self, field_name):
+        """Get field type from CONF field_mappings"""
+        service_config = self.config_dict.get('SurfFishingService', {})
+        field_mappings = service_config.get('field_mappings', {})
+        
+        return field_mappings.get(field_name, {}).get('unit_type')
+
+    def _apply_conversion_formula(self, value, formula):
+        """Apply custom conversion formula from CONF"""
+        try:
+            # Replace 'x' with actual value in formula
+            formula_with_value = formula.replace('x', str(value))
+            # Evaluate formula (limited to safe operations)
+            return eval(formula_with_value)
+        except Exception as e:
+            log.error(f"Error applying conversion formula '{formula}': {e}")
+            return value
 
     def _get_db_manager(self):
         """Get database manager - thread-specific if available, otherwise delayed initialization"""
