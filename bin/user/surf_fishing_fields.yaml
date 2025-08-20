@@ -1,358 +1,264 @@
 # WeeWX Surf & Fishing Forecast Extension Configuration
 # Phase II: Local Surf & Fishing Forecast System
-# Data-driven configuration for install.py
+# Reorganized by data source for logical structure
 #
 # This file is read by install.py during installation to configure
 # the extension. The service reads configuration from weewx.conf only.
 
-# UPDATED: GFS Wave API Configuration (replaces deprecated WaveWatch III)
-api_endpoints:
-  gfs_wave:
-    description: "NOAA GFS-Wave Model (WaveWatch III coupled with GFS)"
-    base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
-    url_pattern: "gfs.{yyyymmdd}/{hh}/wave/gridded/"
-    file_pattern: "gfswave.t{hh}z.{grid_name}.f{fff}.grib2"
-    documentation: "https://polar.ncep.noaa.gov/waves/Model_Description.pdf"
-    
-    # Updated regional grids based on GFS Wave system
-    grids:
-      us_east_coast:
-        description: "US East Coast & Gulf (16km resolution)"
-        grid_name: "atlocn.0p16"
-        bounds: [0, 55, -100, -50]  # 0-55N, 100W-50W
-        resolution: 0.16  # degrees (~16km)
-        update_frequency: "6_hours"
-        coverage: "US East Coast, Gulf of Mexico, Western Atlantic"
-        priority: 1
-        
-      us_west_coast:
-        description: "US West Coast (16km resolution)" 
-        grid_name: "wcoast.0p16"
-        bounds: [25, 50, -150, -110]  # 25-50N, 150W-110W
-        resolution: 0.16  # degrees (~16km)
-        update_frequency: "6_hours"
-        coverage: "California, Oregon, Washington coasts"
-        priority: 1
-        
-      hawaii_pacific:
-        description: "Hawaii & Eastern Pacific (16km resolution)"
-        grid_name: "epacif.0p16"
-        bounds: [-20, 30, -180, -130]  # 20S-30N, 180W-130W
-        resolution: 0.16  # degrees (~16km)
-        update_frequency: "6_hours"
-        coverage: "Hawaii, Eastern Pacific"
-        priority: 1
-        
-      alaska_arctic:
-        description: "Alaska & Arctic (9km resolution)"
-        grid_name: "arctic.9km"
-        bounds: [50, 90, -180, 180]  # 50-90N, global longitude
-        resolution: 0.083  # degrees (~9km)
-        update_frequency: "6_hours"
-        coverage: "Alaska, Arctic Ocean"
-        priority: 1
-        
-      global_primary:
-        description: "Global mid-latitudes (16km resolution)"
-        grid_name: "global.0p16"
-        bounds: [-15, 52.5, -180, 180]  # 15S-52.5N, global
-        resolution: 0.16  # degrees (~16km)
-        update_frequency: "6_hours"
-        coverage: "Global primary computational grid"
-        priority: 2
-        
-      global_fallback:
-        description: "Global interpolated (25km resolution)"
-        grid_name: "global.0p25"
-        bounds: [-90, 90, -180, 180]  # Global coverage
-        resolution: 0.25  # degrees (~25km)
-        update_frequency: "6_hours"
-        coverage: "Global fallback grid"
-        priority: 3
-        
-      southern_ocean:
-        description: "Southern Ocean (25km resolution)"
-        grid_name: "gsouth.0p25"
-        bounds: [-79.5, -10.5, -180, 180]  # 79.5S-10.5S, global
-        resolution: 0.25  # degrees (~25km)
-        update_frequency: "6_hours"
-        coverage: "Southern Ocean, Antarctica"
-        priority: 2
-    
-    # Schedule configuration
-    schedule:
-      run_cycles: ["00", "06", "12", "18"]
-      update_frequency: "6_hours"
-      forecast_hours: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
-      data_availability_delay: "4.5_hours"  # Model available ~4.5 hours after run time
-    
-    # Wave parameters to extract from GRIB2 files
-    parameters:
-      # Essential parameters (HIGH priority)
-      - name: "Significant height of combined wind waves and swell"
-        field: "wave_height"
-        units: "meters"
-        conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "HTSGW"     # Official parameter name
-        grib_short_name: "swh"      # Actual short name in GRIB files
-        priority: "HIGH"
-        
-      - name: "Mean period of combined wind waves and swell"
-        field: "wave_period"
-        units: "seconds"
-        grib_parameter: "PERPW"     # Official parameter name
-        grib_short_name: "perpw"    # Actual short name in GRIB files
-        priority: "HIGH"
-        
-      - name: "Direction of combined wind waves and swell"
-        field: "wave_direction"
-        units: "degrees"
-        grib_parameter: "DIRPW"     # Official parameter name
-        grib_short_name: "dirpw"    # Actual short name in GRIB files
-        priority: "HIGH"
-        
-      - name: "Wind speed"
-        field: "wind_speed"
-        units: "m/s"
-        conversion_factor: 2.23694  # Convert to mph
-        grib_parameter: "WIND"      # Official parameter name
-        grib_short_name: "ws"       # Actual short name in GRIB files
-        priority: "HIGH"
-        
-      - name: "Wind direction"
-        field: "wind_direction"
-        units: "degrees"
-        grib_parameter: "WDIR"      # Official parameter name
-        grib_short_name: "wdir"     # Actual short name in GRIB files
-        priority: "HIGH"
-        
-      # Swell components (HIGH priority for surf forecasting)
-      - name: "Significant wave height of first swell partition"
-        field: "swell_1_height"
-        units: "meters"
-        conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "SWELL:1"   # Official parameter name
-        grib_short_name: "shts"     # Actual short name in GRIB files (level 1)
-        priority: "HIGH"
-        
-      - name: "Mean wave period of first swell partition"
-        field: "swell_1_period"
-        units: "seconds"
-        grib_parameter: "SWPER:1"   # Official parameter name
-        grib_short_name: "mpts"     # Actual short name in GRIB files (level 1)
-        priority: "HIGH"
-        
-      - name: "Mean wave direction of first swell partition"
-        field: "swell_1_direction"
-        units: "degrees"
-        grib_parameter: "SWDIR:1"   # Official parameter name
-        grib_short_name: "swdir"    # Actual short name in GRIB files (level 1)
-        priority: "HIGH"
-        
-      # Wind wave components (MEDIUM priority)
-      - name: "Significant height of wind waves"
-        field: "wind_wave_height"
-        units: "meters"
-        conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "WVHGT"     # Official parameter name
-        grib_short_name: "shww"     # Actual short name in GRIB files
-        priority: "MEDIUM"
-        
-      - name: "Mean period of wind waves"
-        field: "wind_wave_period"
-        units: "seconds"
-        grib_parameter: "WVPER"     # Official parameter name
-        grib_short_name: "mpww"     # Actual short name in GRIB files
-        priority: "MEDIUM"
-        
-      - name: "Direction of wind waves"
-        field: "wind_wave_direction"
-        units: "degrees"
-        grib_parameter: "WVDIR"     # Official parameter name
-        grib_short_name: "wvdir"    # Actual short name in GRIB files
-        priority: "MEDIUM"
-        
-      # Secondary swell components (MEDIUM priority)
-      - name: "Significant wave height of second swell partition"
-        field: "swell_2_height"
-        units: "meters"
-        conversion_factor: 3.28084  # Convert to feet
-        grib_parameter: "SWELL:2"   # Official parameter name
-        grib_short_name: "shts"     # Actual short name in GRIB files (level 2)
-        priority: "MEDIUM"
-        
-      - name: "Mean wave period of second swell partition"
-        field: "swell_2_period"
-        units: "seconds"
-        grib_parameter: "SWPER:2"   # Official parameter name
-        grib_short_name: "mpts"     # Actual short name in GRIB files (level 2)
-        priority: "MEDIUM"
-        
-      - name: "Mean wave direction of second swell partition"
-        field: "swell_2_direction"
-        units: "degrees"
-        grib_parameter: "SWDIR:2"   # Official parameter name
-        grib_short_name: "swdir"    # Actual short name in GRIB files (level 2)
-        priority: "MEDIUM"
-        
-      # Wind components (LOW priority - fallback for calculations)
-      - name: "U-component of wind"
-        field: "wind_u"
-        units: "m/s"
-        conversion_factor: 2.23694  # Convert to mph
-        grib_parameter: "UGRD"      # Official parameter name
-        grib_short_name: "u"        # Actual short name in GRIB files
-        priority: "LOW"
-        
-      - name: "V-component of wind"
-        field: "wind_v"
-        units: "m/s"
-        conversion_factor: 2.23694  # Convert to mph
-        grib_parameter: "VGRD"      # Official parameter name
-        grib_short_name: "v"        # Actual short name in GRIB files
-        priority: "LOW"
-
-# Grid selection logic for location-based queries
-grid_selection:
-  method: "geographic_priority"
-  fallback_enabled: true
+# =============================================================================
+# NOAA GFS WAVE DATA SOURCE - All GFS Wave configuration together
+# =============================================================================
+noaa_gfs_wave:
+  description: "NOAA GFS-Wave Model (WaveWatch III coupled with GFS)"
+  base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
+  url_pattern: "gfs.{yyyymmdd}/{hh}/wave/gridded/"
+  file_pattern: "gfswave.t{hh}z.{grid_name}.f{fff}.grib2"
+  documentation: "https://polar.ncep.noaa.gov/waves/Model_Description.pdf"
   
-  regional_mappings:
+  # Grid definitions with selection logic combined
+  grids:
     us_east_coast:
-      bounds: [24.0, 50.0, -95.0, -65.0]
-      primary_grid: "atlocn.0p16"
-      backup_grid: "global.0p16"
-      
+      description: "US East Coast & Gulf (16km resolution)"
+      grid_name: "atlocn.0p16"
+      bounds: [0, 55, -100, -50]  # lat_min, lat_max, lon_min, lon_max
+      resolution: 0.16
+      priority: 1
+      geographic_selection:
+        regions: ["us_east_coast", "us_gulf_coast"]
+        bounds: [24.0, 50.0, -100.0, -65.0]
+        backup_grid: "global.0p16"
+        
     us_west_coast:
-      bounds: [24.0, 50.0, -130.0, -95.0]
-      primary_grid: "wcoast.0p16"
-      backup_grid: "global.0p16"
-      
-    us_gulf_coast:
-      bounds: [24.0, 32.0, -100.0, -80.0]
-      primary_grid: "atlocn.0p16"
-      backup_grid: "global.0p16"
-      
-    great_lakes:
-      bounds: [41.0, 49.0, -93.0, -76.0]
-      primary_grid: "global.0p16"
-      backup_grid: "global.0p25"
-      
-    alaska:
-      bounds: [55.0, 72.0, -180.0, -130.0]
-      primary_grid: "arctic.9km"
-      backup_grid: "global.0p16"
-      
-    hawaii:
-      bounds: [18.0, 23.0, -162.0, -154.0]
-      primary_grid: "epacif.0p16"
-      backup_grid: "global.0p16"
+      description: "US West Coast (16km resolution)" 
+      grid_name: "wcoast.0p16"
+      bounds: [25, 50, -150, -110]
+      resolution: 0.16
+      priority: 1
+      geographic_selection:
+        regions: ["us_west_coast"]
+        bounds: [24.0, 50.0, -130.0, -95.0]
+        backup_grid: "global.0p16"
+        
+    hawaii_pacific:
+      description: "Hawaii & Eastern Pacific (16km resolution)"
+      grid_name: "epacif.0p16"
+      bounds: [-20, 30, -180, -130]
+      resolution: 0.16
+      priority: 1
+      geographic_selection:
+        regions: ["hawaii"]
+        bounds: [18.0, 23.0, -162.0, -154.0]
+        backup_grid: "global.0p16"
+        
+    alaska_arctic:
+      description: "Alaska & Arctic (9km resolution)"
+      grid_name: "arctic.9km"
+      bounds: [50, 90, -180, 180]
+      resolution: 0.083
+      priority: 1
+      geographic_selection:
+        regions: ["alaska"]
+        bounds: [55.0, 72.0, -180.0, -130.0]
+        backup_grid: "global.0p16"
+        
+    global_primary:
+      description: "Global mid-latitudes (16km resolution)"
+      grid_name: "global.0p16"
+      bounds: [-15, 52.5, -180, 180]
+      resolution: 0.16
+      priority: 2
+      geographic_selection:
+        regions: ["great_lakes", "global_fallback"]
+        bounds: [-90, 90, -180, 180]  # Global coverage
+        backup_grid: "global.0p25"
+        
+    global_fallback:
+      description: "Global interpolated (25km resolution)"
+      grid_name: "global.0p25"
+      bounds: [-90, 90, -180, 180]
+      resolution: 0.25
+      priority: 3
+      geographic_selection:
+        regions: ["global"]
+        bounds: [-90, 90, -180, 180]
+        backup_grid: null  # No backup - this IS the backup
 
-# PRESERVED: Data Source Methods (keep existing)
-data_source_methods:
-  noaa_only:
-    display_name: "NOAA APIs Only"
-    description: "Use NDBC, CO-OPS, and GFS Wave data"
-    sensors:
-      wind: false
-      pressure: false
-      temperature: false
-    advantages:
-      - "Most comprehensive offshore data"
-      - "Proven API reliability"
-      - "No local sensor requirements"
-    requirements:
-      - "Internet connection only"
-    
-  station_supplement:
-    display_name: "Station Supplement"
-    description: "Supplement NOAA data with station sensors"
-    sensors:
-      wind: true
-      pressure: true
-      temperature: true
-    advantages:
-      - "Enhanced local accuracy"
-      - "Fill coverage gaps"
-      - "Cross-validation capability"
-    requirements:
-      - "Internet connection"
-      - "Local weather station"
-    
-  hybrid_integration:
-    display_name: "Hybrid Integration"
-    description: "Intelligent fusion of marine and local data"
-    sensors:
-      wind: true
-      pressure: true
-      temperature: true
-    advantages:
-      - "Best possible accuracy"
-      - "Redundant data sources"
-      - "Advanced quality control"
-    requirements:
-      - "Internet connection"
-      - "Multiple data sources"
-
-# PRESERVED: Quality Control Parameters
-quality_control:
-  max_data_age_hours: 6        # Operational requirement for fresh data
-  pressure_variance_threshold: 5.0  # hPa - flag if stations disagree more
-  consistency_check_required: true
-
-# PRESERVED: Coverage Thresholds for Field Adequacy Assessment
-coverage_thresholds:
-  critical_field_coverage: 1.0      # Must have ALL critical fields
-  recommended_field_coverage: 0.75  # Should have 75%+ of recommended
-  minimum_overall_coverage: 0.8     # 80% of total required fields
-
-# PRESERVED: Field Priority Rankings for Recommendations
-field_priorities:
-  surf_priority:
-    1: wave_height
-    2: wave_period  
-    3: wind_speed
-    4: wind_direction
-    5: wave_direction
+  # Grid selection configuration
+  grid_selection:
+    method: "geographic_priority"
+    fallback_enabled: true
+    default_grid: "global.0p25"
   
-  fishing_priority:
-    1: barometric_pressure
-    2: tide_predictions
-    3: current_water_level
-    4: wind_speed
-    5: sea_surface_temp
+  # API schedule and timing
+  schedule:
+    model_runs: [0, 6, 12, 18]  # UTC hours
+    forecast_hours: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
+    data_availability_delay: 180  # minutes after model run
+    update_frequency: 21600  # 6 hours in seconds
+  
+  # Error handling for GFS Wave API
+  error_handling:
+    max_retries: 3
+    timeout_seconds: 30
+    backoff_multiplier: 2
+    max_backoff_seconds: 300
+    retry_on_http_codes: [500, 502, 503, 504, 429]
+  
+  # Quality control for GFS Wave data
+  quality_control:
+    max_data_age_hours: 6
+    wave_height_max: 30.0  # meters
+    wave_period_max: 30.0  # seconds
+    wind_speed_max: 100.0  # m/s
+  
+  # All GFS Wave field mappings
+  field_mappings:
+    # Essential wave parameters (HIGH priority)
+    wave_height:
+      grib_parameter: "HTSGW"
+      database_field: "wave_height"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 1
+      description: "Significant height of combined wind waves and swell"
+      
+    wave_period:
+      grib_parameter: "PERPW"
+      database_field: "wave_period"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 1
+      description: "Mean period of combined wind waves and swell"
+      
+    wave_direction:
+      grib_parameter: "DIRPW"
+      database_field: "wave_direction"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 1
+      description: "Direction of combined wind waves and swell"
+      
+    # Essential wind parameters (HIGH priority)
+    wind_speed:
+      grib_parameter: "WIND"
+      database_field: "wind_speed"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 1
+      description: "Wind speed at 10 meters"
+      
+    wind_direction:
+      grib_parameter: "WDIR"
+      database_field: "wind_direction"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 1
+      description: "Wind direction at 10 meters"
+      
+    # Primary swell components (HIGH priority)
+    swell_1_height:
+      grib_parameter: "SWELL:1"
+      database_field: "swell_1_height"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 1
+      description: "Significant wave height of first swell partition"
+      
+    swell_1_period:
+      grib_parameter: "SWPER:1"
+      database_field: "swell_1_period"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 1
+      description: "Mean wave period of first swell partition"
+      
+    swell_1_direction:
+      grib_parameter: "SWDIR:1"
+      database_field: "swell_1_direction"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 1
+      description: "Mean wave direction of first swell partition"
+      
+    # Wind wave components (MEDIUM priority)
+    wind_wave_height:
+      grib_parameter: "WVHGT"
+      database_field: "wind_wave_height"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 2
+      description: "Significant height of wind waves"
+      
+    wind_wave_period:
+      grib_parameter: "WVPER"
+      database_field: "wind_wave_period"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 2
+      description: "Mean period of wind waves"
+      
+    wind_wave_direction:
+      grib_parameter: "WVDIR"
+      database_field: "wind_wave_direction"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 2
+      description: "Direction of wind waves"
+      
+    # Secondary swell components (MEDIUM priority)
+    swell_2_height:
+      grib_parameter: "SWELL:2"
+      database_field: "swell_2_height"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 2
+      description: "Significant wave height of second swell partition"
+      
+    swell_2_period:
+      grib_parameter: "SWPER:2"
+      database_field: "swell_2_period"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 2
+      description: "Mean wave period of second swell partition"
+      
+    swell_2_direction:
+      grib_parameter: "SWDIR:2"
+      database_field: "swell_2_direction"
+      database_type: "REAL"
+      unit_conversion_required: false
+      forecast_priority: 2
+      description: "Mean wave direction of second swell partition"
+      
+    # Wind components for calculations (LOW priority)
+    wind_u:
+      grib_parameter: "UGRD"
+      database_field: "wind_u"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 3
+      description: "U-component of wind"
+      
+    wind_v:
+      grib_parameter: "VGRD"
+      database_field: "wind_v"
+      database_type: "REAL"
+      unit_conversion_required: true
+      forecast_priority: 3
+      description: "V-component of wind"
 
-# PRESERVED: Required Fields for Surf & Fishing Forecasting
-required_fields:
-  surf_forecasting:
-    critical:
-      - wave_height              # Primary surf indicator
-      - wave_period               # Wave quality determination
-      - wind_speed                # Surface conditions
-      - wind_direction            # Onshore/offshore assessment
-    
-    recommended:
-      - wave_direction            # Swell direction for spot-specific forecasts
-      - swell_1_height            # Primary swell component
-      - swell_1_period            # Primary swell period
-      - swell_1_direction         # Primary swell direction
-      - sea_surface_temp          # Seasonal surf quality factors
-      - barometric_pressure       # Weather pattern stability
-      - current_water_level       # Beach access, rip current assessment
+# =============================================================================
+# BATHYMETRY DATA SOURCE - Future data source placeholder
+# =============================================================================
+bathymetry_data:
+  # Placeholder for future bathymetry API configuration
+  # Will be added when bathymetry integration is implemented
+  description: "Placeholder for future bathymetry data integration"
+  enabled: false
 
-  fishing_forecasting:
-    critical:
-      - barometric_pressure       # Primary fishing activity indicator
-      - current_water_level       # Real-time tide information
-      - tide_predictions          # Future fishing time planning
-    
-    recommended:
-      - wind_speed               # Surface conditions affect fishing
-      - wind_direction           # Fishing spot accessibility
-      - sea_surface_temp         # Species activity indicator
-      - coastal_water_temp       # Seasonal fishing patterns
-
-# PRESERVED: Fish Categories for Forecasting
+# =============================================================================
+# FISH CATEGORIES - User-configurable species targeting
+# =============================================================================
 fish_categories:
   freshwater_sport:
     display_name: "Freshwater Sport Fish"
@@ -363,7 +269,7 @@ fish_categories:
   saltwater_inshore:
     display_name: "Saltwater Inshore"
     species: ["Redfish", "Snook", "Flounder", "Spotted Sea Trout"]
-    pressure_preference: "stable_high"
+    pressure_preference: "falling"
     tide_relevance: true
     
   saltwater_offshore:
@@ -378,10 +284,12 @@ fish_categories:
     pressure_preference: "stable_high"
     tide_relevance: true
 
-# PRESERVED: Surf Quality Scoring Parameters
+# =============================================================================
+# SCORING CRITERIA - User-tunable forecast scoring thresholds
+# =============================================================================
 surf_scoring:
   wave_height_scoring:
-    # Score multipliers based on wave height (feet)
+    # Score multipliers based on wave height (feet) - Users can tune these
     0-1: 0.1     # Flat conditions
     1-3: 0.6     # Small surf
     3-6: 1.0     # Good surf
@@ -411,7 +319,6 @@ surf_scoring:
     15-20: 0.4   # Strong wind
     20+: 0.1     # Dangerous conditions
 
-# PRESERVED: Fishing Quality Scoring Parameters
 fishing_scoring:
   pressure_trend_scoring:
     rising_fast: 0.3      # Fish shut down
@@ -437,119 +344,17 @@ fishing_scoring:
     dusk: 1.0            # Prime feeding time
     night: 0.7           # Species dependent
 
-# PRESERVED: Multi-Source Data Fusion Parameters
-fusion_parameters:
-  atmospheric_fusion:
-    distance_weight_enabled: true
-    quality_confidence_enabled: true
-    temporal_consistency_check: true
-    
-    weights:
-      primary_source: 0.6
-      secondary_source: 0.3
-      tertiary_source: 0.1
-      
-    confidence_factors:
-      single_source: 0.7
-      two_sources: 0.9
-      three_plus_sources: 1.0
-
-# PRESERVED: Station Distance Analysis Parameters
-distance_analysis:
-  wave_data_distance_quality:
-    excellent: [0, 25]      # 0-25 miles: excellent correlation
-    good: [25, 50]          # 25-50 miles: good correlation
-    fair: [50, 100]         # 50-100 miles: fair correlation
-    poor: [100, 999]        # 100+ miles: poor correlation
-    
-  atmospheric_data_distance_quality:
-    excellent: [0, 50]      # 0-50 miles: excellent correlation
-    good: [50, 100]         # 50-100 miles: good correlation
-    fair: [100, 200]        # 100-200 miles: fair correlation
-    poor: [200, 999]        # 200+ miles: poor correlation
-    
-  local_station_value:
-    extremely_valuable: [0, 1]    # 0-1 mile: local microclimate
-    good_backup: [1, 5]           # 1-5 miles: good backup data
-    pressure_trends_only: [5, 15] # 5-15 miles: pressure trends only
-
-# PRESERVED: User Experience Configuration
-user_experience:
-  default_forecast_periods: 8      # Number of forecast periods to show
-  forecast_interval_hours: 3       # Hours between forecast periods
-  rating_system: "5_star"          # 1-5 star rating system
-  condition_descriptions: true     # Include text descriptions
-  confidence_indicators: true      # Show forecast confidence levels
-
-database_schema:
-  marine_forecast_surf_data:
-    name: "marine_forecast_surf_data"
-    fields:
-      # Standard WeeWX fields
-      dateTime: "INTEGER NOT NULL"
-      usUnits: "INTEGER NOT NULL"
-      
-      # Spot identification and timing
-      spot_id: "VARCHAR(50) NOT NULL"
-      forecast_time: "INTEGER NOT NULL"
-      generated_time: "INTEGER NOT NULL"
-      
-      # NOAA/GFS Wave data (from parameters section)
-      wave_height: "REAL"                    # Combined wave height
-      wave_period: "REAL"                    # Combined wave period
-      wave_direction: "REAL"                 # Combined wave direction
-      wind_speed: "REAL"                     # Wind speed
-      wind_direction: "REAL"                 # Wind direction
-      swell_1_height: "REAL"                 # Primary swell height (matches parameters)
-      swell_1_period: "REAL"                 # Primary swell period (matches parameters)
-      swell_1_direction: "REAL"              # Primary swell direction (matches parameters)
-      
-      # Our calculated fields (what the code actually inserts)
-      wave_height_min: "REAL"                # Calculated minimum wave height
-      wave_height_max: "REAL"                # Calculated maximum wave height
-      wave_height_range: "TEXT"              # Text description of wave range
-      wind_condition: "TEXT"                 # Calculated wind condition (offshore/onshore/etc)
-      quality_rating: "INTEGER"              # Our 1-5 surf quality rating
-      quality_stars: "TEXT"                  # Star representation (★★★★☆)
-      quality_text: "TEXT"                   # Text quality description
-      conditions_description: "TEXT"         # Detailed conditions text
-      confidence: "REAL"                     # Forecast confidence (0-1)
-      
-      # General conditions summary
-      conditions_text: "TEXT"                # Used by code for general conditions
-  
-  marine_forecast_fishing_data:
-    name: "marine_forecast_fishing_data"
-    fields:
-      # Standard WeeWX fields
-      dateTime: "INTEGER NOT NULL"
-      usUnits: "INTEGER NOT NULL"
-      
-      # Spot identification and timing
-      spot_id: "VARCHAR(50) NOT NULL"
-      forecast_date: "INTEGER NOT NULL"
-      period_name: "VARCHAR(50) NOT NULL"
-      period_start_hour: "INTEGER"
-      period_end_hour: "INTEGER"
-      generated_time: "INTEGER NOT NULL"
-      
-      # Pressure analysis (our calculations from NOAA data)
-      pressure_trend: "TEXT"                 # rising/falling/stable
-      pressure_change: "REAL"                # 3-hour pressure change
-      pressure_score: "INTEGER"              # Our pressure rating
-      
-      # Tide analysis (our calculations from NOAA data)
-      tide_stage: "TEXT"                     # high/low/rising/falling
-      tide_flow: "TEXT"                      # incoming/outgoing/slack
-      tide_score: "INTEGER"                  # Our tide rating
-      
-      # Species and activity analysis (our calculations)
-      species_activity: "TEXT"               # Activity level description
-      activity_rating: "INTEGER"             # Our activity rating
-      best_species_json: "TEXT"              # JSON list of target species
-      conditions_text: "TEXT"                # Overall conditions text
-      overall_score: "INTEGER"               # Combined fishing score
-      confidence: "REAL"                     # Forecast confidence (0-1)
-      
-      # General conditions summary
-      conditions_text: "TEXT"                # Used by code for overall conditions
+# =============================================================================
+# REORGANIZATION SUMMARY
+# =============================================================================
+# ORGANIZED BY DATA SOURCE:
+# 1. noaa_gfs_wave - All GFS Wave data (grids + selection + fields + errors + QC)
+# 2. bathymetry_data - Future data source placeholder  
+# 3. fish_categories - User species configuration
+# 4. scoring_criteria - User-tunable thresholds
+#
+# HARDCODED IN CODE (not in YAML):
+# - Phase I integration methods (dependency requirement)
+# - Unit conversion factors (never change)
+# - Database schema for calculated fields
+# - Method names and internal logic structure
