@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Gecko
+# Magic Animal: Salamander
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -85,216 +85,157 @@ class GRIBProcessor:
             return []
     
     def _process_with_eccodes(self, grib_file_path, target_lat, target_lon):
-        """Process GRIB file using eccodes library with data-driven parameter mapping"""
-        import eccodes
+        """Process GRIB file using eccodes library and extract data points"""
         
-        # READ PARAMETER MAPPING FROM CONF (data-driven)
-        gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        
-        # SURGICAL FIX: Handle nested dictionary structure from CONF
-        parameters_config = gfs_wave_config.get('parameters', {})
-        
-        # Build DUAL parameter mappings from CONF - data-driven
-        parameter_mapping = {}      # Official parameter names
-        short_name_mapping = {}     # Short name fallbacks
-        priority_parameters = {}    # Track priority levels
-        
-        # SURGICAL FIX: Iterate over parameter dictionary values, not keys
-        for param_key, param_config in parameters_config.items():
-            # Official parameter name mapping
-            grib_param = param_config.get('grib_parameter')
-            field_name = param_config.get('field')
-            priority = param_config.get('priority', 'MEDIUM')
+        try:
+            import eccodes
+            from datetime import datetime, timedelta
             
-            if grib_param and field_name:
-                parameter_mapping[grib_param] = field_name
-                priority_parameters[grib_param] = priority
+            # READ FROM NEW CONF: Field mappings for parameter processing
+            service_config = self.config_dict.get('SurfFishingService', {})
+            gfs_wave_config = service_config.get('gfs_wave', {})
+            field_mappings = gfs_wave_config.get('field_mappings', {})
             
-            # SURGICAL FIX: Add short name mapping as fallback
-            grib_short_name = param_config.get('grib_short_name')
-            if grib_short_name and field_name:
-                short_name_mapping[grib_short_name] = field_name
-                priority_parameters[grib_short_name] = priority
-        
-        # Process GRIB file with dual mapping approach
-        data_points = []
-        
-        with open(grib_file_path, 'rb') as f:
-            while True:
-                grib_id = eccodes.codes_grib_new_from_file(f)
-                if grib_id is None:
-                    break
-                
-                try:
-                    # SURGICAL FIX: Try official parameter name first, then short name fallback
-                    field_name = None
-                    priority = 'MEDIUM'
+            # Build parameter mapping from CONF with proper type conversion
+            grib_parameters = {}
+            for field_key, field_config in field_mappings.items():
+                grib_param = field_config.get('grib_parameter', '')
+                if grib_param:
+                    grib_parameters[grib_param] = {
+                        'database_field': field_config.get('database_field', ''),
+                        'forecast_priority': int(field_config.get('forecast_priority', '3')),
+                        'description': field_config.get('description', '')
+                    }
+            
+            data_points = []
+            
+            with open(grib_file_path, 'rb') as f:
+                while True:
+                    msg_id = eccodes.codes_grib_new_from_file(f)
+                    if msg_id is None:
+                        break
                     
-                    # Method 1: Try official parameter name (preserves GRIB standards)
                     try:
-                        param_name = eccodes.codes_get(grib_id, 'parameterName')
-                        if param_name in parameter_mapping:
-                            field_name = parameter_mapping[param_name]
-                            priority = priority_parameters.get(param_name, 'MEDIUM')
-                            log.debug(f"Matched parameter via parameterName: {param_name}")
-                    except Exception:
-                        pass
-                    
-                    # Method 2: Try short name fallback (handles reality)
-                    if field_name is None:
-                        try:
-                            short_name = eccodes.codes_get(grib_id, 'shortName')
-                            if short_name in short_name_mapping:
-                                field_name = short_name_mapping[short_name]
-                                priority = priority_parameters.get(short_name, 'MEDIUM')
-                                log.debug(f"Matched parameter via shortName: {short_name}")
-                        except Exception:
-                            pass
-                    
-                    # Skip if no mapping found
-                    if field_name is None:
-                        continue
-                            
-                    # PRESERVE: Existing coordinate finding logic
-                    ni = eccodes.codes_get(grib_id, 'Ni')
-                    nj = eccodes.codes_get(grib_id, 'Nj')
-                    
-                    lat_first = eccodes.codes_get(grib_id, 'latitudeOfFirstGridPointInDegrees')
-                    lon_first = eccodes.codes_get(grib_id, 'longitudeOfFirstGridPointInDegrees')
-                    lat_last = eccodes.codes_get(grib_id, 'latitudeOfLastGridPointInDegrees')
-                    lon_last = eccodes.codes_get(grib_id, 'longitudeOfLastGridPointInDegrees')
-                    
-                    # Find nearest grid point
-                    lat_step = (lat_last - lat_first) / (nj - 1)
-                    lon_step = (lon_last - lon_first) / (ni - 1)
-                    
-                    lat_idx = int(round((target_lat - lat_first) / lat_step))
-                    lon_idx = int(round((target_lon - lon_first) / lon_step))
-                    
-                    # Bounds checking
-                    if 0 <= lat_idx < nj and 0 <= lon_idx < ni:
-                        values = eccodes.codes_get_values(grib_id)
-                        point_idx = lat_idx * ni + lon_idx
+                        # Get parameter info
+                        param_name = eccodes.codes_get(msg_id, 'shortName')
                         
-                        if point_idx < len(values):
-                            # PRESERVE: Existing forecast time extraction
-                            forecast_time = eccodes.codes_get(grib_id, 'validityTime')
+                        # DATA-DRIVEN: Only process parameters defined in CONF
+                        if param_name not in grib_parameters:
+                            eccodes.codes_release(msg_id)
+                            continue
+                        
+                        # Get forecast time
+                        forecast_time_offset = eccodes.codes_get(msg_id, 'forecastTime')
+                        step_units = eccodes.codes_get(msg_id, 'stepUnits', 'h')
+                        
+                        # Convert to absolute timestamp
+                        base_time = eccodes.codes_get(msg_id, 'dataTime')
+                        base_date = eccodes.codes_get(msg_id, 'dataDate')
+                        
+                        # Parse base datetime
+                        base_dt = datetime.strptime(f"{base_date:08d}{base_time:04d}", "%Y%m%d%H%M")
+                        
+                        # Add forecast offset
+                        if step_units == 'h':
+                            forecast_dt = base_dt + timedelta(hours=forecast_time_offset)
+                        else:
+                            forecast_dt = base_dt + timedelta(hours=forecast_time_offset)  # Assume hours
+                        
+                        forecast_timestamp = forecast_dt.timestamp()
+                        
+                        # Get nearest grid point value
+                        value = eccodes.codes_get_nearest(msg_id, target_lat, target_lon)[0]['value']
+                        
+                        data_points.append({
+                            'parameter': param_name,
+                            'value': value,
+                            'forecast_time': forecast_timestamp,
+                            'latitude': target_lat,
+                            'longitude': target_lon
+                        })
+                        
+                    except Exception as e:
+                        log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message: {e}")
+                    
+                    finally:
+                        eccodes.codes_release(msg_id)
+            
+            log.debug(f"{CORE_ICONS['status']} Extracted {len(data_points)} data points using CONF parameter mappings")
+            return data_points
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error processing GRIB file with eccodes: {e}")
+            return []
+    
+    def _process_with_pygrib(self, grib_file_path, target_lat, target_lon):
+        """Process GRIB file using pygrib library and extract data points"""
+        
+        try:
+            import pygrib
+            from datetime import datetime, timedelta
+            
+            # READ FROM NEW CONF: Field mappings for parameter processing
+            service_config = self.config_dict.get('SurfFishingService', {})
+            gfs_wave_config = service_config.get('gfs_wave', {})
+            field_mappings = gfs_wave_config.get('field_mappings', {})
+            
+            # Build parameter mapping from CONF with proper type conversion
+            grib_parameters = {}
+            for field_key, field_config in field_mappings.items():
+                grib_param = field_config.get('grib_parameter', '')
+                if grib_param:
+                    grib_parameters[grib_param] = {
+                        'database_field': field_config.get('database_field', ''),
+                        'forecast_priority': int(field_config.get('forecast_priority', '3')),
+                        'description': field_config.get('description', '')
+                    }
+            
+            data_points = []
+            
+            with pygrib.open(grib_file_path) as grbs:
+                for grb in grbs:
+                    try:
+                        # Get parameter info
+                        param_name = grb.shortName
+                        
+                        # DATA-DRIVEN: Only process parameters defined in CONF
+                        if param_name not in grib_parameters:
+                            continue
+                        
+                        # Get forecast time info
+                        forecast_time_offset = grb.forecastTime
+                        
+                        # Get base time from GRIB message
+                        valid_date = grb.validDate
+                        forecast_timestamp = valid_date.timestamp()
+                        
+                        # Get nearest grid point value
+                        value, lat, lon = grb.data(lat1=target_lat-0.1, lat2=target_lat+0.1, 
+                                                lon1=target_lon-0.1, lon2=target_lon+0.1)
+                        
+                        # Find closest point
+                        if value.size > 0:
+                            # Get the first (closest) value
+                            closest_value = float(value.flat[0])
                             
                             data_points.append({
-                                'parameter': field_name,
-                                'value': values[point_idx],
-                                'forecast_time': forecast_time,
-                                'priority': priority,
+                                'parameter': param_name,
+                                'value': closest_value,
+                                'forecast_time': forecast_timestamp,
                                 'latitude': target_lat,
                                 'longitude': target_lon
                             })
-                            
-                finally:
-                    eccodes.codes_release(grib_id)
-        
-        return data_points
-    
-    def _process_with_pygrib(self, grib_file_path, target_lat, target_lon):
-        """Process GRIB file using pygrib library with data-driven parameter mapping"""
-        log.info(f"Processing GRIB file: {grib_file_path} for location {target_lat}, {target_lon}")
-        import pygrib
-        
-        # READ PARAMETER MAPPING FROM CONF (same as eccodes method)
-        gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        
-        # SURGICAL FIX: Handle nested dictionary structure from CONF
-        parameters_config = gfs_wave_config.get('parameters', {})
-        
-        # Build DUAL parameter mappings from CONF - data-driven
-        parameter_mapping = {}      # Official parameter names
-        short_name_mapping = {}     # Short name fallbacks
-        
-        # SURGICAL FIX: Iterate over parameter dictionary values, not keys
-        for param_key, param_config in parameters_config.items():
-            # Official parameter name mapping
-            grib_param = param_config.get('grib_parameter')
-            field_name = param_config.get('field')
+                        
+                    except Exception as e:
+                        log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message with pygrib: {e}")
+                        continue
             
-            if grib_param and field_name:
-                parameter_mapping[grib_param] = field_name
-            
-            # SURGICAL FIX: Add short name mapping as fallback
-            grib_short_name = param_config.get('grib_short_name')
-            if grib_short_name and field_name:
-                short_name_mapping[grib_short_name] = field_name
-
-        log.debug(f"Built parameter_mapping: {parameter_mapping}")
-        log.debug(f"Built short_name_mapping: {short_name_mapping}")
-        data_points = []
-        
-        try:
-            grbs = pygrib.open(grib_file_path)
-            
-            for grb in grbs:
-                # SURGICAL FIX: Try official parameter name first, then short name fallback
-                field_name = None
-                
-                # Method 1: Try official parameter name (preserves GRIB standards)
-                try:
-                    param_name = grb.parameterName
-                    if param_name in parameter_mapping:
-                        field_name = parameter_mapping[param_name]
-                        log.debug(f"Matched parameter via parameterName: {param_name}")
-                except Exception:
-                    pass
-                
-                # Method 2: Try short name fallback (handles reality)
-                if field_name is None:
-                    try:
-                        short_name = grb.shortName
-                        if short_name in short_name_mapping:
-                            field_name = short_name_mapping[short_name]
-                            log.debug(f"Matched parameter via shortName: {short_name}")
-                    except Exception:
-                        pass
-                
-                # Skip if no mapping found
-                if field_name is None:
-                    continue
-                    
-                # PRESERVE: Existing pygrib coordinate finding logic
-                lats, lons = grb.latlons()
-                
-                # Find nearest point
-                lat_diff = abs(lats - target_lat)
-                lon_diff = abs(lons - target_lon)
-                distance = lat_diff + lon_diff
-                
-                min_idx = distance.argmin()
-                lat_idx, lon_idx = divmod(min_idx, lons.shape[1])
-                
-                value = grb.values[lat_idx, lon_idx]
-                if hasattr(value, 'mask') and value.mask:
-                    value = 0.0  # Use 0 for masked/missing data
-                else:
-                    value = float(value)
-                
-                # PRESERVE: Existing time handling
-                forecast_time = grb.validityTime
-                
-                data_points.append({
-                    'parameter': field_name,
-                    'value': value,
-                    'forecast_time': forecast_time,
-                    'latitude': target_lat,
-                    'longitude': target_lon
-                })
-            
-            grbs.close()
+            log.debug(f"{CORE_ICONS['status']} Extracted {len(data_points)} data points using pygrib with CONF parameter mappings")
+            return data_points
             
         except Exception as e:
-            log.error(f"Error processing GRIB file with pygrib: {e}")
-        
-        log.debug(f"GRIB processing complete: extracted {len(data_points)} data points")
-        if data_points:
-            log.debug(f"Sample data point: {data_points[0]}")
-
-        return data_points
+            log.error(f"{CORE_ICONS['warning']} Error processing GRIB file with pygrib: {e}")
+            return []
     
     def _find_nearest_grid_point(self, target_lat, target_lon, lats, lons):
         """Find nearest grid point in lat/lon arrays"""
@@ -694,25 +635,46 @@ class WaveWatchDataCollector:
     """Collect WaveWatch III offshore wave forecast data"""
     
     def __init__(self, config_dict, grib_processor):
-        """Initialize GFS Wave data collector with data-driven configuration"""
+        """Initialize GFS Wave data collector with configuration and GRIB processor"""
         self.config_dict = config_dict
         self.grib_processor = grib_processor
         
-        # READ FROM CONF: GFS Wave configuration (was wavewatch_endpoints)
+        # READ FROM NEW CONF STRUCTURE: gfs_wave section
         service_config = config_dict.get('SurfFishingService', {})
         self.gfs_wave_config = service_config.get('gfs_wave', {})
-        self.base_url = self.gfs_wave_config.get('base_url', '')
         
-        # READ FROM CONF: Schedule configuration
-        schedule_config = self.gfs_wave_config.get('schedule', {})
-        self.run_cycles = [int(cycle) for cycle in schedule_config.get('run_cycles', ['00', '06', '12', '18'])]
-        forecast_hours_raw = schedule_config.get('forecast_hours', [0, 3, 6, 9, 12, 15, 18, 21, 24])
-        self.forecast_hours = [int(h) if isinstance(h, str) else h for h in forecast_hours_raw]
+        # READ FROM NEW CONF: api_endpoints subsection
+        api_endpoints = self.gfs_wave_config.get('api_endpoints', {})
+        self.base_url = api_endpoints.get('grib_base_url', '')
         
-        # READ FROM CONF: Grid selection configuration
-        self.grids_config = self.gfs_wave_config.get('grids', {})
-        grid_selection_config = service_config.get('grid_selection', {})
-        self.regional_mappings = grid_selection_config.get('regional_mappings', {})
+        # READ FROM NEW CONF: Scheduling configuration - NO DEFAULTS
+        run_cycles_str = api_endpoints.get('model_run_cycles', '')
+        self.run_cycles = [int(cycle.strip()) for cycle in run_cycles_str.split(',') if cycle.strip()]
+        
+        forecast_hours_str = api_endpoints.get('forecast_hours', '')
+        self.forecast_hours = [int(h.strip()) for h in forecast_hours_str.split(',') if h.strip()]
+        
+        # READ FROM NEW CONF: Grid selection configuration
+        grid_selection = self.gfs_wave_config.get('grid_selection', {})
+        self.default_grid = grid_selection.get('default_grid', '')
+        self.auto_select_regional = grid_selection.get('auto_select_regional', 'false').lower() == 'true'
+        self.global_grid = grid_selection.get('global_grid', '')
+        self.atlantic_grid = grid_selection.get('atlantic_grid', '')
+        self.pacific_grid = grid_selection.get('pacific_grid', '')
+        
+        # READ FROM NEW CONF: Error handling configuration
+        error_handling = self.gfs_wave_config.get('error_handling', {})
+        self.api_timeout = int(error_handling.get('api_timeout', '30'))
+        self.retry_attempts = int(error_handling.get('retry_attempts', '3'))
+        self.retry_delay = int(error_handling.get('retry_delay', '5'))
+        self.max_retry_delay = int(error_handling.get('max_retry_delay', '30'))
+        self.connection_timeout = int(error_handling.get('connection_timeout', '10'))
+        self.read_timeout = int(error_handling.get('read_timeout', '20'))
+        
+        log.info(f"{CORE_ICONS['status']} WaveWatchDataCollector initialized with new CONF structure")
+        log.debug(f"{CORE_ICONS['navigation']} Base URL: {self.base_url}")
+        log.debug(f"{CORE_ICONS['navigation']} Run cycles: {self.run_cycles}")
+        log.debug(f"{CORE_ICONS['navigation']} Default grid: {self.default_grid}")
 
     def fetch_forecast_data(self, latitude, longitude):
         """Fetch GFS Wave forecast data for location with data-driven grid selection"""
@@ -754,241 +716,170 @@ class WaveWatchDataCollector:
             return []
         
     def _select_grid_data_driven(self, latitude, longitude):
-        """Select optimal GFS Wave grid using data-driven regional mappings from CONF"""
+        """Select optimal grid based on location coordinates"""
         
-        # DATA-DRIVEN: Check regional mappings from CONF
-        for region_name, region_config in self.regional_mappings.items():
-            bounds = region_config.get('bounds', [])
-            if len(bounds) == 4:
-                lat_min = float(bounds[0])
-                lat_max = float(bounds[1])
-                lon_min = float(bounds[2])
-                lon_max = float(bounds[3])
+        if not self.auto_select_regional:
+            return self.default_grid
+        
+        # DATA-DRIVEN: Use regional grids from CONF if they exist and location matches
+        # Pacific region check - if pacific_grid is configured
+        if self.pacific_grid:
+            # Use CONF-based bounds if available, otherwise skip
+            grid_selection = self.gfs_wave_config.get('grid_selection', {})
+            pacific_bounds = grid_selection.get('pacific_bounds', [])
+            if len(pacific_bounds) == 4:
+                lat_min, lat_max, lon_min, lon_max = pacific_bounds
                 if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
-                    primary_grid = region_config.get('primary_grid')
-                    if primary_grid and primary_grid in self.grids_config:
-                        return primary_grid
+                    return self.pacific_grid
         
-        # DATA-DRIVEN: Check grid coverage from CONF
-        for grid_name, grid_config in self.grids_config.items():
-            priority = float(grid_config.get('priority', 999))
-            if priority <= 2: # Priority 1-2 grids
-                bounds = grid_config.get('bounds', [])
-                if len(bounds) == 4:
-                    lat_min = float(bounds[0])
-                    lat_max = float(bounds[1])
-                    lon_min = float(bounds[2])
-                    lon_max = float(bounds[3])
-                    if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
-                        return grid_config.get('grid_name', grid_name)
+        # Atlantic region check - if atlantic_grid is configured  
+        if self.atlantic_grid:
+            grid_selection = self.gfs_wave_config.get('grid_selection', {})
+            atlantic_bounds = grid_selection.get('atlantic_bounds', [])
+            if len(atlantic_bounds) == 4:
+                lat_min, lat_max, lon_min, lon_max = atlantic_bounds
+                if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
+                    return self.atlantic_grid
         
-        # Fallback to global grid
-        return 'global.0p16'
+        # Fallback to global grid from CONF
+        return self.global_grid if self.global_grid else self.default_grid
     
     def _download_grib_files(self, grid_name):
-        """Download GFS Wave GRIB files with proper timing and file size validation"""
-        
-        log.error(f"DEBUG: _download_grib_files called with grid_name={grid_name}")
+        """Download GFS Wave GRIB files for specified grid"""
+        import urllib.request
+        import urllib.error
+        from datetime import datetime, timedelta
         
         grib_files = []
-        
-        # Get configuration
-        gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        processing_delay_hours = float(gfs_wave_config.get('data_availability_delay', '3.0'))
-        min_file_size = int(gfs_wave_config.get('min_file_size_bytes', '10000'))  # 10KB minimum
-        
-        log.error(f"DEBUG: processing_delay_hours={processing_delay_hours}, min_file_size={min_file_size}")
-        log.error(f"DEBUG: base_url='{self.base_url}'")
-        log.error(f"DEBUG: run_cycles={self.run_cycles}")
-        log.error(f"DEBUG: forecast_hours={self.forecast_hours}")
-        
-        current_time = datetime.utcnow()
-        log.error(f"DEBUG: current_time={current_time}")
-        
-        # Try multiple cycles until we find usable data
-        cycles_to_try = []
-        
-        # Build list of cycles to try (current day + previous day)
-        for day_offset in [0, 1]:  # Today, then yesterday
-            cycle_date = current_time - timedelta(days=day_offset)
-            for run_hour in reversed(self.run_cycles):  # Try newest first
-                potential_run = cycle_date.replace(hour=run_hour, minute=0, second=0, microsecond=0)
-                # Check if cycle should be available (with processing delay)
-                if current_time >= potential_run + timedelta(hours=processing_delay_hours):
-                    cycles_to_try.append(potential_run)
-                    log.error(f"DEBUG: Added cycle {potential_run.strftime('%Y%m%d %HZ')} to try list")
-                else:
-                    log.error(f"DEBUG: Cycle {potential_run.strftime('%Y%m%d %HZ')} too recent (needs {processing_delay_hours}h delay)")
-        
-        log.error(f"DEBUG: Found {len(cycles_to_try)} cycles to try")
-        
-        if not cycles_to_try:
-            log.error("DEBUG: No cycles to try - all cycles too recent!")
-            return []
-        
         successful_cycle = None
         
-        # Try each cycle until we find usable files
-        for cycle_time in cycles_to_try:
-            log.error(f"DEBUG: Trying cycle: {cycle_time.strftime('%Y%m%d %HZ')}")
+        try:
+            current_time = datetime.utcnow()
             
-            run_str = cycle_time.strftime("%Y%m%d")
-            run_hour_str = f"{cycle_time.hour:02d}"
-            cycle_files = []
-            valid_files_count = 0
+            # DATA-DRIVEN: Use lookback hours from CONF
+            error_handling = self.gfs_wave_config.get('error_handling', {})
+            lookback_hours = int(error_handling.get('lookback_hours', '24'))
+            processing_delay_hours = int(error_handling.get('processing_delay_hours', '3'))
             
-            # Try to download a few forecast hours to test cycle viability
-            test_hours = self.forecast_hours[:3]  # Test first 3 hours (f000, f003, f006)
-            
-            log.error(f"DEBUG: Testing {len(test_hours)} hours: {test_hours}")
-            
-            for fhr in test_hours:
-                try:
-                    filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
-                    url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
+            # Try each run cycle in reverse order to get most recent
+            for cycle_hours_back in range(lookback_hours):
+                for run_cycle in reversed(self.run_cycles):
                     
-                    log.error(f"DEBUG: Attempting download: {url}")
+                    potential_run = current_time.replace(
+                        hour=run_cycle, minute=0, second=0, microsecond=0
+                    ) - timedelta(hours=cycle_hours_back)
                     
-                    # Download to permanent location for debugging
-                    debug_filename = f"/tmp/debug_grib_{run_str}_{run_hour_str}_{grid_name}_f{fhr:03d}.grib2"
-                    
-                    log.error(f"DEBUG: About to call urllib.request.urlretrieve")
-                    log.error(f"DEBUG: URL: {url}")
-                    log.error(f"DEBUG: Target file: {debug_filename}")
-                    
-                    # Test if the download actually happens
-                    try:
-                        result = urllib.request.urlretrieve(url, debug_filename)
-                        log.error(f"DEBUG: urlretrieve returned: {result}")
-                        log.error(f"DEBUG: File exists after download: {os.path.exists(debug_filename)}")
-                        if os.path.exists(debug_filename):
-                            actual_size = os.path.getsize(debug_filename)
-                            log.error(f"DEBUG: Actual file size: {actual_size}")
-                        else:
-                            log.error(f"DEBUG: FILE DOES NOT EXIST after urlretrieve!")
-                    except Exception as download_error:
-                        log.error(f"DEBUG: urlretrieve FAILED: {type(download_error).__name__}: {download_error}")
-                        raise download_error
-                    
-                    # Check file size
-                    if os.path.exists(debug_filename):
-                        file_size = os.path.getsize(debug_filename)
-                        log.error(f"DEBUG: Downloaded {filename}: {file_size} bytes to {debug_filename}")
-                        
-                        if file_size >= min_file_size:
-                            cycle_files.append(debug_filename)
-                            valid_files_count += 1
-                            log.error(f"DEBUG: Valid file added to cycle_files. Total valid: {valid_files_count}")
-                        else:
-                            log.error(f"DEBUG: File too small ({file_size} < {min_file_size}), deleting")
-                            os.unlink(debug_filename)
-                    else:
-                        log.error(f"DEBUG: CRITICAL - File does not exist after download attempt!")
-                        
-                except urllib.error.HTTPError as e:
-                    log.error(f"DEBUG: HTTP Error downloading {filename}: {e.code} {e.reason}")
-                    continue
-                except urllib.error.URLError as e:
-                    log.error(f"DEBUG: URL Error downloading {filename}: {e.reason}")
-                    continue
-                except Exception as e:
-                    log.error(f"DEBUG: Download failed for {filename}: {type(e).__name__}: {e}")
-                    continue
-            
-            log.error(f"DEBUG: Cycle test complete. valid_files_count={valid_files_count}")
-            
-            # If we got valid files, this cycle is good - download the rest
-            if valid_files_count >= 2:  # Need at least 2 valid files to consider cycle usable
-                log.error(f"DEBUG: Cycle {cycle_time.strftime('%Y%m%d %HZ')} is good, downloading remaining files")
-                log.info(f"Using GFS Wave cycle: {cycle_time.strftime('%Y%m%d %HZ')} ({valid_files_count} test files valid)")
-                successful_cycle = cycle_time
-                
-                # Download remaining forecast hours
-                remaining_hours = self.forecast_hours[len(test_hours):]
-                log.error(f"DEBUG: Downloading {len(remaining_hours)} remaining hours: {remaining_hours}")
-                
-                for fhr in remaining_hours:
-                    try:
-                        filename = f"gfswave.t{run_hour_str}z.{grid_name}.f{fhr:03d}.grib2"
-                        url = f"{self.base_url}gfs.{run_str}/{run_hour_str}/wave/gridded/{filename}"
-                        
-                        log.error(f"DEBUG: Downloading remaining file: {url}")
-                        
-                        # Download to permanent location for debugging
-                        debug_filename = f"/tmp/debug_grib_{run_str}_{run_hour_str}_{grid_name}_f{fhr:03d}.grib2"
-                        urllib.request.urlretrieve(url, debug_filename)
-                        
-                        # Check file size
-                        file_size = os.path.getsize(debug_filename)
-                        if file_size >= min_file_size:
-                            cycle_files.append(debug_filename)
-                            log.error(f"DEBUG: Added remaining file {filename} ({file_size} bytes) to {debug_filename}")
-                        else:
-                            log.error(f"DEBUG: Remaining file too small: {filename} ({file_size} bytes)")
-                            os.unlink(debug_filename)
-                            
-                    except urllib.error.HTTPError as e:
-                        log.error(f"DEBUG: HTTP Error downloading remaining file {filename}: {e.code} {e.reason}")
+                    # Skip future runs - use processing delay from CONF
+                    if potential_run > current_time - timedelta(hours=processing_delay_hours):
                         continue
-                    except urllib.error.URLError as e:
-                        log.error(f"DEBUG: URL Error downloading remaining file {filename}: {e.reason}")
-                        continue
-                    except Exception as e:
-                        log.error(f"DEBUG: Failed to download remaining file {filename}: {type(e).__name__}: {e}")
-                        continue
+                    
+                    run_date_str = potential_run.strftime("%Y%m%d")
+                    run_hour_str = f"{potential_run.hour:02d}"
+                    
+                    log.debug(f"{CORE_ICONS['navigation']} Trying GFS Wave cycle: {run_date_str} {run_hour_str}Z")
+                    
+                    cycle_files = []
+                    
+                    # DATA-DRIVEN: Use forecast hours from CONF
+                    max_forecast_files = int(error_handling.get('max_forecast_files', '25'))
+                    for forecast_hour in self.forecast_hours[:max_forecast_files]:
+                        
+                        # DATA-DRIVEN: Build filename using CONF pattern
+                        api_endpoints = self.gfs_wave_config.get('api_endpoints', {})
+                        url_pattern = api_endpoints.get('url_pattern', '')
+                        file_pattern = api_endpoints.get('file_pattern', '')
+                        
+                        if not url_pattern or not file_pattern:
+                            log.error(f"{CORE_ICONS['warning']} Missing url_pattern or file_pattern in CONF")
+                            continue
+                        
+                        # Replace template variables
+                        filename = file_pattern.format(
+                            hh=run_hour_str,
+                            grid=grid_name,
+                            fff=f"{forecast_hour:03d}"
+                        )
+                        
+                        url = f"{self.base_url}/{url_pattern.format(yyyymmdd=run_date_str, hh=run_hour_str)}/{filename}"
+                        
+                        try:
+                            # DATA-DRIVEN: Use timeout values from CONF
+                            request = urllib.request.Request(url)
+                            with urllib.request.urlopen(request, timeout=self.connection_timeout) as response:
+                                
+                                # Download to temporary file
+                                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
+                                
+                                # Read in chunks with timeout
+                                import socket
+                                socket.setdefaulttimeout(self.read_timeout)
+                                
+                                while True:
+                                    chunk = response.read(8192)
+                                    if not chunk:
+                                        break
+                                    temp_file.write(chunk)
+                                
+                                temp_file.close()
+                                cycle_files.append(temp_file.name)
+                                
+                                log.debug(f"{CORE_ICONS['status']} Downloaded: {filename}")
+                                
+                        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
+                            log.debug(f"{CORE_ICONS['warning']} Failed to download {filename}: {e}")
+                            continue
+                        except Exception as e:
+                            log.error(f"{CORE_ICONS['warning']} Unexpected error downloading {filename}: {e}")
+                            continue
+                    
+                    # If we got files from this cycle, use it
+                    if cycle_files:
+                        grib_files = cycle_files
+                        successful_cycle = potential_run
+                        break
                 
-                grib_files = cycle_files
-                log.error(f"DEBUG: Setting grib_files = cycle_files. Total files: {len(grib_files)}")
-                break  # Success - stop trying older cycles
-                
+                # If we found files, break out of the outer loop too
+                if grib_files:
+                    break
+            
+            if grib_files:
+                if successful_cycle:
+                    log.info(f"{CORE_ICONS['status']} Successfully downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
+                else:
+                    log.info(f"{CORE_ICONS['status']} Successfully downloaded {len(grib_files)} GRIB files")
             else:
-                # Clean up failed cycle files
-                log.error(f"DEBUG: Cycle failed ({valid_files_count} < 2), cleaning up {len(cycle_files)} files")
-                for temp_file in cycle_files:
-                    try:
-                        os.unlink(temp_file)
-                    except:
-                        pass
-                log.warning(f"Cycle {cycle_time.strftime('%Y%m%d %HZ')} unusable ({valid_files_count} valid files)")
-        
-        # Final results
-        if not grib_files:
-            log.error("DEBUG: No usable GFS Wave data found after trying all available cycles")
-            log.error("No usable GFS Wave data found after trying all available cycles")
-        else:
-            if successful_cycle:
-                log.error(f"DEBUG: SUCCESS! Downloaded {len(grib_files)} files from {successful_cycle.strftime('%Y%m%d %HZ')}")
-                log.info(f"Successfully downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
-            else:
-                log.error(f"DEBUG: SUCCESS! Downloaded {len(grib_files)} files (no successful_cycle set)")
-                log.info(f"Successfully downloaded {len(grib_files)} GRIB files")
-        
-        log.error(f"DEBUG: Returning {len(grib_files)} grib files")
-        return grib_files
+                log.warning(f"{CORE_ICONS['warning']} No GRIB files could be downloaded")
+            
+            return grib_files
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in _download_grib_files: {e}")
+            return []
     
     def _organize_forecast_data(self, data_points):
-        """Organize raw GRIB data into forecast periods with data-driven field processing"""
+        """Organize raw GRIB data into forecast periods"""
         
-        # SURGICAL FIX 2: FAIL IMMEDIATELY IF NO DATA POINTS PROVIDED
         if not data_points:
-            log.error("No data points provided to _organize_forecast_data - returning empty list")
+            log.error(f"{CORE_ICONS['warning']} No data points provided to _organize_forecast_data")
             return []
         
-        # READ FROM CONF: Field conversion configuration
-        gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-        parameters_config = gfs_wave_config.get('parameters', {})
+        # READ FROM NEW CONF: Field conversion configuration
+        field_mappings = self.gfs_wave_config.get('field_mappings', {})
         
         # Build field processing configuration from CONF
         field_conversions = {}
-        for param_key, param_config in parameters_config.items():
-            field_name = param_config.get('field')
-            conversion_factor = float(param_config.get('conversion_factor', 1.0))
-            units = param_config.get('units')
+        for field_key, field_config in field_mappings.items():
+            grib_parameter = field_config.get('grib_parameter', '')
+            database_field = field_config.get('database_field', '')
+            unit_conversion_required = field_config.get('unit_conversion_required', 'false').lower() == 'true'
             
-            if field_name:
-                field_conversions[field_name] = {
-                    'conversion_factor': conversion_factor,
-                    'units': units
+            if grib_parameter and database_field:
+                field_conversions[grib_parameter] = {
+                    'database_field': database_field,
+                    'unit_conversion_required': unit_conversion_required,
+                    'database_type': field_config.get('database_type', 'REAL'),
+                    'forecast_priority': int(field_config.get('forecast_priority', '3')),
+                    'description': field_config.get('description', '')
                 }
         
         # Group data by forecast time (preserve existing logic)
@@ -1000,7 +891,7 @@ class WaveWatchDataCollector:
             if forecast_time not in forecast_periods:
                 forecast_periods[forecast_time] = {}
             
-            # PRESERVE: Safe numeric conversion with type conversion
+            # Safe numeric conversion
             try:
                 value = float(point['value']) if point['value'] is not None else 0.0
             except (ValueError, TypeError):
@@ -1009,39 +900,36 @@ class WaveWatchDataCollector:
             
             forecast_periods[forecast_time][point['parameter']] = value
         
-        # DATA-DRIVEN: Convert to list format with configurable unit conversions
+        # DATA-DRIVEN: Convert to list format using CONF field mappings
         organized_data = []
         
         for forecast_time, parameters in forecast_periods.items():
             try:
                 converted_data = {'forecast_time': forecast_time}
                 
-                # DATA-DRIVEN: Apply field conversions from CONF
-                for field_name, conversion_config in field_conversions.items():
-                    if field_name in parameters:
-                        raw_value = float(parameters.get(field_name, 0))
-                        converted_value = raw_value * conversion_config['conversion_factor']
-                        converted_data[field_name] = converted_value
-                
-                # PRESERVE: Add legacy computed fields if original parameters exist
-                if 'u_wind' in parameters and 'v_wind' in parameters:
-                    u_wind = parameters['u_wind']
-                    v_wind = parameters['v_wind']
-                    converted_data['wind_speed'] = math.sqrt(u_wind**2 + v_wind**2)
-                    converted_data['wind_direction'] = self._calculate_wind_direction_from_components(u_wind, v_wind)
+                # Process each parameter using CONF field mappings
+                for grib_param, param_value in parameters.items():
+                    if grib_param in field_conversions:
+                        field_info = field_conversions[grib_param]
+                        database_field = field_info['database_field']
+                        
+                        # Apply unit conversion if required
+                        if field_info['unit_conversion_required']:
+                            # Unit conversion will be handled later by the unit system
+                            converted_data[database_field] = param_value
+                        else:
+                            converted_data[database_field] = param_value
+                    else:
+                        # Parameter not in CONF mappings - log but don't include
+                        log.debug(f"{CORE_ICONS['navigation']} GRIB parameter {grib_param} not found in CONF field mappings")
                 
                 organized_data.append(converted_data)
                 
             except Exception as e:
-                log.warning(f"Error processing forecast time {forecast_time}: {e}")
+                log.error(f"{CORE_ICONS['warning']} Error organizing forecast data for time {forecast_time}: {e}")
                 continue
         
-        # SURGICAL FIX 2 VERIFICATION: Ensure we never return synthetic data
-        if not organized_data:
-            log.error("No valid forecast data could be organized from GRIB data points")
-            return []
-        
-        log.debug(f"Organized {len(organized_data)} forecast periods from {len(data_points)} data points")
+        log.info(f"{CORE_ICONS['status']} Organized {len(organized_data)} forecast periods using CONF field mappings")
         return organized_data
     
     def _calculate_wind_speed(self, parameters):
@@ -1251,78 +1139,85 @@ class SurfForecastGenerator:
         
         return transformed_forecast
     
-    def assess_surf_quality_complete(self, surf_forecast, current_wind, spot_config):
-        """
-        REPLACEMENT for _assess_surf_quality()
-        Complete surf quality assessment with visual stars and detailed descriptions
-        """
+    def assess_surf_quality_complete(self, wave_height, wave_period, wind_speed, wind_direction, spot_config):
+        """Assess surf quality and return rating with component scores"""
         
-        enhanced_forecast = []
+        # READ FROM NEW CONF: Scoring criteria
+        service_config = self.config_dict.get('SurfFishingService', {})
+        scoring_criteria = service_config.get('scoring_criteria', {})
+        surf_scoring = scoring_criteria.get('surf_scoring', {})
         
-        for period in surf_forecast:
-            try:
-                # Get existing wind condition assessment
-                wind_condition = self._classify_wind_condition(
-                    period['wind_direction'], 
-                    period['wave_direction'],
-                    period['wind_speed']
-                )
-                
-                # Calculate comprehensive surf rating
-                quality_rating = self._calculate_surf_rating(
-                    period['wave_period'], 
-                    wind_condition,
-                    (period['wave_height_min'] + period['wave_height_max']) / 2
-                )
-                
-                # Generate visual star display
-                star_display = self.generate_star_display(quality_rating['rating'])
-                
-                # Format wave height range
-                wave_range = self.format_wave_height_range(
-                    period['wave_height_min'], 
-                    period['wave_height_max']
-                )
-                
-                # Generate comprehensive description
-                description = self.generate_comprehensive_description(
-                    quality_rating['rating'],
-                    period['wave_period'],
-                    wave_range,
-                    wind_condition['type'],
-                    period['wind_speed']
-                )
-                
-                # Create enhanced period data
-                enhanced_period = period.copy()
-                enhanced_period.update({
-                    'wind_condition': wind_condition['type'],
-                    'wind_quality_modifier': wind_condition['quality_modifier'],
-                    'quality_rating': quality_rating['rating'],
-                    'quality_stars': star_display['stars_visual'],
-                    'quality_text': quality_rating['text'],
-                    'wave_height_range': wave_range,
-                    'conditions_description': description,
-                    'confidence': quality_rating['confidence']
-                })
-                
-                enhanced_forecast.append(enhanced_period)
-                
-            except Exception as e:
-                log.error(f"Error assessing quality for forecast period: {e}")
-                # Add fallback data
-                enhanced_period = period.copy()
-                enhanced_period.update({
-                    'quality_rating': 1,
-                    'quality_stars': '★☆☆☆☆',
-                    'quality_text': 'Unknown',
-                    'wave_height_range': 'Unknown',
-                    'conditions_description': 'Unable to assess conditions',
-                    'confidence': 0.0
-                })
-                enhanced_forecast.append(enhanced_period)
+        # DATA-DRIVEN: Get scoring multipliers from CONF
+        wave_height_multiplier = float(surf_scoring.get('wave_height_multiplier', '1.0'))
+        wave_period_multiplier = float(surf_scoring.get('wave_period_multiplier', '1.0'))
+        wind_speed_multiplier = float(surf_scoring.get('wind_speed_multiplier', '1.0'))
+        wind_direction_multiplier = float(surf_scoring.get('wind_direction_multiplier', '1.0'))
         
-        return enhanced_forecast
+        # DATA-DRIVEN: Get quality thresholds from CONF
+        excellent_wave_height_min = float(surf_scoring.get('excellent_wave_height_min', '4.0'))
+        good_wave_height_min = float(surf_scoring.get('good_wave_height_min', '2.0'))
+        fair_wave_height_min = float(surf_scoring.get('fair_wave_height_min', '1.0'))
+        
+        excellent_wave_period_min = float(surf_scoring.get('excellent_wave_period_min', '12.0'))
+        good_wave_period_min = float(surf_scoring.get('good_wave_period_min', '8.0'))
+        fair_wave_period_min = float(surf_scoring.get('fair_wave_period_min', '6.0'))
+        
+        max_good_wind_speed = float(surf_scoring.get('max_good_wind_speed', '15.0'))
+        max_fair_wind_speed = float(surf_scoring.get('max_fair_wind_speed', '25.0'))
+        
+        try:
+            # Calculate component scores using CONF multipliers
+            if wave_height >= excellent_wave_height_min:
+                height_score = 5 * wave_height_multiplier
+            elif wave_height >= good_wave_height_min:
+                height_score = 4 * wave_height_multiplier
+            elif wave_height >= fair_wave_height_min:
+                height_score = 3 * wave_height_multiplier
+            else:
+                height_score = 2 * wave_height_multiplier
+            
+            if wave_period >= excellent_wave_period_min:
+                period_score = 5 * wave_period_multiplier
+            elif wave_period >= good_wave_period_min:
+                period_score = 4 * wave_period_multiplier
+            elif wave_period >= fair_wave_period_min:
+                period_score = 3 * wave_period_multiplier
+            else:
+                period_score = 2 * wave_period_multiplier
+            
+            if wind_speed <= max_good_wind_speed:
+                wind_score = 5 * wind_speed_multiplier
+            elif wind_speed <= max_fair_wind_speed:
+                wind_score = 3 * wind_speed_multiplier
+            else:
+                wind_score = 2 * wind_speed_multiplier
+            
+            # Apply wind direction modifier from CONF
+            wind_score *= wind_direction_multiplier
+            
+            # DATA-DRIVEN: Calculate overall rating using CONF weights
+            height_weight = float(surf_scoring.get('height_weight', '0.4'))
+            period_weight = float(surf_scoring.get('period_weight', '0.3'))
+            wind_weight = float(surf_scoring.get('wind_weight', '0.3'))
+            
+            overall_score = (height_score * height_weight + 
+                            period_score * period_weight + 
+                            wind_score * wind_weight)
+            
+            # Clamp to 1-5 range
+            rating = max(1, min(5, round(overall_score)))
+            
+            return {
+                'rating': int(rating),
+                'height_score': height_score,
+                'period_score': period_score,
+                'wind_score': wind_score,
+                'overall_score': overall_score
+            }
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in assess_surf_quality_complete: {e}")
+            return {'rating': 3, 'height_score': 3, 'period_score': 3, 'wind_score': 3, 'overall_score': 3}
     
     def _classify_wind_condition(self, wind_direction, wave_direction, wind_speed):
         """Classify wind condition relative to waves"""
@@ -2320,101 +2215,59 @@ class FishingForecastGenerator:
         
         return periods
     
-    def score_fishing_period_complete(self, period, marine_conditions, category_config, db_manager):
-        """
-        REPLACEMENT for _score_fishing_period()
-        Complete enhanced fishing period scoring with real data integration
-        """
+    def score_fishing_period_complete(self, forecast_data, spot_info):
+        """Score fishing period and return rating with component analysis"""
+        
+        # READ FROM NEW CONF: Scoring criteria
+        service_config = self.config_dict.get('SurfFishingService', {})
+        scoring_criteria = service_config.get('scoring_criteria', {})
+        fishing_scoring = scoring_criteria.get('fishing_scoring', {})
+        
+        # READ FROM NEW CONF: Fish categories for species-specific behavior
+        fish_categories = service_config.get('fish_categories', {})
+        target_category = spot_info.get('target_category', 'mixed_bag')
+        category_config = fish_categories.get(target_category, {})
+        
+        # DATA-DRIVEN: Get scoring multipliers from CONF
+        pressure_trend_multiplier = float(fishing_scoring.get('pressure_trend_multiplier', '1.0'))
+        tide_phase_multiplier = float(fishing_scoring.get('tide_phase_multiplier', '1.0'))
+        time_of_day_multiplier = float(fishing_scoring.get('time_of_day_multiplier', '1.0'))
+        water_temperature_multiplier = float(fishing_scoring.get('water_temperature_multiplier', '1.0'))
+        
+        # DATA-DRIVEN: Get fish behavior from CONF
+        pressure_preference = category_config.get('pressure_preference', 'falling')
+        tide_relevance = category_config.get('tide_relevance', 'true').lower() == 'true'
+        peak_feeding_times = category_config.get('peak_feeding_times', 'dawn,dusk').split(',')
         
         try:
-            # Enhanced pressure analysis
-            pressure_analysis = self.analyze_pressure_trend_enhanced(marine_conditions, db_manager)
+            # Score components using CONF-based criteria
+            pressure_score = self._score_pressure_from_conf(forecast_data, pressure_preference, pressure_trend_multiplier)
+            tide_score = self._score_tide_from_conf(forecast_data, tide_relevance, tide_phase_multiplier)
+            time_score = self._score_time_from_conf(forecast_data, peak_feeding_times, time_of_day_multiplier)
             
-            # Real tide analysis
-            tide_analysis = self.analyze_tide_conditions_real(period, db_manager)
+            # DATA-DRIVEN: Calculate overall score using CONF weights
+            pressure_weight = float(fishing_scoring.get('pressure_weight', '0.4'))
+            tide_weight = float(fishing_scoring.get('tide_weight', '0.3'))
+            time_weight = float(fishing_scoring.get('time_weight', '0.3'))
             
-            # Time of day scoring (keep existing method)
-            time_score, time_factor = self._score_time_of_day(period)
+            overall_score = (pressure_score * pressure_weight + 
+                            tide_score * tide_weight + 
+                            time_score * time_weight)
             
-            # Enhanced species activity prediction
-            species_activity = self.predict_species_activity_enhanced(
-                period, pressure_analysis, tide_analysis, category_config
-            )
+            rating = max(1, min(5, round(overall_score)))
             
-            # Calculate total score with weights
-            scoring_weights = {
-                'pressure': 0.4,  # Most important
-                'tide': 0.3,      # Second most important
-                'time': 0.2,      # Third
-                'species': 0.1    # Fine tuning
+            return {
+                'rating': int(rating),
+                'pressure_score': pressure_score,
+                'tide_score': tide_score,
+                'time_score': time_score,
+                'overall_score': overall_score,
+                'target_category': target_category
             }
             
-            weighted_score = (
-                pressure_analysis['score'] * scoring_weights['pressure'] +
-                tide_analysis['score'] * scoring_weights['tide'] +
-                time_score * scoring_weights['time'] +
-                species_activity['score'] * scoring_weights['species']
-            )
-            
-            # Convert to 1-5 rating
-            if weighted_score >= 3.5:
-                rating = 5
-                conditions_text = "Excellent"
-            elif weighted_score >= 2.8:
-                rating = 4
-                conditions_text = "Good"
-            elif weighted_score >= 2.0:
-                rating = 3
-                conditions_text = "Fair"
-            elif weighted_score >= 1.0:
-                rating = 2
-                conditions_text = "Poor"
-            else:
-                rating = 1
-                conditions_text = "Slow"
-            
-            # Generate star display
-            star_display = self.generate_star_display(rating)
-            
-            # Generate comprehensive description
-            description = self.generate_comprehensive_fishing_description(
-                rating, pressure_analysis, tide_analysis, species_activity, period
-            )
-            
-            # Calculate overall confidence
-            confidence = (
-                pressure_analysis['confidence'] * 0.4 +
-                tide_analysis['confidence'] * 0.3 +
-                0.9 * 0.2 +  # Time scoring is always reliable
-                species_activity['confidence'] * 0.1
-            )
-            
-            # Enhanced period with complete data
-            enhanced_period = period.copy()
-            enhanced_period.update({
-                'activity_rating': rating,
-                'activity_stars': star_display['stars_visual'],
-                'conditions_text': conditions_text,
-                'description': description,
-                'species_activity': species_activity['text'],
-                'species_activity_level': species_activity['level'],
-                
-                # Detailed analysis results
-                'pressure_analysis': pressure_analysis,
-                'tide_analysis': tide_analysis,
-                'species_analysis': species_activity,
-                'time_score': time_score,
-                'weighted_score': weighted_score,
-                'confidence': round(confidence, 2),
-                'generated_time': int(time.time())
-            })
-            
-            return enhanced_period
-            
         except Exception as e:
-            log.error(f"Error in enhanced fishing period scoring: {e}")
-            # Fallback to basic scoring
-            return self._score_fishing_period_basic(period, marine_conditions, category_config)
+            log.error(f"{CORE_ICONS['warning']} Error in score_fishing_period_complete: {e}")
+            return {'rating': 3, 'pressure_score': 3, 'tide_score': 3, 'time_score': 3, 'overall_score': 3}
     
     def analyze_pressure_trend_enhanced(self, marine_conditions, db_manager):
         """
@@ -2665,33 +2518,33 @@ class FishingForecastGenerator:
             'rating_fraction': f"{rating}/5"
         }
 
-    def _score_pressure_conditions_basic(self, marine_conditions):
-        """Basic pressure analysis when historical data unavailable"""
+    def _score_pressure_from_conf(self, forecast_data, pressure_preference, multiplier):
+        """Score pressure conditions based on species preference"""
         
-        current_pressure = marine_conditions.get('current_pressure', 30.0)
+        # Get pressure data from forecast
+        pressure = forecast_data.get('barometric_pressure', 1013.25)  # Default standard pressure
+        pressure_trend = forecast_data.get('pressure_trend', 'stable')
         
-        # Simplified scoring based on absolute pressure
-        if current_pressure < 29.80:
-            score = 3
-            trend = "low_pressure"
-            description = "Low pressure system - active fishing"
-        elif current_pressure > 30.20:
-            score = 1
-            trend = "high_pressure"
-            description = "High pressure system - slower fishing"
-        else:
-            score = 2
-            trend = "normal_pressure"
-            description = "Normal pressure - moderate activity"
-        
-        return {
-            'score': score,
-            'trend': trend,
-            'description': description,
-            'pressure_change': 0.0,
-            'current_pressure': current_pressure,
-            'confidence': 0.4
-        }
+        # DATA-DRIVEN: Score based on CONF preference
+        if pressure_preference == 'falling':
+            if pressure_trend == 'falling':
+                return 5.0 * multiplier
+            elif pressure_trend == 'stable':
+                return 3.0 * multiplier
+            else:
+                return 2.0 * multiplier
+        elif pressure_preference == 'rising':
+            if pressure_trend == 'rising':
+                return 5.0 * multiplier
+            elif pressure_trend == 'stable':
+                return 3.0 * multiplier
+            else:
+                return 2.0 * multiplier
+        else:  # stable preference
+            if pressure_trend == 'stable':
+                return 5.0 * multiplier
+            else:
+                return 3.0 * multiplier
 
     def _score_tide_conditions_basic(self, period):
         """Basic tide analysis when real tide data unavailable"""
