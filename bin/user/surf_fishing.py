@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Chimp
+# Magic Animal: Orangutang
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -965,83 +965,83 @@ class WaveWatchDataCollector:
         log.error(f"DEBUG: Returning {len(grib_files)} grib files")
         return grib_files
     
-def _organize_forecast_data(self, data_points):
-    """Organize raw GRIB data into forecast periods with data-driven field processing"""
-    
-    # SURGICAL FIX 2: FAIL IMMEDIATELY IF NO DATA POINTS PROVIDED
-    if not data_points:
-        log.error("No data points provided to _organize_forecast_data - returning empty list")
-        return []
-    
-    # READ FROM CONF: Field conversion configuration
-    gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
-    parameters_config = gfs_wave_config.get('parameters', {})
-    
-    # Build field processing configuration from CONF
-    field_conversions = {}
-    for param_key, param_config in parameters_config.items():
-        field_name = param_config.get('field')
-        conversion_factor = float(param_config.get('conversion_factor', 1.0))
-        units = param_config.get('units')
+    def _organize_forecast_data(self, data_points):
+        """Organize raw GRIB data into forecast periods with data-driven field processing"""
         
-        if field_name:
-            field_conversions[field_name] = {
-                'conversion_factor': conversion_factor,
-                'units': units
-            }
-    
-    # Group data by forecast time (preserve existing logic)
-    forecast_periods = {}
-    
-    for point in data_points:
-        forecast_time = point['forecast_time']
+        # SURGICAL FIX 2: FAIL IMMEDIATELY IF NO DATA POINTS PROVIDED
+        if not data_points:
+            log.error("No data points provided to _organize_forecast_data - returning empty list")
+            return []
         
-        if forecast_time not in forecast_periods:
-            forecast_periods[forecast_time] = {}
+        # READ FROM CONF: Field conversion configuration
+        gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('gfs_wave', {})
+        parameters_config = gfs_wave_config.get('parameters', {})
         
-        # PRESERVE: Safe numeric conversion with type conversion
-        try:
-            value = float(point['value']) if point['value'] is not None else 0.0
-        except (ValueError, TypeError):
-            log.warning(f"Non-numeric GRIB value for {point['parameter']}: {point['value']}, using 0.0")
-            value = 0.0
+        # Build field processing configuration from CONF
+        field_conversions = {}
+        for param_key, param_config in parameters_config.items():
+            field_name = param_config.get('field')
+            conversion_factor = float(param_config.get('conversion_factor', 1.0))
+            units = param_config.get('units')
+            
+            if field_name:
+                field_conversions[field_name] = {
+                    'conversion_factor': conversion_factor,
+                    'units': units
+                }
         
-        forecast_periods[forecast_time][point['parameter']] = value
-    
-    # DATA-DRIVEN: Convert to list format with configurable unit conversions
-    organized_data = []
-    
-    for forecast_time, parameters in forecast_periods.items():
-        try:
-            converted_data = {'forecast_time': forecast_time}
+        # Group data by forecast time (preserve existing logic)
+        forecast_periods = {}
+        
+        for point in data_points:
+            forecast_time = point['forecast_time']
             
-            # DATA-DRIVEN: Apply field conversions from CONF
-            for field_name, conversion_config in field_conversions.items():
-                if field_name in parameters:
-                    raw_value = float(parameters.get(field_name, 0))
-                    converted_value = raw_value * conversion_config['conversion_factor']
-                    converted_data[field_name] = converted_value
+            if forecast_time not in forecast_periods:
+                forecast_periods[forecast_time] = {}
             
-            # PRESERVE: Add legacy computed fields if original parameters exist
-            if 'u_wind' in parameters and 'v_wind' in parameters:
-                u_wind = parameters['u_wind']
-                v_wind = parameters['v_wind']
-                converted_data['wind_speed'] = math.sqrt(u_wind**2 + v_wind**2)
-                converted_data['wind_direction'] = self._calculate_wind_direction_from_components(u_wind, v_wind)
+            # PRESERVE: Safe numeric conversion with type conversion
+            try:
+                value = float(point['value']) if point['value'] is not None else 0.0
+            except (ValueError, TypeError):
+                log.warning(f"Non-numeric GRIB value for {point['parameter']}: {point['value']}, using 0.0")
+                value = 0.0
             
-            organized_data.append(converted_data)
-            
-        except Exception as e:
-            log.warning(f"Error processing forecast time {forecast_time}: {e}")
-            continue
-    
-    # SURGICAL FIX 2 VERIFICATION: Ensure we never return synthetic data
-    if not organized_data:
-        log.error("No valid forecast data could be organized from GRIB data points")
-        return []
-    
-    log.debug(f"Organized {len(organized_data)} forecast periods from {len(data_points)} data points")
-    return organized_data
+            forecast_periods[forecast_time][point['parameter']] = value
+        
+        # DATA-DRIVEN: Convert to list format with configurable unit conversions
+        organized_data = []
+        
+        for forecast_time, parameters in forecast_periods.items():
+            try:
+                converted_data = {'forecast_time': forecast_time}
+                
+                # DATA-DRIVEN: Apply field conversions from CONF
+                for field_name, conversion_config in field_conversions.items():
+                    if field_name in parameters:
+                        raw_value = float(parameters.get(field_name, 0))
+                        converted_value = raw_value * conversion_config['conversion_factor']
+                        converted_data[field_name] = converted_value
+                
+                # PRESERVE: Add legacy computed fields if original parameters exist
+                if 'u_wind' in parameters and 'v_wind' in parameters:
+                    u_wind = parameters['u_wind']
+                    v_wind = parameters['v_wind']
+                    converted_data['wind_speed'] = math.sqrt(u_wind**2 + v_wind**2)
+                    converted_data['wind_direction'] = self._calculate_wind_direction_from_components(u_wind, v_wind)
+                
+                organized_data.append(converted_data)
+                
+            except Exception as e:
+                log.warning(f"Error processing forecast time {forecast_time}: {e}")
+                continue
+        
+        # SURGICAL FIX 2 VERIFICATION: Ensure we never return synthetic data
+        if not organized_data:
+            log.error("No valid forecast data could be organized from GRIB data points")
+            return []
+        
+        log.debug(f"Organized {len(organized_data)} forecast periods from {len(data_points)} data points")
+        return organized_data
     
     def _calculate_wind_speed(self, parameters):
         """Calculate wind speed from direct WIND parameter or U/V components fallback"""
