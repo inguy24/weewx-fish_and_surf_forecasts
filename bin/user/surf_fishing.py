@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Snapping Turtle
+# Magic Animal: Robin
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -3030,6 +3030,19 @@ class FishingForecastSearchList:
             log.error(f"{CORE_ICONS['warning']} Error in FishingForecastSearchList: {e}")
             return [{'fishing_forecasts': {}, 'fishing_summary': {'status': 'Error loading fishing data'}}]
 
+    def configure_search_lists(self):
+        """Register SearchList extensions for template integration"""
+        try:
+            # This should be handled by the installer, but verify it's working
+            import weewx.cheetahgenerator
+            if hasattr(weewx.cheetahgenerator.SearchList, 'extensible'):
+                if 'user.surf_fishing.FishingForecastSearchList' not in weewx.cheetahgenerator.SearchList.extensible:
+                    weewx.cheetahgenerator.SearchList.extensible.append(
+                        'user.surf_fishing.FishingForecastSearchList'
+                    )
+            log.info(f"{CORE_ICONS['status']} SearchList extensions registered")
+        except Exception as e:
+            log.warning(f"{CORE_ICONS['warning']} SearchList registration issue: {e}")
 
 
 class SurfFishingService(StdService):
@@ -3066,7 +3079,7 @@ class SurfFishingService(StdService):
         # EXISTING CODE: Initialize forecast generators with CONF-based config - PRESERVED EXACTLY
         # NOTE: These will use _get_db_manager() when they need database access
         self.surf_generator = SurfForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
-        self.fishing_generator = FishingForecastGenerator(config_dict)
+        self.fishing_generator = FishingForecastGenerator(config_dict, self.engine)
         
         # EXISTING CODE: Set up forecast timing from CONF - PRESERVED EXACTLY
         self.forecast_interval = int(self.service_config.get('forecast_interval', '21600'))  # 6 hours default
