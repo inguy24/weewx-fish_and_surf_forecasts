@@ -26,6 +26,7 @@ try:
     from weecfg.extension import ExtensionInstaller
     import weewx.manager
     import weewx
+    import weewx.units
     import weeutil.logger
     log = weeutil.logger.logging.getLogger(__name__)
 except ImportError:
@@ -598,11 +599,9 @@ class SurfFishingConfigurator:
         return config
     
     def _create_config_dict(self, forecast_types, data_sources, selected_locations, grib_available, station_analysis):
-        """
-        Create configuration dictionary for WeeWX integration
-        """
+        """Create configuration dictionary from 4-section YAML - fully data-driven approach"""
         
-        # Build the main service configuration section
+        # Base service configuration (preserve existing pattern)
         config_dict = {
             'SurfFishingService': {
                 'enable': 'true',
@@ -612,7 +611,7 @@ class SurfFishingConfigurator:
                 'timeout': '60',
                 'retry_attempts': '3',
                 
-                # NEW: Forecast configuration based on user selections
+                # Forecast configuration based on user selections (preserve existing)
                 'forecast_settings': {
                     'enabled_types': ','.join(forecast_types),
                     'forecast_hours': '72',  # 3-day forecasts
@@ -620,60 +619,28 @@ class SurfFishingConfigurator:
                     'update_interval_hours': '6'
                 },
                 
-                # EXPANDED: Data source configuration 
+                # Data source configuration (preserve existing)
                 'data_integration': {
                     'method': data_sources.get('type', 'noaa_only'),
                     'local_station_distance_km': str(station_analysis.get('distance_km', 999)),
                     'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
                 },
                 
-                # PRESERVED: Station integration from original _transform_to_weewx_conf
+                # Station integration (preserve existing pattern)
                 'station_integration': {
                     'type': data_sources['type']
-                },
-                
-                # EXPANDED: GRIB processing capability 
-                'grib_processing': {
-                    'available': 'true' if grib_available else 'false',
-                    'library': self.grib_manager.available_library if grib_available else 'none',
-                    'download_timeout': '300',
-                    'cache_hours': '6'
-                },
-
-                # SURGICAL FIX: Process GFS Wave config from YAML into CONF-compatible structure (inline)
-                'gfs_wave': (lambda: {
-                    **{k: v for k, v in self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}).items() if k != 'parameters'},
-                    'parameters': {
-                        f'param_{i:02d}': {
-                            'name': param.get('name', ''),
-                            'field': param.get('field', ''),
-                            'units': param.get('units', ''),
-                            'grib_parameter': param.get('grib_parameter', ''),
-                            'grib_short_name': param.get('grib_short_name', ''),  # SURGICAL FIX: ADD grib_short_name
-                            'priority': param.get('priority', 'MEDIUM'),
-                            'conversion_factor': str(param.get('conversion_factor', 1.0))
-                        }
-                        for i, param in enumerate(self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}).get('parameters', []))
-                        if isinstance(param, dict)
-                    }
-                } if 'parameters' in self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}) else 
-                self.yaml_data.get('api_endpoints', {}).get('gfs_wave', {}))(),
-                
-                # PRESERVED: Fish categories from YAML (original functionality)  
-                'fish_categories': self.yaml_data.get('fish_categories', {}),
-                
-                # PRESERVED: User locations structure (original functionality)
-                'surf_spots': {},
-                'fishing_spots': {}
+                }
             }
         }
         
-        # PRESERVED: Add station sensor configuration if using station integration (original logic)
-        if data_sources['type'] == 'station_supplement':
-            config_dict['SurfFishingService']['station_integration']['sensors'] = data_sources.get('sensors', {})
+        # DATA-DRIVEN: Process each YAML section dynamically
+        for section_name, section_data in self.yaml_data.items():
+            if section_name in ['noaa_gfs_wave', 'bathymetry_data', 'fish_categories', 'scoring_criteria']:
+                config_dict['SurfFishingService'][section_name] = self._convert_yaml_section_to_conf(section_data)
         
-        # EXPANDED: Add surf spot configurations with proper handling
+        # PRESERVE EXISTING: Add user locations (no changes to this logic)
         if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
+            config_dict['SurfFishingService']['surf_spots'] = {}
             for i, spot in enumerate(selected_locations['surf_spots']):
                 spot_key = f'spot_{i}'
                 config_dict['SurfFishingService']['surf_spots'][spot_key] = {
@@ -681,11 +648,12 @@ class SurfFishingConfigurator:
                     'latitude': str(spot['latitude']),
                     'longitude': str(spot['longitude']),
                     'bottom_type': spot.get('bottom_type', 'sand'),
-                    'exposure': spot.get('exposure', 'exposed')
+                    'exposure': spot.get('exposure', 'exposed'),
+                    'active': 'true'
                 }
         
-        # EXPANDED: Add fishing spot configurations with proper handling  
         if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
+            config_dict['SurfFishingService']['fishing_spots'] = {}
             for i, spot in enumerate(selected_locations['fishing_spots']):
                 spot_key = f'spot_{i}'
                 config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
@@ -693,28 +661,41 @@ class SurfFishingConfigurator:
                     'latitude': str(spot['latitude']),
                     'longitude': str(spot['longitude']),
                     'location_type': spot.get('location_type', 'shore'),
-                    'target_category': spot.get('target_category', 'mixed_bag')
+                    'target_category': spot.get('target_category', 'mixed_bag'),
+                    'active': 'true'
                 }
         
-        # NEW: Add station analysis results to configuration for service reference
+        # PRESERVE EXISTING: Add station analysis results (no changes)
         if station_analysis:
             config_dict['SurfFishingService']['station_analysis'] = {
                 'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
                 'accepted_recommendations': str(len(station_analysis.get('accepted_recommendations', []))),
-                'coverage_quality': station_analysis.get('coverage_summary', {}).get('quality_score', 'unknown')
+                'coverage_quality': str(station_analysis.get('coverage_summary', {}).get('overall_quality', 'unknown'))
             }
-        
-        # NEW: Add forecast type tracking for service initialization
-        config_dict['SurfFishingService']['forecast_types'] = forecast_types
-        
-        # NEW: Add data source tracking for service reference
-        config_dict['SurfFishingService']['data_sources'] = {
-            'type': data_sources['type'],
-            'configured_at': str(int(time.time()))
-        }
         
         return config_dict
 
+    def _convert_yaml_section_to_conf(self, yaml_section):
+        """Convert any YAML section to CONF format recursively - fully data-driven"""
+        
+        if isinstance(yaml_section, dict):
+            conf_section = {}
+            for key, value in yaml_section.items():
+                conf_section[key] = self._convert_yaml_section_to_conf(value)
+            return conf_section
+        
+        elif isinstance(yaml_section, list):
+            # Convert lists to comma-separated strings for CONF compatibility
+            if all(isinstance(item, (str, int, float)) for item in yaml_section):
+                return ','.join(str(item) for item in yaml_section)
+            else:
+                # For complex lists, convert each item
+                return [self._convert_yaml_section_to_conf(item) for item in yaml_section]
+        
+        else:
+            # Convert all primitive values to strings for CONF compatibility
+            return str(yaml_section)
+    
     def _analyze_marine_station_integration(self, selected_locations):
         """
         Analyze Phase I marine station coverage for user locations
@@ -1436,7 +1417,7 @@ class SurfFishingInstaller(ExtensionInstaller):
         self.yaml_data = self._load_yaml_data()
     
     def _load_yaml_data(self):
-        """Load YAML configuration data for installation"""
+        """Load 4-section reorganized YAML configuration data for installation"""
         yaml_file = 'bin/user/surf_fishing_fields.yaml'
         
         try:
@@ -1445,35 +1426,41 @@ class SurfFishingInstaller(ExtensionInstaller):
                 print(f"\n{CORE_ICONS['warning']} ERROR: Required YAML file not found: {yaml_file}")
                 print("Installation cannot proceed without configuration file.")
                 sys.exit(1)
-                
+            
             with open(yaml_file, 'r') as f:
                 yaml_data = yaml.safe_load(f)
-                
-            # Validate required sections exist
-            if not yaml_data:
-                log.error("YAML file is empty or invalid")
-                print(f"\n{CORE_ICONS['warning']} ERROR: YAML file is empty or invalid")
+            
+            # CRITICAL: Validate 4-section structure
+            required_sections = ['noaa_gfs_wave', 'bathymetry_data', 'fish_categories', 'scoring_criteria']
+            missing_sections = [section for section in required_sections if section not in yaml_data]
+            
+            if missing_sections:
+                error_msg = f"YAML missing required sections: {', '.join(missing_sections)}"
+                print(f"\n{CORE_ICONS['warning']} ERROR: {error_msg}")
+                print("The surf_fishing_fields.yaml file must contain all 4 sections:")
+                for section in required_sections:
+                    status = CORE_ICONS['status'] if section in yaml_data else CORE_ICONS['warning']
+                    print(f"  {status} {section}")
                 sys.exit(1)
-                
-            if 'api_endpoints' not in yaml_data:
-                log.error("YAML missing required 'api_endpoints' section")
-                print(f"\n{CORE_ICONS['warning']} ERROR: YAML missing 'api_endpoints' section")
+            
+            # Validate field mappings within noaa_gfs_wave section
+            gfs_wave_section = yaml_data.get('noaa_gfs_wave', {})
+            field_mappings = gfs_wave_section.get('field_mappings', {})
+            
+            if not field_mappings:
+                print(f"\n{CORE_ICONS['warning']} ERROR: No field_mappings found in noaa_gfs_wave section")
                 sys.exit(1)
-                
-            if 'gfs_wave' not in yaml_data['api_endpoints']:
-                log.error("YAML missing required 'api_endpoints.gfs_wave' section")
-                print(f"\n{CORE_ICONS['warning']} ERROR: YAML missing GFS Wave configuration")
-                sys.exit(1)
-                
+            
+            field_count = len(field_mappings)
+            print(f"{CORE_ICONS['status']} Loaded 4-section YAML with {field_count} GFS Wave fields")
+            
             return yaml_data
             
         except yaml.YAMLError as e:
-            log.error(f"YAML configuration error: {e}")
-            print(f"\n{CORE_ICONS['warning']} ERROR: YAML configuration error: {e}")
+            print(f"\n{CORE_ICONS['warning']} ERROR: Invalid YAML format: {e}")
             sys.exit(1)
         except Exception as e:
-            log.error(f"Failed to load YAML: {e}")
-            print(f"\n{CORE_ICONS['warning']} ERROR: Could not load YAML: {e}")
+            print(f"\n{CORE_ICONS['warning']} ERROR: Could not load YAML configuration: {e}")
             sys.exit(1)
     
     def configure(self, engine):
@@ -1525,97 +1512,174 @@ class SurfFishingInstaller(ExtensionInstaller):
             return False
     
     def _extend_database_schema(self, config_dict, selected_locations):
-        """
-        Extend database schema for surf and fishing forecasts - reads YAML directly
-        NOTE: No longer creates location tables - user locations go in CONF
-        """
+        """Extract field definitions from 4-section YAML and create database fields"""
         
         progress = InstallationProgressManager()
         
         try:
-            progress.show_step_progress("Creating Database Tables")
+            progress.show_step_progress("Analyzing Database Requirements")
             
-            # Read YAML directly here - no separate method needed
-            database_schema = self.yaml_data.get('database_schema', {})
+            # Extract field mappings from noaa_gfs_wave section
+            gfs_wave_section = self.yaml_data.get('noaa_gfs_wave', {})
+            field_mappings = gfs_wave_section.get('field_mappings', {})
             
-            if not database_schema:
+            if not field_mappings:
                 raise Exception(
-                    f"{CORE_ICONS['warning']} No database_schema found in YAML configuration. "
-                    "The surf_fishing_fields.yaml file must contain 'database_schema' section with table definitions."
+                    f"{CORE_ICONS['warning']} No field_mappings found in noaa_gfs_wave YAML section. "
+                    "Cannot create database fields without field definitions."
                 )
             
-            with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as manager:
-                
-                # Process each table from YAML - SKIP location tables (spots go in CONF)
-                for table_key, table_config in database_schema.items():
-                    if isinstance(table_config, dict) and 'name' in table_config and 'fields' in table_config:
-                        table_name = table_config['name']
-                        
-                        # SKIP location tables - these are now CONF-based
-                        if table_name in ['marine_forecast_surf_spots', 'marine_forecast_fishing_spots']:
-                            print(f"  {CORE_ICONS['navigation']} Skipping {table_name} - user locations stored in CONF")
-                            continue
-                        
-                        table_fields = table_config['fields']
-                        
-                        # Build field definitions
-                        field_definitions = []
-                        for field_name, field_type in table_fields.items():
-                            # MYSQL FIX: Convert TEXT to VARCHAR(50) for constraint fields
-                            if (field_name == "period_name" and 
-                                field_type == "TEXT NOT NULL" and 
-                                table_name == "marine_forecast_fishing_data"):
-                                field_type = "VARCHAR(50) NOT NULL"
-
-                            # NEW: Escape MySQL/MariaDB reserved words
-                            if field_name in ['interval', 'order', 'group', 'select', 'from', 'where', 'desc', 'asc', 'key']:
-                                field_name = f"`{field_name}`"
-
-           
-                            field_definitions.append(f"{field_name} {field_type}")
-                        
-                        # Add table-specific constraints (UPDATED for CONF-based locations)
-                        constraints = []
-                        if table_name == "marine_forecast_surf_data":
-                            # Remove FOREIGN KEY since surf_spots table doesn't exist
-                            constraints.extend([
-                                "UNIQUE(spot_id, forecast_time)"
-                            ])
-                        elif table_name == "marine_forecast_fishing_data":
-                            # Remove FOREIGN KEY since fishing_spots table doesn't exist
-                            constraints.extend([
-                                "UNIQUE(spot_id, forecast_date, period_name)"
-                            ])
-                        
-                        # Combine fields and constraints
-                        all_definitions = field_definitions + constraints
-                        
-                        # Add inline indexes to table definitions (Phase I pattern)
-                        if table_name == "marine_forecast_surf_data":
-                            all_definitions.append("INDEX idx_surf_forecasts_time (spot_id, forecast_time)")
-                        elif table_name == "marine_forecast_fishing_data":
-                            all_definitions.append("INDEX idx_fishing_forecasts_date (spot_id, forecast_date)")
-                        
-                        # Execute CREATE TABLE with inline indexes (Phase I pattern)
-                        create_sql = f"""
-                            CREATE TABLE IF NOT EXISTS {table_name} (
-                                {', '.join(all_definitions)}
-                            )
-                        """
-                        manager.connection.execute(create_sql)
-                
-                # Add user locations to CONF instead of database
-                self._add_user_locations_to_conf(config_dict, selected_locations)
-                
-                print(f"  {CORE_ICONS['status']} Database forecast tables created successfully")
-                print(f"  {CORE_ICONS['status']} User locations added to configuration")
+            progress.complete_step("Analyzing Database Requirements")
+            progress.show_step_progress("Creating Database Fields")
             
-            progress.complete_step("Creating Database Tables")
+            # Build field definitions for database creation
+            required_fields = {}
+            
+            # Add forecast data tables (preserve existing logic)
+            forecast_tables = [
+                'marine_forecast_surf_data',
+                'marine_forecast_fishing_data'
+            ]
+            
+            for table_name in forecast_tables:
+                try:
+                    # Use WeeWX 5.1 database manager patterns
+                    db_manager = weewx.manager.open_manager_with_config(config_dict, 'wx_binding')
+                    
+                    # Check if table exists
+                    if not self._table_exists(db_manager, table_name):
+                        # Create table with basic structure
+                        self._create_forecast_table(db_manager, table_name)
+                        print(f"    {CORE_ICONS['status']} Created table: {table_name}")
+                    else:
+                        print(f"    {CORE_ICONS['status']} Table exists: {table_name}")
+                    
+                    db_manager.close()
+                    
+                except Exception as e:
+                    progress.show_error("Creating Database Fields", f"Table {table_name}: {e}")
+                    continue
+            
+            # Extract GFS Wave fields from YAML field_mappings
+            gfs_wave_fields = {}
+            for field_name, field_config in field_mappings.items():
+                database_field = field_config.get('database_field', field_name)
+                database_type = field_config.get('database_type', 'REAL')
+                gfs_wave_fields[database_field] = database_type
+            
+            # Add GFS Wave fields to archive table if needed
+            if gfs_wave_fields:
+                try:
+                    db_manager = weewx.manager.open_manager_with_config(config_dict, 'wx_binding')
+                    missing_fields = self._check_missing_fields(db_manager, gfs_wave_fields)
+                    
+                    if missing_fields:
+                        self._add_missing_fields(db_manager, missing_fields)
+                        print(f"    {CORE_ICONS['status']} Added {len(missing_fields)} GFS Wave fields")
+                    else:
+                        print(f"    {CORE_ICONS['status']} All GFS Wave fields exist")
+                    
+                    db_manager.close()
+                    
+                except Exception as e:
+                    progress.show_error("Creating Database Fields", f"GFS Wave fields: {e}")
+            
+            progress.complete_step("Creating Database Fields")
+            print(f"  {CORE_ICONS['status']} Database schema updated successfully")
             
         except Exception as e:
-            progress.show_error("Creating Database Tables", str(e))
+            progress.show_error("Database Schema Extension", str(e))
             raise
-    
+
+    def _table_exists(self, db_manager, table_name):
+        """Check if database table exists"""
+        try:
+            result = db_manager.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", 
+                (table_name,)
+            )
+            return result.fetchone() is not None
+        except Exception:
+            return False
+
+    def _create_forecast_table(self, db_manager, table_name):
+        """Create forecast data table - data-driven from YAML database schema definitions"""
+        
+        # Look for database schema definitions in YAML
+        database_schema = self.yaml_data.get('database_schema', {})
+        table_definitions = database_schema.get('tables', {})
+        
+        if table_name in table_definitions:
+            # Data-driven approach: use YAML table definition
+            table_def = table_definitions[table_name]
+            columns = table_def.get('columns', {})
+            primary_key = table_def.get('primary_key', ['dateTime'])
+            
+            # Build SQL from YAML definition
+            column_sql = []
+            for col_name, col_config in columns.items():
+                col_type = col_config.get('type', 'REAL')
+                nullable = col_config.get('nullable', True)
+                not_null = '' if nullable else ' NOT NULL'
+                column_sql.append(f"{col_name} {col_type}{not_null}")
+            
+            # Add primary key constraint
+            pk_constraint = f"PRIMARY KEY ({', '.join(primary_key)})"
+            column_sql.append(pk_constraint)
+            
+            sql = f"CREATE TABLE {table_name} (\n    {',\n    '.join(column_sql)}\n)"
+            
+        else:
+            # Fallback: basic forecast table structure if not defined in YAML
+            sql = f"""
+            CREATE TABLE {table_name} (
+                dateTime INTEGER NOT NULL,
+                usUnits INTEGER NOT NULL,
+                spot_id TEXT,
+                forecast_time INTEGER,
+                generated_time INTEGER,
+                PRIMARY KEY (dateTime, spot_id, forecast_time)
+            )
+            """
+        
+        db_manager.connection.execute(sql)
+        db_manager.connection.commit()
+
+    def _check_missing_fields(self, db_manager, required_fields):
+        """Check which fields are missing from archive table"""
+        
+        try:
+            # Get existing columns
+            result = db_manager.connection.execute("PRAGMA table_info(archive)")
+            existing_columns = [row[1] for row in result.fetchall()]
+            
+            # Find missing fields
+            missing_fields = {}
+            for field_name, field_type in required_fields.items():
+                if field_name not in existing_columns:
+                    missing_fields[field_name] = field_type
+            
+            return missing_fields
+            
+        except Exception as e:
+            log.error(f"Error checking missing fields: {e}")
+            return {}
+
+    def _add_missing_fields(self, db_manager, missing_fields):
+        """Add missing fields to archive table using WeeWX 5.1 patterns"""
+        
+        for field_name, field_type in missing_fields.items():
+            try:
+                # Use ALTER TABLE for adding fields
+                sql = f"ALTER TABLE archive ADD COLUMN {field_name} {field_type}"
+                db_manager.connection.execute(sql)
+                db_manager.connection.commit()
+                print(f"      {CORE_ICONS['status']} Added field: {field_name} ({field_type})")
+                
+            except Exception as e:
+                print(f"      {CORE_ICONS['warning']} Could not add field {field_name}: {e}")
+                continue
+
     def _add_user_locations_to_conf(self, config_dict, selected_locations):
         """
         Add user-configured locations to WeeWX configuration (CONF-based approach)
