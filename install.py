@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Blue Crab
+# Magic Animal: Fiddler Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
