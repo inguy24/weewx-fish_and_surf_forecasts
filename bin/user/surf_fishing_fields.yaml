@@ -284,65 +284,117 @@ fish_categories:
     pressure_preference: "stable_high"
     tide_relevance: true
 
-# =============================================================================
-# SCORING CRITERIA - User-tunable forecast scoring thresholds
-# =============================================================================
-surf_scoring:
-  wave_height_scoring:
-    # Score multipliers based on wave height (feet) - Users can tune these
-    0-1: 0.1     # Flat conditions
-    1-3: 0.6     # Small surf
-    3-6: 1.0     # Good surf
-    6-10: 0.9    # Large surf
-    10-15: 0.7   # Very large
-    15+: 0.3     # Dangerous conditions
+scoring_criteria:
+  # =============================================================================
+  # SURF SCORING - Physics-Based Post-Transformation Scoring
+  # =============================================================================
+  surf_scoring:
     
-  wave_period_scoring:
-    # Score multipliers based on wave period (seconds)
-    0-8: 0.3     # Wind swell (poor quality)
-    8-12: 0.7    # Mixed swell
-    12-16: 1.0   # Good ground swell
-    16-20: 0.9   # Very long period
-    20+: 0.8     # Extremely long period
+    # Physics parameters for wave transformation (user-tunable)
+    physics_parameters:
+      shoaling_factor_max: 1.5         # Maximum shoaling amplification
+      refraction_factor_max: 1.2       # Maximum refraction focusing
+      breaking_gamma_sand: 0.78        # Breaking index for sand bottoms
+      breaking_gamma_reef: 1.0         # Breaking index for reef breaks
+      bottom_friction_coefficient: 0.01 # Energy loss coefficient
+      
+    # Wave height scoring (applied AFTER physics transformation)
+    transformed_wave_height_scoring:
+      ranges:
+        0.0-0.5: 0.1     # Flat
+        0.5-1.5: 0.4     # Tiny
+        1.5-3.0: 0.8     # Small
+        3.0-6.0: 1.0     # Good
+        6.0-10.0: 0.9    # Large
+        10.0-15.0: 0.6   # Very large
+        15.0+: 0.2       # Dangerous
+      
+    # Wave period scoring (swell quality assessment)
+    wave_period_scoring:
+      ranges:
+        0-6: 0.2         # Poor wind swell
+        6-8: 0.4         # Short period
+        8-10: 0.6        # Mixed swell
+        10-12: 0.8       # Good swell
+        12-16: 1.0       # Excellent groundswell
+        16-20: 0.9       # Very long period
+        20+: 0.8         # Extremely long
+        
+    # Wind quality (relative to surf spot orientation)
+    wind_quality_scoring:
+      offshore_optimal: 1.0     # Clean offshore winds
+      offshore_light: 0.9       # Light offshore
+      offshore_strong: 0.6      # Strong offshore (blown out)
+      cross_shore: 0.5          # Side winds
+      onshore_light: 0.3        # Light onshore
+      onshore_strong: 0.1       # Strong onshore (junky)
+      calm_glassy: 1.0          # No wind (glassy)
+      
+    # Wind speed thresholds for quality classification
+    wind_speed_thresholds:
+      calm_max: 3               # mph
+      light_max: 8              # mph  
+      moderate_max: 15          # mph
+      strong_max: 25            # mph
+      dangerous_min: 30         # mph
+      
+    # Overall rating calculation weights
+    scoring_weights:
+      wave_height: 0.35         # Transformed wave height importance
+      wave_period: 0.35         # Swell quality importance
+      wind_quality: 0.20        # Wind condition importance
+      tide_phase: 0.10          # Tidal effects importance
+      
+  # =============================================================================
+  # FISHING SCORING - Enhanced Species-Specific Scoring
+  # =============================================================================
+  fishing_scoring:
     
-  wind_scoring:
-    # Wind direction relative to surf spot orientation
-    offshore: 1.0      # Clean conditions
-    cross_shore: 0.6   # Manageable
-    onshore: 0.2       # Poor conditions
-    
-  wind_speed_scoring:
-    # Score multipliers based on wind speed (mph)
-    0-5: 1.0     # Glassy conditions
-    5-10: 0.9    # Light offshore
-    10-15: 0.7   # Moderate wind
-    15-20: 0.4   # Strong wind
-    20+: 0.1     # Dangerous conditions
-
-fishing_scoring:
-  pressure_trend_scoring:
-    rising_fast: 0.3      # Fish shut down
-    rising_slow: 0.7      # Decent fishing
-    stable_high: 1.0      # Excellent conditions
-    stable_low: 0.6       # Fair conditions
-    falling_slow: 0.9     # Very good fishing
-    falling_fast: 0.8     # Good before front
-    
-  tide_phase_scoring:
-    # Relative to high/low tide timing
-    incoming: 0.9         # Fish feeding as water rises
-    high_slack: 0.6       # Slower fishing at high tide
-    outgoing: 1.0         # Peak fishing as tide drops
-    low_slack: 0.4        # Typically slower fishing
-    
-  time_of_day_scoring:
-    # Based on typical fish feeding patterns
-    dawn: 1.0            # Prime feeding time
-    morning: 0.8         # Good fishing
-    midday: 0.4          # Typically slower
-    afternoon: 0.6       # Moderate fishing
-    dusk: 1.0            # Prime feeding time
-    night: 0.7           # Species dependent
+    # Pressure trend scoring (barometric effects on fish behavior)
+    pressure_trend_scoring:
+      ranges:
+        rising_fast: 0.2          # Fish shut down
+        rising_slow: 0.6          # Slow fishing
+        stable_high: 1.0          # Excellent conditions
+        stable_low: 0.5           # Fair conditions  
+        falling_slow: 0.9         # Very good fishing
+        falling_fast: 0.7         # Good before front
+        
+    # Pressure rate thresholds (mb/hour)
+    pressure_rate_thresholds:
+      fast_change_min: 2.0       # mb/hour for "fast" changes
+      slow_change_max: 0.5       # mb/hour for "slow" changes
+      stable_range: 0.2          # mb/hour for "stable"
+      
+    # Tide phase scoring (species-dependent)
+    tide_phase_scoring:
+      incoming: 0.8             # Rising tide
+      high_slack: 0.4           # High tide slack
+      outgoing: 1.0             # Falling tide (best)
+      low_slack: 0.3            # Low tide slack
+      
+    # Time of day modifiers
+    time_of_day_scoring:
+      dawn: 1.0                 # Early morning feeding
+      morning: 0.7              # Mid morning
+      midday: 0.4               # Noon (typically slower)
+      afternoon: 0.6            # Afternoon pickup
+      dusk: 1.0                 # Evening feeding
+      night: 0.8                # Night fishing
+      
+    # Species activity modifiers (by category)
+    species_activity_modifiers:
+      saltwater_inshore: 1.0    # Base multiplier
+      saltwater_offshore: 0.8   # Less tide dependent
+      freshwater_sport: 0.6     # Less pressure dependent
+      bottom_fish: 1.2          # More responsive to conditions
+      
+    # Overall fishing rating weights
+    scoring_weights:
+      pressure_trend: 0.4       # Barometric pressure importance
+      tide_phase: 0.3           # Tidal effects importance
+      time_of_day: 0.2          # Time effects importance
+      species_activity: 0.1     # Species-specific modifiers
 
 # =============================================================================
 # BATHYMETRY DATA SOURCE - GEBCO API via OpenTopo
