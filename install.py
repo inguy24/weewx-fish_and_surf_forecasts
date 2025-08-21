@@ -1177,13 +1177,6 @@ class SurfFishingConfigurator:
             fishing_count = len(service_config.get('fishing_spots', {})) 
             print(f"Locations: {surf_count} surf spots, {fishing_count} fishing spots")
             
-            # GRIB processing
-            grib_enabled = service_config['grib_processing']['available']
-            grib_lib = service_config['grib_processing']['library']
-            print(f"WaveWatch III: {'Enabled' if grib_enabled == 'true' else 'Disabled'}")
-            if grib_enabled == 'true':
-                print(f"  GRIB Library: {grib_lib}")
-            
             # Station integration analysis results (FIXED)
             if station_analysis and 'station_analysis' in service_config:
                 analysis_config = service_config['station_analysis']
