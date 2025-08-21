@@ -1001,12 +1001,41 @@ class SurfFishingConfigurator:
         
         return config
     
-    def _create_config_dict(self, selected_locations, data_sources, station_analysis=None):
+    def _create_config_dict(self, forecast_types, data_sources, selected_locations, grib_available, station_analysis):
         """Create configuration dictionary with adaptive bathymetry and excluded geographic boundaries"""
         
         # EXISTING: Base configuration structure
         config_dict = {
             'SurfFishingService': {
+                'enable': 'true',
+                'forecast_interval': '21600',  # 6 hours in seconds
+                'log_success': 'false',
+                'log_errors': 'true',
+                'timeout': '60',
+                'retry_attempts': '3',
+                
+                # EXISTING: Forecast configuration based on user selections
+                'forecast_settings': {
+                    'enabled_types': ','.join(forecast_types),
+                    'forecast_hours': '72',  # 3-day forecasts
+                    'rating_system': 'five_star',
+                    'update_interval_hours': '6'
+                },
+                
+                # EXISTING: Data source configuration
+                'data_integration': {
+                    'method': data_sources.get('type', 'noaa_only'),
+                    'local_station_distance_km': str(station_analysis.get('distance_km', 999) if station_analysis else 999),
+                    'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
+                },
+                
+                # EXISTING: GRIB processing configuration
+                'grib_processing': {
+                    'available': 'true' if grib_available else 'false',
+                    'library': 'pygrib' if grib_available else 'none'
+                },
+                
+                # EXISTING: Data sources configuration
                 'data_sources': {
                     'gfs_wave': {
                         'api_source': data_sources.get('api_source', 'gfs_wave'),
