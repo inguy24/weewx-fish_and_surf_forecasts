@@ -176,7 +176,8 @@ class GEBCOAPIClient:
         try:
             # Format coordinates for API request
             locations_param = '|'.join([f"{lat},{lon}" for lat, lon in coordinates_list])
-            interpolation = self.api_config.get('interpolation')
+            path_config = self.bathymetry_config.get('path_analysis', {})
+            interpolation = path_config.get('interpolation')
             
             url = f"{self.base_url}?locations={locations_param}&interpolation={interpolation}"
             
