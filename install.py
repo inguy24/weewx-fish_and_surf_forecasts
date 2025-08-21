@@ -1101,7 +1101,7 @@ class SurfFishingConfigurator:
             config_dict['SurfFishingService']['station_analysis'] = {
                 'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
                 'accepted_recommendations': str(len(station_analysis.get('accepted_recommendations', []))),
-                'coverage_quality': str(station_analysis.get('coverage_summary', {}).get('overall_quality', 'unknown'))
+                'coverage_quality': str(station_analysis.get('coverage_summary', {}).get('quality_score', 'unknown'))
             }
         
         return config_dict
