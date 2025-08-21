@@ -1956,47 +1956,88 @@ class SurfFishingInstaller(ExtensionInstaller):
             return False
 
     def _create_forecast_table(self, db_manager, table_name):
-        """Create forecast data table - data-driven from YAML database schema definitions"""
+        """
+        Create forecast data table using YAML field mappings + hardcoded service fields
+        """
         
-        # Look for database schema definitions in YAML
-        database_schema = self.yaml_data.get('database_schema', {})
-        table_definitions = database_schema.get('tables', {})
+        # Extract API field definitions from YAML field mappings
+        gfs_wave_section = self.yaml_data.get('noaa_gfs_wave', {})
+        field_mappings = gfs_wave_section.get('field_mappings', {})
         
-        if table_name in table_definitions:
-            # Data-driven approach: use YAML table definition
-            table_def = table_definitions[table_name]
-            columns = table_def.get('columns', {})
-            primary_key = table_def.get('primary_key', ['dateTime'])
+        if not field_mappings:
+            raise Exception(f"Cannot create table '{table_name}' - no field_mappings found in YAML noaa_gfs_wave section")
+        
+        # Build column definitions
+        column_sql = []
+        
+        # HARDCODED SERVICE FIELDS (always required)
+        if table_name == 'marine_forecast_surf_data':
+            # WeeWX standard fields
+            column_sql.append("dateTime INTEGER NOT NULL")
+            column_sql.append("usUnits INTEGER NOT NULL")
             
-            # Build SQL from YAML definition
-            column_sql = []
-            for col_name, col_config in columns.items():
-                col_type = col_config.get('type', 'REAL')
-                nullable = col_config.get('nullable', True)
-                not_null = '' if nullable else ' NOT NULL'
-                column_sql.append(f"{col_name} {col_type}{not_null}")
+            # Service-specific key fields
+            column_sql.append("spot_id VARCHAR(50) NOT NULL")
+            column_sql.append("forecast_time INTEGER NOT NULL")
+            column_sql.append("generated_time INTEGER NOT NULL")
             
-            # Add primary key constraint
-            pk_constraint = f"PRIMARY KEY ({', '.join(primary_key)})"
-            column_sql.append(pk_constraint)
+            # Service-calculated fields
+            column_sql.append("quality_rating INTEGER")
+            column_sql.append("confidence REAL")
+            column_sql.append("conditions_text TEXT")
+            column_sql.append("wind_condition TEXT")
+            column_sql.append("tide_height REAL")
+            column_sql.append("tide_stage TEXT")
             
-            sql = f"CREATE TABLE {table_name} (\n    {',\n    '.join(column_sql)}\n)"
+            # Primary key
+            primary_key = "PRIMARY KEY (dateTime, spot_id, forecast_time)"
+            
+        elif table_name == 'marine_forecast_fishing_data':
+            # WeeWX standard fields
+            column_sql.append("dateTime INTEGER NOT NULL")
+            column_sql.append("usUnits INTEGER NOT NULL")
+            
+            # Service-specific key fields
+            column_sql.append("spot_id VARCHAR(50) NOT NULL")
+            column_sql.append("forecast_date INTEGER NOT NULL")
+            column_sql.append("period_name TEXT NOT NULL")
+            column_sql.append("period_start_hour INTEGER")
+            column_sql.append("period_end_hour INTEGER")
+            column_sql.append("generated_time INTEGER NOT NULL")
+            
+            # Service-calculated fields
+            column_sql.append("pressure_trend TEXT")
+            column_sql.append("tide_movement TEXT")
+            column_sql.append("species_activity TEXT")
+            column_sql.append("activity_rating INTEGER")
+            column_sql.append("conditions_text TEXT")
+            column_sql.append("best_species TEXT")
+            
+            # Primary key
+            primary_key = "PRIMARY KEY (dateTime, spot_id, forecast_date, period_name)"
             
         else:
-            # Fallback: basic forecast table structure if not defined in YAML
-            sql = f"""
-            CREATE TABLE {table_name} (
-                dateTime INTEGER NOT NULL,
-                usUnits INTEGER NOT NULL,
-                spot_id TEXT,
-                forecast_time INTEGER,
-                generated_time INTEGER,
-                PRIMARY KEY (dateTime, spot_id, forecast_time)
-            )
-            """
+            raise Exception(f"Unknown forecast table: {table_name}")
         
+        # ADD API FIELDS from YAML field mappings
+        for field_name, field_config in field_mappings.items():
+            database_field = field_config.get('database_field', field_name)
+            database_type = field_config.get('database_type', 'REAL')
+            
+            # Add API field to table
+            column_sql.append(f"{database_field} {database_type}")
+        
+        # Add primary key constraint
+        column_sql.append(primary_key)
+        
+        # Build CREATE TABLE statement
+        sql = f"CREATE TABLE IF NOT EXISTS {table_name} (\n    {',\n    '.join(column_sql)}\n)"
+        
+        # ✅ PRESERVE ORIGINAL WeeWX 5.1 PATTERN EXACTLY
         db_manager.connection.execute(sql)
         db_manager.connection.commit()
+        
+        print(f"    {CORE_ICONS['status']} Created table {table_name} with {len(field_mappings)} API fields + service fields")
 
     def _check_missing_fields(self, db_manager, required_fields):
         """Check which fields are missing from archive table"""
