@@ -1958,6 +1958,8 @@ class SurfFishingInstaller(ExtensionInstaller):
     def _create_forecast_table(self, db_manager, table_name):
         """
         Create forecast data table using YAML field mappings + hardcoded service fields
+        Uses correct WeeWX 5.1 database patterns from original method
+        NO FALLBACK - fail if YAML field mappings missing
         """
         
         # Extract API field definitions from YAML field mappings
@@ -2000,7 +2002,7 @@ class SurfFishingInstaller(ExtensionInstaller):
             # Service-specific key fields
             column_sql.append("spot_id VARCHAR(50) NOT NULL")
             column_sql.append("forecast_date INTEGER NOT NULL")
-            column_sql.append("period_name TEXT NOT NULL")
+            column_sql.append("period_name VARCHAR(50) NOT NULL")  # Fixed: VARCHAR with length
             column_sql.append("period_start_hour INTEGER")
             column_sql.append("period_end_hour INTEGER")
             column_sql.append("generated_time INTEGER NOT NULL")
