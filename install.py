@@ -462,7 +462,7 @@ class SurfFishingConfigurator:
         attempt = 0
         
         while attempt < max_attempts:
-            lat, lon = self._get_coordinates_with_validation()
+            lat, lon = self._get_coordinates_with_validation(location_type)
             
             # Validate coordinates are in water
             if self._validate_water_location(lat, lon):
