@@ -748,8 +748,8 @@ class SurfFishingConfigurator:
                 'latitude': lat,
                 'longitude': lon,
                 'beach_angle': beach_angle,
-                'bottom_type': bottom_type,
-                'exposure': exposure,
+                'bottom_type': spot_config['bottom_type'],
+                'exposure': spot_config['exposure'],
                 'bathymetric_data': bathymetric_data
             }
             
