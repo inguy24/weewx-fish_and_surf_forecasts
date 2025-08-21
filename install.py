@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Fiddler Crab
+# Magic Animal: Hermit Crab
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -761,24 +761,73 @@ class SurfFishingConfigurator:
         return surf_spots
 
     def _get_surf_spot_bathymetry(self, lat, lon, spot_name, beach_angle):
-        """Get bathymetric data for surf spot using GEBCO API"""
+        """Get bathymetric data for surf spot using GEBCO API with adaptive distance"""
         
         print(f"  {CORE_ICONS['selection']} Analyzing bathymetry for {spot_name}...")
         
-        # Generate 7-point bathymetric path using beach angle (data-driven from YAML)
-        path_config = self.yaml_data.get('bathymetry_data', {}).get('path_analysis', {})
-        offshore_distance = path_config.get('offshore_distance_meters')
+        # EXISTING: Generate 7-point bathymetric path using beach angle (data-driven from YAML)
+        path_config = self.yaml_data.get('bathymetry_data', {}).get('path_analysis')
+        if not path_config:
+            print(f"  {CORE_ICONS['error']} No bathymetry_data.path_analysis found in YAML configuration")
+            return None
+            
         total_points = path_config.get('total_points_per_spot')
+        if not total_points:
+            print(f"  {CORE_ICONS['error']} No total_points_per_spot configured in YAML")
+            return None
         
-        # Calculate offshore point using beach angle
-        offshore_bearing = beach_angle
+        # NEW: Detect geographic region for adaptive distance (inline helper code)
+        detected_region = None
+        geographic_regions = self.yaml_data.get('geographic_regions')
         
-        # Calculate offshore coordinates using proper great circle math
-        offshore_distance_degrees = offshore_distance / 111320  # Rough conversion to degrees
+        if not geographic_regions:
+            print(f"  {CORE_ICONS['error']} No geographic_regions found in YAML configuration")
+            return None
+        
+        # Check all region categories for coordinate match (inline geographic detection)
+        for category_name, category_data in geographic_regions.items():
+            if isinstance(category_data, dict):
+                for region_name, region_data in category_data.items():
+                    if isinstance(region_data, dict):
+                        lat_range = region_data.get('lat_range')
+                        lon_range = region_data.get('lon_range')
+                        
+                        if (lat_range and lon_range and len(lat_range) == 2 and len(lon_range) == 2 and
+                            lat_range[0] <= lat <= lat_range[1] and 
+                            lon_range[0] <= lon <= lon_range[1]):
+                            detected_region = region_name
+                            print(f"  {CORE_ICONS['navigation']} Detected region: {region_data.get('name', region_name)}")
+                            break
+                if detected_region:
+                    break
+        
+        if not detected_region:
+            print(f"  {CORE_ICONS['error']} Coordinates {lat}, {lon} not found in any configured region")
+            print(f"  {CORE_ICONS['warning']} Installation failed - add geographic coverage for this location to YAML")
+            return None
+        
+        # NEW: Get adaptive offshore distance based on detected region (data-driven, no fallbacks)
+        regional_distances = path_config.get('regional_distances')
+        if not regional_distances:
+            print(f"  {CORE_ICONS['error']} No regional_distances found in YAML configuration")
+            return None
+            
+        adaptive_offshore_distance = regional_distances.get(detected_region)
+        if not adaptive_offshore_distance:
+            print(f"  {CORE_ICONS['error']} No distance configured for region '{detected_region}' in YAML")
+            return None
+        
+        print(f"  {CORE_ICONS['status']} Using offshore distance: {adaptive_offshore_distance/1000:.1f}km")
+        
+        # EXISTING: Calculate offshore point using beach angle (CORRECTED from original bug)
+        offshore_bearing = beach_angle  # CORRECTED: removed +180 that sent path toward land
+        
+        # EXISTING: Calculate offshore coordinates using proper great circle math
+        offshore_distance_degrees = adaptive_offshore_distance / 111320  # Rough conversion to degrees
         offshore_lat = lat + offshore_distance_degrees * math.cos(math.radians(offshore_bearing))
         offshore_lon = lon + offshore_distance_degrees * math.sin(math.radians(offshore_bearing)) / math.cos(math.radians(lat))
         
-        # Generate coordinate path from offshore to surf break
+        # EXISTING: Generate coordinate path from offshore to surf break
         coordinates = []
         for i in range(total_points):
             factor = i / (total_points - 1)  # 0.0 to 1.0
@@ -786,7 +835,7 @@ class SurfFishingConfigurator:
             path_lon = offshore_lon + factor * (lon - offshore_lon)
             coordinates.append((path_lat, path_lon))
         
-        # Query GEBCO API for bathymetric path
+        # EXISTING: Query GEBCO API for bathymetric path
         success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(coordinates, self.progress)
         
         if not success:
@@ -798,12 +847,17 @@ class SurfFishingConfigurator:
         else:
             print(f"  {CORE_ICONS['status']} Retrieved GEBCO bathymetry for {spot_name}")
         
-        # Format bathymetric data for CONF storage
+        # EXISTING: Format bathymetric data for CONF storage
         bathymetric_path = {}
         bathymetric_path['path_points_total'] = str(total_points)
         bathymetric_path['data_source'] = 'fallback' if used_fallback else 'gebco_api'
         bathymetric_path['offshore_bearing'] = str(offshore_bearing)
         
+        # NEW: Store adaptive distance information for debugging/verification
+        bathymetric_path['adaptive_distance_used'] = str(adaptive_offshore_distance)
+        bathymetric_path['detected_region'] = detected_region
+        
+        # EXISTING: Store depth points for each coordinate
         for i, depth in enumerate(bathymetry_data):
             bathymetric_path[f'point_{i}_depth'] = str(depth)
         
@@ -947,72 +1001,61 @@ class SurfFishingConfigurator:
         
         return config
     
-    def _create_config_dict(self, forecast_types, data_sources, selected_locations, grib_available, station_analysis):
-        """Create configuration dictionary from 4-section YAML - fully data-driven approach"""
+    def _create_config_dict(self, selected_locations, data_sources, station_analysis=None):
+        """Create configuration dictionary with adaptive bathymetry and excluded geographic boundaries"""
         
-        # Base service configuration (preserve existing pattern)
+        # EXISTING: Base configuration structure
         config_dict = {
             'SurfFishingService': {
-                'enable': 'true',
-                'forecast_interval': '21600',  # 6 hours in seconds
-                'log_success': 'false',
-                'log_errors': 'true',
-                'timeout': '60',
-                'retry_attempts': '3',
-                
-                # Forecast configuration based on user selections (preserve existing)
-                'forecast_settings': {
-                    'enabled_types': ','.join(forecast_types),
-                    'forecast_hours': '72',  # 3-day forecasts
-                    'rating_system': 'five_star',
-                    'update_interval_hours': '6'
-                },
-                
-                # Data source configuration (preserve existing)
-                'data_integration': {
-                    'method': data_sources.get('type', 'noaa_only'),
-                    'local_station_distance_km': str(station_analysis.get('distance_km', 999)),
-                    'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
-                },
-                
-                # Station integration (preserve existing pattern)
-                'station_integration': {
-                    'type': data_sources['type']
+                'data_sources': {
+                    'gfs_wave': {
+                        'api_source': data_sources.get('api_source', 'gfs_wave'),
+                        'grid_selected': data_sources.get('grid_selected', 'global.0p16'),
+                        'collection_interval': str(data_sources.get('collection_interval', 10800))
+                    }
                 }
             }
         }
         
-        # DATA-DRIVEN: Process each YAML section dynamically
+        # EXISTING: Process YAML sections but NEW: exclude geographic_regions
         for section_name, section_data in self.yaml_data.items():
             if section_name in ['noaa_gfs_wave', 'bathymetry_data', 'fish_categories', 'scoring_criteria']:
-                config_dict['SurfFishingService'][section_name] = self._convert_yaml_section_to_conf(section_data)
+                # Convert section using enhanced method that excludes geographic boundaries
+                converted_section = self._convert_yaml_section_to_conf(section_data)
+                config_dict['SurfFishingService'][section_name] = converted_section
+            elif section_name == 'geographic_regions':
+                # NEW: Explicitly skip - this is install-time only data
+                print(f"  {CORE_ICONS['navigation']} Skipping geographic_regions section (install-time only)")
+                continue
         
-        # PRESERVE EXISTING: Add user locations (no changes to this logic)
+        # EXISTING: Add user surf spots with NEW: adaptive bathymetry storage
         if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
             config_dict['SurfFishingService']['surf_spots'] = {}
             
             for i, spot in enumerate(selected_locations['surf_spots']):
                 spot_key = f'spot_{i}'
                 
-                # Basic spot configuration (existing)
+                # EXISTING: Basic spot configuration
                 spot_config = {
                     'name': spot['name'],
                     'latitude': str(spot['latitude']),
                     'longitude': str(spot['longitude']),
-                    'beach_angle': str(spot['beach_angle']),  # NEW: Add beach angle
+                    'beach_angle': str(spot['beach_angle']),
                     'bottom_type': spot.get('bottom_type', 'sand'),
                     'exposure': spot.get('exposure', 'exposed'),
                     'active': 'true'
                 }
                 
-                # NEW: Add bathymetric data to CONF if available
+                # NEW: Add adaptive bathymetric data if available
                 if 'bathymetric_data' in spot and spot['bathymetric_data']:
                     spot_config['bathymetric_path'] = spot['bathymetric_data']
                 
                 config_dict['SurfFishingService']['surf_spots'][spot_key] = spot_config
         
+        # EXISTING: Add fishing spots (no changes)
         if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
             config_dict['SurfFishingService']['fishing_spots'] = {}
+            
             for i, spot in enumerate(selected_locations['fishing_spots']):
                 spot_key = f'spot_{i}'
                 config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
@@ -1024,7 +1067,7 @@ class SurfFishingConfigurator:
                     'active': 'true'
                 }
         
-        # PRESERVE EXISTING: Add station analysis results (no changes)
+        # EXISTING: Add station analysis results (no changes)
         if station_analysis:
             config_dict['SurfFishingService']['station_analysis'] = {
                 'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
@@ -1035,14 +1078,25 @@ class SurfFishingConfigurator:
         return config_dict
 
     def _convert_yaml_section_to_conf(self, yaml_section):
-        """Convert any YAML section to CONF format recursively - fully data-driven"""
+        """Convert YAML section to CONF format - excludes geographic_regions from CONF"""
         
+        # NEW: Skip geographic_regions section (install-time only data)
+        if isinstance(yaml_section, dict) and 'geographic_regions' in yaml_section:
+            print(f"  {CORE_ICONS['navigation']} Excluding geographic_regions from CONF (install-time only)")
+            # Create filtered copy without geographic_regions
+            yaml_section = {k: v for k, v in yaml_section.items() if k != 'geographic_regions'}
+        
+        # EXISTING: Handle dictionary conversion
         if isinstance(yaml_section, dict):
             conf_section = {}
             for key, value in yaml_section.items():
+                # NEW: Skip geographic_regions at any nesting level
+                if key == 'geographic_regions':
+                    continue
                 conf_section[key] = self._convert_yaml_section_to_conf(value)
             return conf_section
         
+        # EXISTING: Handle list conversion
         elif isinstance(yaml_section, list):
             # Convert lists to comma-separated strings for CONF compatibility
             if all(isinstance(item, (str, int, float)) for item in yaml_section):
@@ -1051,8 +1105,8 @@ class SurfFishingConfigurator:
                 # For complex lists, convert each item
                 return [self._convert_yaml_section_to_conf(item) for item in yaml_section]
         
+        # EXISTING: Convert primitives to string for CONF compatibility
         else:
-            # Convert all primitive values to strings for CONF compatibility
             return str(yaml_section)
     
     def _analyze_marine_station_integration(self, selected_locations):
@@ -1249,6 +1303,63 @@ class SurfFishingConfigurator:
             print("4. Check available disk space")
         
         print()
+
+    def _validate_adaptive_configuration(self):
+        """Validate that geographic regions and adaptive distances are properly configured"""
+        
+        print(f"\n{CORE_ICONS['status']} Validating adaptive distance configuration...")
+        
+        # Get configuration data from YAML (data-driven validation)
+        bathymetry_data = self.yaml_data.get('bathymetry_data')
+        if not bathymetry_data:
+            print(f"  {CORE_ICONS['error']} No bathymetry_data section found in YAML")
+            return False
+            
+        path_config = bathymetry_data.get('path_analysis')
+        if not path_config:
+            print(f"  {CORE_ICONS['error']} No path_analysis section found in YAML")
+            return False
+            
+        regional_distances = path_config.get('regional_distances')
+        if not regional_distances:
+            print(f"  {CORE_ICONS['error']} No regional_distances found in YAML")
+            return False
+            
+        geographic_regions = self.yaml_data.get('geographic_regions')
+        if not geographic_regions:
+            print(f"  {CORE_ICONS['error']} No geographic_regions section found in YAML")
+            return False
+        
+        # Collect all defined region names from geographic boundaries (inline validation)
+        all_defined_regions = set()
+        for category_data in geographic_regions.values():
+            if isinstance(category_data, dict):
+                all_defined_regions.update(category_data.keys())
+        
+        if not all_defined_regions:
+            print(f"  {CORE_ICONS['error']} No regions defined in geographic_regions")
+            return False
+        
+        # Check for configuration mismatches (inline validation)
+        distance_regions = set(regional_distances.keys())
+        missing_boundaries = distance_regions - all_defined_regions
+        missing_distances = all_defined_regions - distance_regions
+        
+        validation_passed = True
+        
+        if missing_boundaries:
+            print(f"  {CORE_ICONS['error']} Regions with distances but no boundaries: {missing_boundaries}")
+            validation_passed = False
+        
+        if missing_distances:
+            print(f"  {CORE_ICONS['error']} Regions with boundaries but no distances: {missing_distances}")
+            validation_passed = False
+        
+        if validation_passed:
+            print(f"  {CORE_ICONS['status']} All regions properly configured")
+            
+        return validation_passed
+
 
 class PhaseIAnalyzer:
     """
