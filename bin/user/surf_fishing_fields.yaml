@@ -424,16 +424,66 @@ bathymetry_data:
     enable_multi_point_path: true
     path_resolution_points: 5
     total_points_per_spot: 7
-    offshore_distance_meters: 10000
+    offshore_distance_meters: 5000  # Default distance (adaptive applied below)
     interpolation: "bilinear"
+    enable_adaptive_distance: true  # NEW: Enable geographic adaptation
+    
+    # ADAPTIVE DISTANCE CONFIGURATION (INSTALL-TIME ONLY)
+    regional_distances:
+      # PACIFIC VOLCANIC TERRITORIES (Very Steep - Short Distances)
+      "guam": 1500                    # Near Mariana Trench, avoid excessive depth
+      "northern_mariana_islands": 800  # Extremely steep volcanic slopes
+      "american_samoa": 1500          # Volcanic islands with steep bathymetry
+      "hawaii": 3000                  # Steep volcanic, shorter than mainland
+      
+      # CARIBBEAN TERRITORIES (Moderate Shelves)  
+      "puerto_rico": 6000             # Broader Caribbean shelf characteristics
+      "us_virgin_islands": 4000       # Narrow but adequate shelf structure
+      
+      # MAINLAND US PACIFIC (Steep Continental Shelves)
+      "california": 5000              # Standard for steep Pacific shelf
+      "oregon": 5000                  # Standard for steep Pacific shelf  
+      "washington": 5000              # Standard for steep Pacific shelf
+      "alaska_pacific": 5000          # Similar to lower-48 Pacific
+      "alaska_arctic": 8000           # Variable ice conditions, longer distance
+      
+      # MAINLAND US EAST COAST (Gradual Continental Shelves)
+      "maine": 6000                   # Rocky coast, moderate shelf
+      "new_hampshire": 6000           # Rocky coast, moderate shelf
+      "massachusetts": 7000           # Broader shelf areas
+      "rhode_island": 7000            # Cape Cod influence, broader shelf
+      "connecticut": 7000             # Long Island Sound, complex bathymetry
+      "new_york": 8000                # Very broad continental shelf
+      "new_jersey": 8000              # Very broad continental shelf
+      "delaware": 8000                # Broad mid-Atlantic shelf
+      "maryland": 8000                # Chesapeake Bay influence, broad shelf
+      "virginia": 8000                # Broad mid-Atlantic shelf
+      "north_carolina": 9000          # Outer Banks, very broad shelf
+      "south_carolina": 8000          # Broad southeastern shelf
+      "georgia": 8000                 # Broad southeastern shelf
+      "florida_east": 6000            # Moderate shelf, Gulf Stream influence
+      
+      # MAINLAND US GULF COAST (Very Gradual Shelves)
+      "florida_gulf": 12000           # Very broad, shallow shelf
+      "alabama": 12000                # Very broad, shallow shelf
+      "mississippi": 15000            # Extremely broad Mississippi River delta
+      "louisiana": 15000              # Extremely broad delta and shelf
+      "texas": 12000                  # Very broad Gulf of Mexico shelf
+      
+      # GREAT LAKES (INDIVIDUAL LAKE-SPECIFIC DISTANCES)
+      "lake_superior": 8000           # Max 1,333ft deep - massive waves, needs longer distance
+      "lake_michigan": 6000           # Max 925ft deep - substantial depth, strong surf community  
+      "lake_huron": 5000              # Max 750ft deep - moderate depth, decent surf potential
+      "lake_ontario": 4000            # Max 802ft deep - moderate depth, eastern location
+      "lake_erie": 3000               # Max 210ft deep - shallowest, shortest distance needed
     
   # Validation thresholds
   validation_thresholds:
-    max_offshore_depth: 50.0
+    max_offshore_depth: 200.0         # Increased for Pacific volcanic islands
     min_offshore_depth: 20.0
     max_nearshore_depth: 10.0
     min_nearshore_depth: 1.0
-    max_path_distance_km: 15.0
+    max_path_distance_km: 20.0        # Increased for adaptive strategy
     
   # Fallback configuration
   fallback_configuration:
@@ -452,3 +502,281 @@ bathymetry_data:
     validate_fishing_spots: true
     validate_surf_spots: true
     auto_adjust_coordinates: false
+
+# =============================================================================
+# GEOGRAPHIC BOUNDARIES - INSTALL-TIME ONLY (NOT CONVERTED TO CONF)
+# =============================================================================
+geographic_regions:
+  # ⚠️ CRITICAL: This section is used ONLY during installation for adaptive
+  # distance calculation. It is deliberately excluded from CONF conversion
+  # to avoid bloating the runtime configuration.
+  
+  installation_use_only: true
+  description: "Coordinate boundaries for adaptive offshore distance selection"
+  
+  # PACIFIC TERRITORIES - VOLCANIC ISLANDS
+  pacific_territories:
+    guam:
+      name: "Guam"
+      lat_range: [13.0, 14.0]
+      lon_range: [144.0, 145.5]
+      geology: "volcanic_island_near_trench"
+      note: "Near Mariana Trench - very steep bathymetry"
+      
+    northern_mariana_islands:
+      name: "Northern Mariana Islands (CNMI)"
+      lat_range: [14.0, 21.0]
+      lon_range: [144.0, 146.0]
+      geology: "volcanic_island_chain"
+      note: "Active volcanic islands with extremely steep slopes"
+      
+    american_samoa:
+      name: "American Samoa"
+      lat_range: [-15.0, -11.0]
+      lon_range: [-171.5, -169.0]
+      geology: "volcanic_islands_coral_atolls"
+      note: "South Pacific volcanic islands with coral formations"
+      
+    hawaii:
+      name: "Hawaii"
+      lat_range: [18.0, 23.0]
+      lon_range: [-161.0, -154.0]
+      geology: "volcanic_island_chain"
+      note: "Hawaiian volcanic chain with steep bathymetry"
+  
+  # CARIBBEAN TERRITORIES
+  caribbean_territories:
+    puerto_rico:
+      name: "Puerto Rico"
+      lat_range: [17.5, 18.5]
+      lon_range: [-67.5, -65.0]
+      geology: "caribbean_volcanic_island"
+      note: "Larger Caribbean island with moderate continental shelf"
+      
+    us_virgin_islands:
+      name: "US Virgin Islands"
+      lat_range: [17.0, 18.5]
+      lon_range: [-65.5, -64.0]
+      geology: "caribbean_small_islands"
+      note: "Small Caribbean islands on narrow shelf"
+  
+  # MAINLAND US - PACIFIC COAST
+  mainland_pacific:
+    alaska_pacific:
+      name: "Alaska Pacific Coast"
+      lat_range: [54.0, 71.0]
+      lon_range: [-180.0, -130.0]
+      geology: "subduction_zone_coast"
+      note: "Steep Pacific Coast with variable ice conditions"
+      
+    alaska_arctic:
+      name: "Alaska Arctic Coast"  
+      lat_range: [68.0, 71.5]
+      lon_range: [-168.0, -140.0]
+      geology: "arctic_coast"
+      note: "Arctic conditions with variable bathymetry"
+      
+    washington:
+      name: "Washington"
+      lat_range: [45.5, 49.0]
+      lon_range: [-125.0, -116.9]
+      geology: "cascadia_subduction_zone"
+      note: "Steep continental shelf, active tectonics"
+      
+    oregon:
+      name: "Oregon"
+      lat_range: [41.9, 46.3]
+      lon_range: [-125.0, -116.5]
+      geology: "cascadia_subduction_zone"
+      note: "Steep continental shelf, active tectonics"
+      
+    california:
+      name: "California"
+      lat_range: [32.5, 42.0]
+      lon_range: [-125.0, -114.1]
+      geology: "transform_margin"
+      note: "Narrow continental shelf, steep bathymetry"
+  
+  # MAINLAND US - EAST COAST
+  mainland_atlantic:
+    maine:
+      name: "Maine"
+      lat_range: [43.0, 47.5]
+      lon_range: [-71.1, -66.9]
+      geology: "rocky_coast_glaciated"
+      note: "Rocky coast with moderate continental shelf"
+      
+    new_hampshire:
+      name: "New Hampshire"
+      lat_range: [42.7, 45.3]
+      lon_range: [-72.6, -70.6]
+      geology: "rocky_coast_glaciated"
+      note: "Short coastline, rocky with moderate shelf"
+      
+    massachusetts:
+      name: "Massachusetts"
+      lat_range: [41.2, 42.9]
+      lon_range: [-73.5, -69.9]
+      geology: "glaciated_coastal_plain"
+      note: "Cape Cod influence, broader shelf areas"
+      
+    rhode_island:
+      name: "Rhode Island"
+      lat_range: [41.1, 42.0]
+      lon_range: [-71.9, -71.1]
+      geology: "glaciated_coastal_plain"
+      note: "Complex nearshore bathymetry"
+      
+    connecticut:
+      name: "Connecticut"
+      lat_range: [40.9, 42.1]
+      lon_range: [-73.8, -71.8]
+      geology: "long_island_sound"
+      note: "Protected waters with complex bathymetry"
+      
+    new_york:
+      name: "New York"
+      lat_range: [40.4, 45.0]
+      lon_range: [-79.8, -71.8]
+      geology: "broad_continental_shelf"
+      note: "Very broad shelf extending far offshore"
+      
+    new_jersey:
+      name: "New Jersey"
+      lat_range: [38.9, 41.4]
+      lon_range: [-75.6, -73.9]
+      geology: "broad_continental_shelf"
+      note: "Classic broad Atlantic shelf"
+      
+    delaware:
+      name: "Delaware"
+      lat_range: [38.4, 39.8]
+      lon_range: [-75.8, -74.9]
+      geology: "mid_atlantic_shelf"
+      note: "Broad mid-Atlantic continental shelf"
+      
+    maryland:
+      name: "Maryland"
+      lat_range: [37.9, 39.7]
+      lon_range: [-79.5, -75.0]
+      geology: "chesapeake_bay_influence"
+      note: "Chesapeake Bay with broad shelf"
+      
+    virginia:
+      name: "Virginia"
+      lat_range: [36.5, 39.5]
+      lon_range: [-83.7, -75.2]
+      geology: "mid_atlantic_shelf"
+      note: "Broad mid-Atlantic continental shelf"
+      
+    north_carolina:
+      name: "North Carolina"
+      lat_range: [33.8, 36.6]
+      lon_range: [-84.3, -75.4]
+      geology: "outer_banks_shelf"
+      note: "Outer Banks with very broad continental shelf"
+      
+    south_carolina:
+      name: "South Carolina"
+      lat_range: [32.0, 35.2]
+      lon_range: [-83.4, -78.5]
+      geology: "southeastern_shelf"
+      note: "Broad southeastern continental shelf"
+      
+    georgia:
+      name: "Georgia"
+      lat_range: [30.3, 35.0]
+      lon_range: [-85.6, -80.8]
+      geology: "southeastern_shelf"
+      note: "Broad southeastern continental shelf"
+      
+    florida_east:
+      name: "Florida East Coast"
+      lat_range: [24.4, 31.0]
+      lon_range: [-81.8, -80.0]
+      geology: "gulf_stream_influence"
+      note: "Moderate shelf with Gulf Stream influence"
+  
+  # MAINLAND US - GULF COAST
+  mainland_gulf:
+    florida_gulf:
+      name: "Florida Gulf Coast"
+      lat_range: [24.4, 31.0]
+      lon_range: [-87.6, -81.8]
+      geology: "carbonate_platform"
+      note: "Very broad, shallow continental shelf"
+      
+    alabama:
+      name: "Alabama"
+      lat_range: [30.1, 35.0]
+      lon_range: [-88.5, -84.9]
+      geology: "gulf_coastal_plain"
+      note: "Very broad, shallow shelf"
+      
+    mississippi:
+      name: "Mississippi"
+      lat_range: [30.1, 35.0]
+      lon_range: [-91.7, -88.1]
+      geology: "mississippi_delta"
+      note: "Extremely broad shelf influenced by river delta"
+      
+    louisiana:
+      name: "Louisiana"
+      lat_range: [28.9, 33.0]
+      lon_range: [-94.1, -88.8]
+      geology: "mississippi_delta"
+      note: "Extremely broad delta and continental shelf"
+      
+    texas:
+      name: "Texas"
+      lat_range: [25.8, 36.5]
+      lon_range: [-106.7, -93.5]
+      geology: "gulf_coastal_plain"
+      note: "Very broad Gulf of Mexico continental shelf"
+  
+  # GREAT LAKES (INDIVIDUAL LAKE ANALYSIS - DEPTH-BASED DISTANCES)
+  inland_waters:
+    lake_superior:
+      name: "Lake Superior"
+      lat_range: [46.4, 49.0]
+      lon_range: [-92.2, -84.3]
+      max_depth_feet: 1333
+      avg_depth_feet: 483
+      note: "Deepest Great Lake - 30ft storm waves documented, requires longest distance"
+      surf_community: "Marquette, Grand Marais, Stoney Point - very active"
+      
+    lake_michigan:
+      name: "Lake Michigan"
+      lat_range: [41.6, 46.0]
+      lon_range: [-87.8, -84.8]
+      max_depth_feet: 925
+      avg_depth_feet: 279
+      note: "Second deepest - strong surf community, only US lake"
+      surf_community: "Chicago, Milwaukee, Grand Haven - very active"
+      
+    lake_huron:
+      name: "Lake Huron"
+      lat_range: [43.0, 46.4]
+      lon_range: [-84.8, -79.7]
+      max_depth_feet: 750
+      avg_depth_feet: 195
+      note: "Moderate depth - shared with Canada, decent surf potential"
+      surf_community: "Bay City, Port Huron - moderate activity"
+      
+    lake_ontario:
+      name: "Lake Ontario" 
+      lat_range: [43.2, 44.3]
+      lon_range: [-79.8, -76.0]
+      max_depth_feet: 802
+      avg_depth_feet: 283
+      note: "Easternmost lake - moderate depth, downstream position"
+      surf_community: "Rochester, Toronto area - moderate activity"
+      
+    lake_erie:
+      name: "Lake Erie"
+      lat_range: [41.3, 42.9]
+      lon_range: [-83.5, -78.9]
+      max_depth_feet: 210
+      avg_depth_feet: 62
+      note: "Shallowest Great Lake - warmest water, shortest distance needed"
+      surf_community: "Buffalo, Cleveland area - limited but present"
