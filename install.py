@@ -771,8 +771,7 @@ class SurfFishingConfigurator:
         total_points = path_config.get('total_points_per_spot')
         
         # Calculate offshore point using beach angle
-        # Convert beach angle to offshore direction (opposite direction to sea)
-        offshore_bearing = (beach_angle + 180) % 360
+        offshore_bearing = beach_angle
         
         # Calculate offshore coordinates using proper great circle math
         offshore_distance_degrees = offshore_distance / 111320  # Rough conversion to degrees
