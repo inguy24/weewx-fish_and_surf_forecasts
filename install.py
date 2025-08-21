@@ -1165,7 +1165,7 @@ class SurfFishingConfigurator:
             service_config = config_dict['SurfFishingService']
             
             # Forecast types configured
-            forecast_types = service_config['forecast_types']
+            forecast_types = service_config['forecast_settings']['enabled_types'].split(',') 
             print(f"Forecast Types: {', '.join(forecast_types).title()}")
             
             # Data sources
