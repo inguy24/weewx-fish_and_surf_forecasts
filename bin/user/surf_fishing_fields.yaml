@@ -425,7 +425,7 @@ bathymetry_data:
     path_resolution_points: 5
     total_points_per_spot: 7
     offshore_distance_meters: 10000
-    interpolation_method: "bilinear"
+    interpolation: "bilinear"
     
   # Validation thresholds
   validation_thresholds:
