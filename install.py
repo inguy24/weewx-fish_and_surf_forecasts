@@ -1169,12 +1169,12 @@ class SurfFishingConfigurator:
             print(f"Forecast Types: {', '.join(forecast_types).title()}")
             
             # Data sources
-            data_source_type = service_config['data_sources']['type']
+            data_source_type = service_config['data_integration']['method'] 
             print(f"Data Strategy: {data_source_type.replace('_', ' ').title()}")
             
             # Location counts
-            surf_count = len(service_config['surf_spots'])
-            fishing_count = len(service_config['fishing_spots'])
+            surf_count = len(service_config.get('surf_spots', {}))
+            fishing_count = len(service_config.get('fishing_spots', {})) 
             print(f"Locations: {surf_count} surf spots, {fishing_count} fishing spots")
             
             # GRIB processing
