@@ -130,6 +130,165 @@ class GRIBLibraryManager:
             sys.exit(1)
 
 
+class GEBCOAPIClient:
+    """GEBCO Bathymetry API client for installation-time depth queries"""
+    
+    def __init__(self, yaml_data):
+        """Initialize GEBCO API client with configuration from YAML"""
+        self.bathymetry_config = yaml_data.get('bathymetry_data', {})
+        self.api_config = self.bathymetry_config.get('api_configuration', {})
+        self.fallback_config = self.bathymetry_config.get('fallback_configuration', {})
+        self.validation_config = self.bathymetry_config.get('validation_thresholds', {})
+        
+        # Data-driven API settings from YAML
+        self.base_url = self.api_config.get('base_url')
+        self.timeout = self.api_config.get('timeout_seconds')
+        self.retry_attempts = self.api_config.get('retry_attempts')
+        self.rate_limit_delay = self.api_config.get('rate_limit_delay')
+        
+    def query_bathymetry_with_fallback(self, coordinates_list, progress_manager=None):
+        """
+        Query GEBCO API for bathymetry data with user-controlled fallback
+        Returns: (success, bathymetry_data, used_fallback)
+        """
+        
+        if progress_manager:
+            progress_manager.show_step_progress("Querying GEBCO bathymetry API")
+        
+        # Attempt API query first
+        success, bathymetry_data = self._query_gebco_api(coordinates_list)
+        
+        if progress_manager:
+            if success:
+                progress_manager.complete_step("GEBCO bathymetry retrieved")
+            else:
+                progress_manager.show_error("GEBCO API query", "API unavailable")
+        
+        if success:
+            return True, bathymetry_data, False
+        
+        # API failed - present user with fallback options
+        return self._handle_gebco_fallback(coordinates_list)
+    
+    def _query_gebco_api(self, coordinates_list):
+        """Query GEBCO API for list of coordinates"""
+        
+        try:
+            # Format coordinates for API request
+            locations_param = '|'.join([f"{lat},{lon}" for lat, lon in coordinates_list])
+            interpolation = self.api_config.get('interpolation_method')
+            
+            url = f"{self.base_url}?locations={locations_param}&interpolation={interpolation}"
+            
+            # Make API request with timeout
+            request = urllib.request.Request(url)
+            request.add_header('User-Agent', 'WeeWX-SurfFishing/2.0')
+            
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode())
+            
+            if data.get('status') == 'OK':
+                bathymetry_data = []
+                for result in data.get('results', []):
+                    elevation = result.get('elevation', 0.0)
+                    depth = abs(elevation) if elevation < 0 else 0.0  # GEBCO uses negative for water depth
+                    bathymetry_data.append(depth)
+                
+                return True, bathymetry_data
+            else:
+                return False, None
+                
+        except Exception as e:
+            print(f"  {CORE_ICONS['warning']} GEBCO API Error: {e}")
+            return False, None
+    
+    def _handle_gebco_fallback(self, coordinates_list):
+        """Handle GEBCO API failure with user choice"""
+        
+        if not self.fallback_config.get('require_user_consent'):
+            return False, None, False
+        
+        # Display warning and get user choice
+        print(f"\n{CORE_ICONS['warning']} GEBCO BATHYMETRY API UNAVAILABLE")
+        print("="*60)
+        
+        accuracy_impact = self.fallback_config.get('accuracy_impact_estimate')
+        print(f"Impact: Reduced surf forecast accuracy ({accuracy_impact})")
+        print("Affected Features: Wave shoaling, refraction, and breaking predictions")
+        print()
+        
+        print("Please choose how to proceed:")
+        print("1. CONTINUE WITH DEFAULTS - Install now using generic depth profiles")
+        print(f"   {CORE_ICONS['status']} Installation completes immediately")
+        print(f"   {CORE_ICONS['warning']} Reduced forecast accuracy until GEBCO data added later")
+        print()
+        print("2. RETRY GEBCO API - Attempt to connect again")
+        print(f"   {CORE_ICONS['status']} May resolve temporary network issues")
+        print(f"   {CORE_ICONS['warning']} May fail again if service is down")
+        print()
+        print("3. ABORT INSTALLATION - Exit and try again later")
+        print(f"   {CORE_ICONS['status']} Ensures best possible forecast accuracy")
+        print(f"   {CORE_ICONS['warning']} Must reinstall when GEBCO service available")
+        print()
+        
+        while True:
+            choice = input("Choice [1/2/3]: ").strip()
+            
+            if choice == '1':
+                # User chose to proceed with defaults
+                if self._get_fallback_consent():
+                    default_depths = self.fallback_config.get('default_path_depths')
+                    # Create fallback data for all coordinate sets
+                    fallback_data = [default_depths[:len(coordinates_list)] for _ in range(len(coordinates_list))]
+                    return True, fallback_data, True
+                else:
+                    continue  # User declined, ask again
+                    
+            elif choice == '2':
+                # Retry API
+                print(f"  Retrying GEBCO API...")
+                time.sleep(2)  # Brief delay before retry
+                success, bathymetry_data = self._query_gebco_api(coordinates_list)
+                if success:
+                    return True, bathymetry_data, False
+                else:
+                    print(f"  {CORE_ICONS['warning']} Retry failed. API still unavailable.")
+                    continue  # Go back to choice menu
+                    
+            elif choice == '3':
+                # Abort installation
+                print("\nInstallation aborted. Please try again when GEBCO API is available.")
+                sys.exit(0)
+                
+            else:
+                print(f"{CORE_ICONS['warning']} Please enter 1, 2, or 3")
+    
+    def _get_fallback_consent(self):
+        """Get explicit user consent for using fallback data"""
+        
+        if not self.fallback_config.get('show_accuracy_warning'):
+            return True
+        
+        print(f"\n{CORE_ICONS['warning']} ACCURACY WARNING")
+        print("Using default depth values will reduce surf forecast precision.")
+        print("Your forecasts will be functional but less accurate than with real bathymetry.")
+        print()
+        print("NOTE: GEBCO API can be intermittently unavailable due to maintenance or high usage.")
+        print("You can try installing again later when the service is restored, or proceed with")
+        print("reduced accuracy now and update bathymetry data later via extension reconfiguration.")
+        print()
+        
+        while True:
+            consent = input('Type "CONFIRM" to proceed with reduced accuracy: ').strip().upper()
+            if consent == "CONFIRM":
+                print(f"\n{CORE_ICONS['status']} Proceeding with default bathymetry values")
+                return True
+            elif consent.upper() in ['NO', 'N', 'CANCEL', 'ABORT']:
+                return False
+            else:
+                print('Please type "CONFIRM" to proceed or "NO" to cancel')
+
+
 class AtmosphericDataAnalyzer:
     """Analyze atmospheric data coverage for user guidance"""
     
@@ -231,11 +390,121 @@ class SurfFishingConfigurator:
     """Interactive configuration for surf and fishing forecasts"""
     
     def __init__(self, config_dict, yaml_data):
+        """Initialize configurator with GEBCO API client"""
         self.config_dict = config_dict
         self.yaml_data = yaml_data
         self.progress = InstallationProgressManager()
         self.grib_manager = GRIBLibraryManager()
         
+        # NEW: Initialize GEBCO API client
+        self.gebco_client = GEBCOAPIClient(yaml_data)
+
+    def _convert_cardinal_to_degrees(self, cardinal_input):
+        """Convert 16-point cardinal direction to degrees"""
+        
+        cardinal_map = {
+            'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+            'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+            'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+            'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
+        }
+        
+        return cardinal_map.get(cardinal_input.upper())
+
+    def _get_beach_angle(self):
+        """Get beach angle from user with validation"""
+        
+        print("  Beach Angle Configuration:")
+        print("  Standing on the beach looking out to sea, what compass direction are you facing?")
+        print()
+        print("  Examples:")
+        print("  - Malibu (facing south): S or 180")
+        print("  - Ocean Beach SF (facing west): W or 270")
+        print("  - Cape Cod (facing east): E or 90")
+        print()
+        print("  Enter as cardinal direction (N/NE/E/SE/S/SW/W/NW/etc) or degrees (0-360):")
+        
+        while True:
+            angle_input = input("  Beach angle: ").strip()
+            
+            if not angle_input:
+                print(f"  {CORE_ICONS['warning']} Please enter a beach angle")
+                continue
+            
+            # Try to parse as numeric degrees first
+            try:
+                degrees = float(angle_input)
+                if 0 <= degrees <= 360:
+                    return degrees
+                else:
+                    print(f"  {CORE_ICONS['warning']} Degrees must be between 0 and 360")
+                    continue
+            except ValueError:
+                pass
+            
+            # Try to parse as cardinal direction
+            degrees = self._convert_cardinal_to_degrees(angle_input)
+            if degrees is not None:
+                return degrees
+            
+            print(f"  {CORE_ICONS['warning']} Invalid input. Use cardinal directions (N, NE, etc) or degrees (0-360)")
+
+    def _get_coordinates_for_water_location(self, location_type="location"):
+        """Get coordinates with water validation and re-entry option"""
+        
+        print(f"  Enter coordinates for the {location_type} IN THE WATER:")
+        if location_type == "surf break":
+            print("  (This should be the wave breaking location, not the beach)")
+        elif location_type == "fishing spot":
+            print("  (Even for coastal fishing, ensure coordinates are in water, not on shore)")
+        
+        max_attempts = 3
+        attempt = 0
+        
+        while attempt < max_attempts:
+            lat, lon = self._get_coordinates_with_validation()
+            
+            # Validate coordinates are in water
+            if self._validate_water_location(lat, lon):
+                return lat, lon
+            
+            attempt += 1
+            if attempt < max_attempts:
+                print(f"  {CORE_ICONS['warning']} Coordinates appear to be on land.")
+                print(f"  Please verify the location is in the water and re-enter coordinates.")
+                print(f"  (Attempt {attempt + 1} of {max_attempts})")
+            else:
+                print(f"  {CORE_ICONS['warning']} Maximum attempts reached. Using coordinates as entered.")
+                return lat, lon
+        
+        return lat, lon
+
+    def _validate_water_location(self, lat, lon):
+        """Validate coordinates are in water using GEBCO API"""
+        
+        validation_config = self.yaml_data.get('bathymetry_data', {}).get('coordinate_validation', {})
+        if not validation_config.get('enable_land_sea_validation'):
+            return True
+        
+        self.progress.show_step_progress("Validating water location")
+        
+        # Query GEBCO for land/sea validation
+        success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback([(lat, lon)], self.progress)
+        
+        if not success:
+            self.progress.show_error("Location validation", "Cannot validate - proceeding anyway")
+            return True
+        
+        depth = bathymetry_data[0] if bathymetry_data else 0.0
+        land_threshold = validation_config.get('land_elevation_threshold', 0.0)
+        
+        if depth <= land_threshold:
+            self.progress.show_error("Location validation", f"Location on land (elevation: {depth:.1f}m)")
+            return False
+        else:
+            self.progress.complete_step(f"Valid water location (depth: {depth:.1f}m)")
+            return True
+       
     def run_interactive_setup(self):
         """Main configuration workflow"""
         
@@ -440,58 +709,132 @@ class SurfFishingConfigurator:
                 print(f"{CORE_ICONS['warning']} Please enter 1, 2, or 3")
     
     def _configure_surf_spots(self):
-        """Configure surf-specific locations"""
+        """Configure surf-specific locations with GEBCO bathymetry integration"""
         
         surf_spots = []
         print(f"\n{CORE_ICONS['selection']} Surf Spot Configuration")
-        print("Enter your surf spots (max 5 spots)")
+        print("Enter your surf spots")
         print()
         
-        while len(surf_spots) < 5:
-            print(f"Surf Spot {len(surf_spots) + 1}:")
+        spot_count = 1
+        while True:
+            print(f"Surf Spot {spot_count}:")
             
             name = input("  Spot name (e.g., 'Malibu', 'Ocean Beach') [Enter to finish]: ").strip()
             if not name:
                 break
                 
-            # Get coordinates
-            lat, lon = self._get_coordinates_with_validation(name)
-            if not lat or not lon:
-                continue
+            # Get coordinates with water validation
+            lat, lon = self._get_coordinates_for_water_location("surf break")
             
-            # Get surf-specific characteristics
-            spot_config = self._configure_surf_characteristics(name, lat, lon)
-            surf_spots.append(spot_config)
+            # Get beach angle
+            beach_angle = self._get_beach_angle()
             
-            print(f"  {CORE_ICONS['status']} Added surf spot: {name}")
+            # Get surf characteristics
+            bottom_type, exposure = self._configure_surf_characteristics()
+            
+            # Get bathymetric data for this surf spot
+            bathymetric_data = self._get_surf_spot_bathymetry(lat, lon, name, beach_angle)
+            
+            spot_data = {
+                'name': name,
+                'latitude': lat,
+                'longitude': lon,
+                'beach_angle': beach_angle,
+                'bottom_type': bottom_type,
+                'exposure': exposure,
+                'bathymetric_data': bathymetric_data
+            }
+            
+            surf_spots.append(spot_data)
+            print(f"  {CORE_ICONS['status']} Added {name}")
+            print()
+            spot_count += 1
         
         return surf_spots
+
+    def _get_surf_spot_bathymetry(self, lat, lon, spot_name, beach_angle):
+        """Get bathymetric data for surf spot using GEBCO API"""
+        
+        print(f"  {CORE_ICONS['selection']} Analyzing bathymetry for {spot_name}...")
+        
+        # Generate 7-point bathymetric path using beach angle (data-driven from YAML)
+        path_config = self.yaml_data.get('bathymetry_data', {}).get('path_analysis', {})
+        offshore_distance = path_config.get('offshore_distance_meters')
+        total_points = path_config.get('total_points_per_spot')
+        
+        # Calculate offshore point using beach angle
+        # Convert beach angle to offshore direction (opposite direction to sea)
+        offshore_bearing = (beach_angle + 180) % 360
+        
+        # Calculate offshore coordinates using proper great circle math
+        offshore_distance_degrees = offshore_distance / 111320  # Rough conversion to degrees
+        offshore_lat = lat + offshore_distance_degrees * math.cos(math.radians(offshore_bearing))
+        offshore_lon = lon + offshore_distance_degrees * math.sin(math.radians(offshore_bearing)) / math.cos(math.radians(lat))
+        
+        # Generate coordinate path from offshore to surf break
+        coordinates = []
+        for i in range(total_points):
+            factor = i / (total_points - 1)  # 0.0 to 1.0
+            path_lat = offshore_lat + factor * (lat - offshore_lat)
+            path_lon = offshore_lon + factor * (lon - offshore_lon)
+            coordinates.append((path_lat, path_lon))
+        
+        # Query GEBCO API for bathymetric path
+        success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(coordinates, self.progress)
+        
+        if not success:
+            print(f"  {CORE_ICONS['warning']} Failed to get bathymetry for {spot_name}")
+            return None
+        
+        if used_fallback:
+            print(f"  {CORE_ICONS['warning']} Using default bathymetry for {spot_name}")
+        else:
+            print(f"  {CORE_ICONS['status']} Retrieved GEBCO bathymetry for {spot_name}")
+        
+        # Format bathymetric data for CONF storage
+        bathymetric_path = {}
+        bathymetric_path['path_points_total'] = str(total_points)
+        bathymetric_path['data_source'] = 'fallback' if used_fallback else 'gebco_api'
+        bathymetric_path['offshore_bearing'] = str(offshore_bearing)
+        
+        for i, depth in enumerate(bathymetry_data):
+            bathymetric_path[f'point_{i}_depth'] = str(depth)
+        
+        return bathymetric_path
     
     def _configure_fishing_spots(self):
-        """Configure fishing-specific locations"""
+        """Configure fishing-specific locations with land/sea validation"""
         
         fishing_spots = []
         print(f"\n{CORE_ICONS['selection']} Fishing Spot Configuration")
-        print("Enter your fishing spots (max 5 spots)")
+        print("Enter your fishing spots")
         print()
         
-        while len(fishing_spots) < 5:
-            print(f"Fishing Spot {len(fishing_spots) + 1}:")
+        spot_count = 1
+        while True:
+            print(f"Fishing Spot {spot_count}:")
             
-            name = input("  Spot name (e.g., 'Santa Monica Pier', 'Newport Harbor') [Enter to finish]: ").strip()
+            name = input("  Spot name (e.g., 'Pier 39', 'Half Moon Bay') [Enter to finish]: ").strip()
             if not name:
                 break
-                
-            # Get coordinates
-            lat, lon = self._get_coordinates_with_validation(name)
-            if not lat or not lon:
-                continue
             
-            # Get fishing-specific characteristics
-            spot_config = self._configure_fishing_characteristics(name, lat, lon)
-            fishing_spots.append(spot_config)
+            # Get coordinates with land/sea validation
+            lat, lon = self._get_coordinates_for_water_location("fishing spot")
             
-            print(f"  {CORE_ICONS['status']} Added fishing spot: {name}")
+            location_type = self._configure_fishing_characteristics()
+            
+            spot_data = {
+                'name': name,
+                'latitude': lat,
+                'longitude': lon,
+                'location_type': location_type
+            }
+            
+            fishing_spots.append(spot_data)
+            print(f"  {CORE_ICONS['status']} Added {name}")
+            print()
+            spot_count += 1
         
         return fishing_spots
     
@@ -641,16 +984,26 @@ class SurfFishingConfigurator:
         # PRESERVE EXISTING: Add user locations (no changes to this logic)
         if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
             config_dict['SurfFishingService']['surf_spots'] = {}
+            
             for i, spot in enumerate(selected_locations['surf_spots']):
                 spot_key = f'spot_{i}'
-                config_dict['SurfFishingService']['surf_spots'][spot_key] = {
+                
+                # Basic spot configuration (existing)
+                spot_config = {
                     'name': spot['name'],
                     'latitude': str(spot['latitude']),
                     'longitude': str(spot['longitude']),
+                    'beach_angle': str(spot['beach_angle']),  # NEW: Add beach angle
                     'bottom_type': spot.get('bottom_type', 'sand'),
                     'exposure': spot.get('exposure', 'exposed'),
                     'active': 'true'
                 }
+                
+                # NEW: Add bathymetric data to CONF if available
+                if 'bathymetric_data' in spot and spot['bathymetric_data']:
+                    spot_config['bathymetric_path'] = spot['bathymetric_data']
+                
+                config_dict['SurfFishingService']['surf_spots'][spot_key] = spot_config
         
         if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
             config_dict['SurfFishingService']['fishing_spots'] = {}
