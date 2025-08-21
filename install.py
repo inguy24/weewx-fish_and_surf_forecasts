@@ -738,7 +738,7 @@ class SurfFishingConfigurator:
             beach_angle = self._get_beach_angle()
             
             # Get surf characteristics
-            bottom_type, exposure = self._configure_surf_characteristics()
+            bottom_type, exposure = self._configure_surf_characteristics(name, lat, lon) 
             
             # Get bathymetric data for this surf spot
             bathymetric_data = self._get_surf_spot_bathymetry(lat, lon, name, beach_angle)
