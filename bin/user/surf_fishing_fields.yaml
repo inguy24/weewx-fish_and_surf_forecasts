@@ -345,16 +345,58 @@ fishing_scoring:
     night: 0.7           # Species dependent
 
 # =============================================================================
-# REORGANIZATION SUMMARY
+# BATHYMETRY DATA SOURCE - GEBCO API via OpenTopo
 # =============================================================================
-# ORGANIZED BY DATA SOURCE:
-# 1. noaa_gfs_wave - All GFS Wave data (grids + selection + fields + errors + QC)
-# 2. bathymetry_data - Future data source placeholder  
-# 3. fish_categories - User species configuration
-# 4. scoring_criteria - User-tunable thresholds
-#
-# HARDCODED IN CODE (not in YAML):
-# - Phase I integration methods (dependency requirement)
-# - Unit conversion factors (never change)
-# - Database schema for calculated fields
-# - Method names and internal logic structure
+bathymetry_data:
+  description: "GEBCO Global Bathymetry - Multi-Point Path Analysis"
+  data_source: "gebco_api"
+  implementation_scope: "install_time_only"
+  
+  # API configuration for OpenTopo Data API
+  api_configuration:
+    base_url: "https://api.opentopodata.org/v1/gebco2020"
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_delay_seconds: 2
+    max_locations_per_request: 100
+    rate_limit_delay: 1.1
+    
+  # Attribution requirements
+  attribution:
+    dataset: "GEBCO Compilation Group (2025) GEBCO 2025 Grid"
+    source: "Bathymetry data via OpenTopo Data API"
+    disclaimer: "Not for navigation or safety at sea"
+    
+  # Multi-point bathymetric path analysis
+  path_analysis:
+    enable_multi_point_path: true
+    path_resolution_points: 5
+    total_points_per_spot: 7
+    offshore_distance_meters: 10000
+    interpolation_method: "bilinear"
+    
+  # Validation thresholds
+  validation_thresholds:
+    max_offshore_depth: 50.0
+    min_offshore_depth: 20.0
+    max_nearshore_depth: 10.0
+    min_nearshore_depth: 1.0
+    max_path_distance_km: 15.0
+    
+  # Fallback configuration
+  fallback_configuration:
+    enable_fallback: true
+    require_user_consent: true
+    show_accuracy_warning: true
+    allow_installation_abort: true
+    default_path_depths: [40.0, 32.0, 24.0, 16.0, 8.0, 4.0, 2.5]
+    accuracy_impact_estimate: "30-40% less precise"
+    retry_attempts_before_fallback: 3
+    
+  # Land/sea validation
+  coordinate_validation:
+    enable_land_sea_validation: true
+    land_elevation_threshold: 0.0
+    validate_fishing_spots: true
+    validate_surf_spots: true
+    auto_adjust_coordinates: false
