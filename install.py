@@ -176,10 +176,16 @@ class GEBCOAPIClient:
         try:
             # Format coordinates for API request
             locations_param = '|'.join([f"{lat},{lon}" for lat, lon in coordinates_list])
-            interpolation = self.api_config.get('interpolation_method')
+            interpolation = self.api_config.get('interpolation')
             
             url = f"{self.base_url}?locations={locations_param}&interpolation={interpolation}"
             
+            print(f"DEBUG: GEBCO URL = {url}")
+            print(f"DEBUG: coordinates_list = {coordinates_list}")
+            print(f"DEBUG: locations_param = {locations_param}")
+            print(f"DEBUG: interpolation = {interpolation}")
+            print(f"DEBUG: base_url = {self.base_url}")
+
             # Make API request with timeout
             request = urllib.request.Request(url)
             request.add_header('User-Agent', 'WeeWX-SurfFishing/2.0')
