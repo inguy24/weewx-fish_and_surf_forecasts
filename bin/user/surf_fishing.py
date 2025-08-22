@@ -3743,7 +3743,8 @@ class SurfFishingService(StdService):
         
         # EXISTING CODE: Read service configuration from CONF only - PRESERVED
         self.service_config = config_dict.get('SurfFishingService', {})
-        
+        log.info(f"DEBUG: SurfFishingService config keys: {list(self.service_config.keys())}")
+
         # NEW: WeeWX 5.1 unit system detection using CONF data
         self._setup_unit_system_from_conf(config_dict)
         
