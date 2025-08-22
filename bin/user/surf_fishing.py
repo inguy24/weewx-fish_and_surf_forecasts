@@ -959,115 +959,196 @@ class WaveWatchDataCollector:
             return []
     
     def _organize_forecast_data(self, data_points):
-        """Organize raw GRIB data into forecast periods"""
+        """Organize raw GRIB data into forecast periods with WeeWX unit system handling"""
         
-        if not data_points:
-            log.error(f"{CORE_ICONS['warning']} No data points provided to _organize_forecast_data")
-            return []
-        
-        # READ FROM NEW CONF: Field conversion configuration
-        field_mappings = self.gfs_wave_config.get('field_mappings', {})
-        
-        # Build field processing configuration from CONF
-        field_conversions = {}
-        for field_key, field_config in field_mappings.items():
-            grib_parameter = field_config.get('grib_parameter', '')
-            database_field = field_config.get('database_field', '')
-            unit_conversion_required = field_config.get('unit_conversion_required', 'false').lower() == 'true'
+        try:
+            if not data_points:
+                log.warning(f"{CORE_ICONS['warning']} No data points to organize")
+                return []
             
-            if grib_parameter and database_field:
-                field_conversions[grib_parameter] = {
-                    'database_field': database_field,
-                    'unit_conversion_required': unit_conversion_required,
-                    'database_type': field_config.get('database_type', 'REAL'),
-                    'forecast_priority': int(field_config.get('forecast_priority', '3')),
-                    'description': field_config.get('description', '')
-                }
-        
-        # Group data by forecast time (preserve existing logic)
-        forecast_periods = {}
-        
-        for point in data_points:
-            forecast_time = point['forecast_time']
+            # Get field mappings from CONF - REQUIRED for operation
+            gfs_wave_config = self.config_dict.get('SurfFishingService', {}).get('noaa_gfs_wave', {})
+            field_mappings = gfs_wave_config.get('field_mappings', {})
             
-            if forecast_time not in forecast_periods:
-                forecast_periods[forecast_time] = {}
+            if not field_mappings:
+                log.error(f"{CORE_ICONS['warning']} No field mappings found in CONF - cannot organize data")
+                return []
             
-            # Safe numeric conversion
-            try:
-                value = float(point['value']) if point['value'] is not None else 0.0
-            except (ValueError, TypeError):
-                log.warning(f"Non-numeric GRIB value for {point['parameter']}: {point['value']}, using 0.0")
-                value = 0.0
+            # Get WeeWX unit system from engine
+            target_unit_system = self._get_target_unit_system()
             
-            forecast_periods[forecast_time][point['parameter']] = value
-        
-        # DATA-DRIVEN: Convert to list format using CONF field mappings
-        organized_data = []
-        
-        for forecast_time, parameters in forecast_periods.items():
-            try:
-                converted_data = {'forecast_time': forecast_time}
-                
-                # Process each parameter using CONF field mappings
-                for grib_param, param_value in parameters.items():
-                    if grib_param in field_conversions:
-                        field_info = field_conversions[grib_param]
-                        database_field = field_info['database_field']
+            # Group data by forecast time
+            forecast_periods = {}
+            for point in data_points:
+                try:
+                    forecast_time = point['forecast_time']
+                    if forecast_time not in forecast_periods:
+                        forecast_periods[forecast_time] = {}
+                    
+                    # Safe numeric conversion
+                    try:
+                        value = float(point['value']) if point['value'] is not None else None
+                    except (ValueError, TypeError):
+                        log.warning(f"Non-numeric GRIB value for {point.get('parameter', 'unknown')}: {point['value']}")
+                        value = None
+                    
+                    if value is not None:
+                        forecast_periods[forecast_time][point['parameter']] = value
+                except Exception as e:
+                    log.debug(f"Error processing data point: {e}")
+                    continue
+            
+            # Convert to list format with WeeWX unit conversions
+            organized_data = []
+            
+            for forecast_time, parameters in forecast_periods.items():
+                try:
+                    converted_data = {'forecast_time': forecast_time}
+                    
+                    # Apply WeeWX unit conversions based on field mappings
+                    for field_name, field_config in field_mappings.items():
+                        grib_parameter = field_config.get('grib_parameter')
                         
-                        # Apply unit conversion if required
-                        if field_info['unit_conversion_required']:
-                            # Unit conversion will be handled later by the unit system
-                            converted_data[database_field] = param_value
-                        else:
-                            converted_data[database_field] = param_value
-                    else:
-                        # Parameter not in CONF mappings - log but don't include
-                        log.debug(f"{CORE_ICONS['navigation']} GRIB parameter {grib_param} not found in CONF field mappings")
-                
-                organized_data.append(converted_data)
-                
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error organizing forecast data for time {forecast_time}: {e}")
-                continue
+                        if grib_parameter and grib_parameter in parameters:
+                            raw_value = parameters[grib_parameter]
+                            
+                            # Apply WeeWX unit conversion
+                            if field_config.get('unit_conversion_required', False):
+                                converted_value = self._convert_to_weewx_units(
+                                    raw_value, field_name, target_unit_system
+                                )
+                                converted_data[field_name] = converted_value
+                            else:
+                                converted_data[field_name] = raw_value
+                    
+                    if len(converted_data) > 1:  # More than just forecast_time
+                        organized_data.append(converted_data)
+                        
+                except Exception as e:
+                    log.error(f"{CORE_ICONS['warning']} Error converting data for time {forecast_time}: {e}")
+                    continue
+            
+            # Sort by forecast time
+            organized_data.sort(key=lambda x: x['forecast_time'])
+            
+            log.debug(f"{CORE_ICONS['status']} Organized {len(organized_data)} forecast periods")
+            return organized_data
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error organizing forecast data: {e}")
+            return []
+
+    def _get_target_unit_system(self):
+        """Get the target unit system from WeeWX configuration"""
         
-        log.info(f"{CORE_ICONS['status']} Organized {len(organized_data)} forecast periods using CONF field mappings")
-        return organized_data
+        try:
+            # Get the station's unit system from WeeWX configuration
+            station_config = self.config_dict.get('Station', {})
+            station_type = station_config.get('station_type', 'Simulator')
+            
+            # Get the target unit system for this station
+            if hasattr(weewx.units, 'unit_constants'):
+                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.units.US)
+            else:
+                # Fallback to checking StdConvert configuration
+                convert_config = self.config_dict.get('StdConvert', {})
+                target_unit_nick = convert_config.get('target_unit', 'US')
+                
+                if target_unit_nick.upper() == 'METRIC':
+                    target_unit_system = weewx.units.METRIC
+                elif target_unit_nick.upper() == 'METRICWX':
+                    target_unit_system = weewx.units.METRICWX
+                else:
+                    target_unit_system = weewx.units.US
+            
+            return target_unit_system
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error determining target unit system: {e}")
+            return weewx.units.US  # Default to US units if unable to determine
+
+    def _convert_to_weewx_units(self, value, field_name, target_unit_system):
+        """Convert raw GRIB values to WeeWX target unit system"""
+        
+        try:
+            # Define source units for GRIB fields (always in SI/metric)
+            grib_source_units = {
+                'wave_height': 'meter',
+                'total_swell_height': 'meter', 
+                'wind_wave_height': 'meter',
+                'wind_speed': 'meter_per_second',
+                'wind_u_component': 'meter_per_second',
+                'wind_v_component': 'meter_per_second'
+            }
+            
+            source_unit = grib_source_units.get(field_name)
+            
+            if not source_unit:
+                # No conversion needed for this field
+                return value
+            
+            # Create ValueTuple for WeeWX unit conversion
+            value_tuple = (value, source_unit, None)
+            
+            # Convert to target unit system using WeeWX
+            converted_tuple = weewx.units.convert(value_tuple, target_unit_system)
+            
+            return converted_tuple[0]  # Return just the converted value
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error converting {field_name} to WeeWX units: {e}")
+            return value  # Return original value if conversion fails
     
     def _calculate_wind_speed(self, parameters):
-        """Calculate wind speed from direct WIND parameter or U/V components fallback"""
+        """Calculate wind speed with primary/backup methods using GFS Wave fields"""
         
-        # UPDATED: Check for direct wind speed from GFS Wave first
-        if 'wind_speed' in parameters:
-            return parameters['wind_speed'] * 2.23694  # m/s to mph
-        
-        # PRESERVE: Fallback to U/V component calculation
-        u_wind = parameters.get('wind_u_10m', 0)
-        v_wind = parameters.get('wind_v_10m', 0)
-        
-        wind_speed_ms = math.sqrt(u_wind**2 + v_wind**2)
-        return wind_speed_ms * 2.23694  # m/s to mph
+        try:
+            # PRIMARY: Direct wind speed from GFS Wave
+            if 'wind_speed' in parameters and parameters['wind_speed'] is not None:
+                return parameters['wind_speed']  # Already converted by _organize_forecast_data
+            
+            # BACKUP: Calculate from U/V components if available
+            u_wind = parameters.get('wind_u_component')
+            v_wind = parameters.get('wind_v_component')
+            
+            if u_wind is not None and v_wind is not None:
+                wind_speed = math.sqrt(u_wind**2 + v_wind**2)
+                return wind_speed  # Already in target units from _organize_forecast_data
+            
+            # NO FALLBACK: Return None to indicate missing data
+            log.debug(f"{CORE_ICONS['warning']} No wind speed data available")
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error calculating wind speed: {e}")
+            return None
     
     def _calculate_wind_direction(self, parameters):
-        """Calculate wind direction from direct WDIR parameter or U/V components fallback"""
+        """Calculate wind direction with primary/backup methods using GFS Wave fields"""
         
-        # UPDATED: Check for direct wind direction from GFS Wave first
-        if 'wind_direction' in parameters:
-            return parameters['wind_direction']
-        
-        # PRESERVE: Fallback to U/V component calculation
-        u_wind = parameters.get('wind_u_10m', 0)
-        v_wind = parameters.get('wind_v_10m', 0)
-        
-        # Convert to meteorological direction (direction wind is coming FROM)
-        wind_dir_rad = math.atan2(-u_wind, -v_wind)
-        wind_dir_deg = math.degrees(wind_dir_rad)
-        
-        # Normalize to 0-360 degrees
-        if wind_dir_deg < 0:
-            wind_dir_deg += 360
-        
-        return wind_dir_deg
+        try:
+            # PRIMARY: Direct wind direction from GFS Wave
+            if 'wind_direction' in parameters and parameters['wind_direction'] is not None:
+                return parameters['wind_direction']
+            
+            # BACKUP: Calculate from U/V components if available
+            u_wind = parameters.get('wind_u_component')
+            v_wind = parameters.get('wind_v_component')
+            
+            if u_wind is not None and v_wind is not None:
+                # Calculate direction from components (meteorological convention)
+                direction = math.atan2(-u_wind, -v_wind) * 180.0 / math.pi
+                if direction < 0:
+                    direction += 360.0
+                return direction
+            
+            # NO FALLBACK: Return None to indicate missing data
+            log.debug(f"{CORE_ICONS['warning']} No wind direction data available")
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error calculating wind direction: {e}")
+            return None
 
 
 class SurfForecastGenerator:
@@ -1086,59 +1167,87 @@ class SurfForecastGenerator:
         self.surf_recommended = self.required_fields.get('surf_forecasting', {}).get('recommended', [])
     
     def generate_surf_forecast(self, spot, forecast_data):
-        """Generate surf forecast using data-driven field configuration and preserve all algorithms"""
-        forecasts = []
+        """Generate surf forecast using updated GFS Wave field mappings"""
         
-        for period_data in forecast_data:
-            # DATA-DRIVEN: Extract fields based on CONF configuration
-            forecast_values = {}
+        try:
+            forecasts = []
             
-            # Extract critical fields (data-driven from CONF)
-            for field_name in self.surf_critical:
-                forecast_values[field_name] = period_data.get(field_name, 0)
+            # Get data-driven field configuration from CONF
+            service_config = self.config_dict.get('SurfFishingService', {})
+            required_fields = service_config.get('required_fields', {})
+            surf_critical = required_fields.get('surf_forecasting', {}).get('critical', [])
+            surf_recommended = required_fields.get('surf_forecasting', {}).get('recommended', [])
             
-            # Extract recommended fields (data-driven from CONF)  
-            for field_name in self.surf_recommended:
-                forecast_values[field_name] = period_data.get(field_name, 0)
+            # REQUIRED: Fail if no field configuration available
+            if not surf_critical:
+                log.error(f"{CORE_ICONS['warning']} No critical surf fields configured in CONF")
+                return []
             
-            # Create basic forecast structure for assess_surf_quality_complete
-            basic_forecast = [{
-                'forecast_time': period_data['forecast_time'],
-                'wave_height_min': forecast_values.get('wave_height', 0) * 0.8,  # Create range
-                'wave_height_max': forecast_values.get('wave_height', 0) * 1.2,
-                'wave_period': forecast_values.get('wave_period', 0),
-                'wave_direction': forecast_values.get('wave_direction', 0),
-                'wind_speed': forecast_values.get('wind_speed', 0),
-                'wind_direction': forecast_values.get('wind_direction', 0)
-            }]
+            for period_data in forecast_data:
+                try:
+                    # Extract fields based on CONF configuration
+                    forecast_values = {}
+                    
+                    # Extract critical fields - FAIL if missing
+                    missing_critical = []
+                    for field_name in surf_critical:
+                        if field_name in period_data:
+                            forecast_values[field_name] = period_data.get(field_name, 0)
+                        else:
+                            missing_critical.append(field_name)
+                    
+                    # FAIL forecast period if critical fields missing
+                    if missing_critical:
+                        log.warning(f"{CORE_ICONS['warning']} Missing critical fields for forecast period: {missing_critical}")
+                        continue
+                    
+                    # Extract recommended fields (optional)
+                    for field_name in surf_recommended:
+                        if field_name in period_data:
+                            forecast_values[field_name] = period_data.get(field_name, 0)
+                    
+                    # Create forecast structure with available data
+                    basic_forecast = [{
+                        'forecast_time': period_data['forecast_time'],
+                        'wave_height_min': forecast_values.get('wave_height', 0) * 0.8,
+                        'wave_height_max': forecast_values.get('wave_height', 0) * 1.2,
+                        'wave_period': forecast_values.get('wave_period', 0),
+                        'wave_direction': forecast_values.get('wave_direction', 0),
+                        'wind_speed': forecast_values.get('wind_speed', 0),
+                        'wind_direction': forecast_values.get('wind_direction', 0),
+                        'total_swell_height': forecast_values.get('total_swell_height', 0),
+                        'total_swell_period': forecast_values.get('total_swell_period', 0),
+                        'wind_wave_height': forecast_values.get('wind_wave_height', 0),
+                        'wind_wave_period': forecast_values.get('wind_wave_period', 0)
+                    }]
+                    
+                    # Use comprehensive surf quality assessment
+                    enhanced_forecast = self.assess_surf_quality_complete(
+                        basic_forecast, 
+                        current_wind={
+                            'wind_speed': forecast_values.get('wind_speed', 0),
+                            'wind_direction': forecast_values.get('wind_direction', 0)
+                        }, 
+                        spot_config=spot
+                    )
+                    
+                    if enhanced_forecast:
+                        forecast = enhanced_forecast[0]
+                        forecast.update(forecast_values)
+                        forecasts.append(forecast)
+                    else:
+                        log.warning(f"{CORE_ICONS['warning']} Quality assessment failed for forecast period")
+                        continue
+                    
+                except Exception as e:
+                    log.error(f"{CORE_ICONS['warning']} Error processing surf period: {e}")
+                    continue
             
-            # Use comprehensive surf quality assessment (handles everything correctly)
-            enhanced_forecast = self.assess_surf_quality_complete(
-                basic_forecast, 
-                current_wind={
-                    'wind_speed': forecast_values.get('wind_speed', 0),
-                    'wind_direction': forecast_values.get('wind_direction', 0)
-                }, 
-                spot_config=spot
-            )
+            return forecasts
             
-            # Extract the enhanced forecast data
-            if enhanced_forecast:
-                forecast = enhanced_forecast[0]  # Get the enhanced period
-                # Add any additional forecast values dynamically
-                forecast.update(forecast_values)
-            else:
-                # Fallback if assessment fails
-                forecast = {
-                    'forecast_time': period_data['forecast_time'],
-                    'rating': 1,
-                    'quality_text': 'Assessment Failed'
-                }
-                forecast.update(forecast_values)
-            
-            forecasts.append(forecast)
-        
-        return forecasts
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error generating surf forecasts: {e}")
+            return []
     
     def _get_current_wave_conditions(self, marine_conditions):
         """Extract current wave conditions from Phase I data"""
@@ -1287,85 +1396,140 @@ class SurfForecastGenerator:
             log.error(f"{CORE_ICONS['warning']} Error in wave transformation: {e}")
             return offshore_forecast  # Return original data on error
     
-    def assess_surf_quality_complete(self, wave_height, wave_period, wind_speed, wind_direction, spot_config):
-        """
-        Assess surf quality using enhanced physics-based scoring from CONF
-        """
+    def assess_surf_quality_complete(self, forecast_periods, current_wind=None, spot_config=None):
+        """Assess surf quality using enhanced physics-based scoring from CONF"""
+        
         try:
-            # Get enhanced scoring criteria from CONF
+            enhanced_forecast = []
+            
+            # Get enhanced scoring criteria from CONF - CORRECT path per Phase II Actual CONF.txt
             service_config = self.config_dict.get('SurfFishingService', {})
             scoring_criteria = service_config.get('scoring_criteria', {})
             surf_scoring = scoring_criteria.get('surf_scoring', {})
             
-            # Get scoring weights from CONF
+            if not surf_scoring:
+                log.error(f"{CORE_ICONS['warning']} No surf scoring configuration found in CONF")
+                return []
+            
+            # Get scoring weights from CONF - CORRECT nested path structure
             scoring_weights = surf_scoring.get('scoring_weights', {})
             wave_height_weight = float(scoring_weights.get('wave_height', '0.35'))
             wave_period_weight = float(scoring_weights.get('wave_period', '0.35'))
             wind_quality_weight = float(scoring_weights.get('wind_quality', '0.20'))
             tide_phase_weight = float(scoring_weights.get('tide_phase', '0.10'))
             
-            # Calculate wave height score using range-based lookup
-            height_scoring = surf_scoring.get('transformed_wave_height_scoring', {})
-            height_score = self.lookup_score_from_range_table(wave_height, height_scoring)
-            
-            # Calculate wave period score using range-based lookup
-            period_scoring = surf_scoring.get('wave_period_scoring', {})
-            period_score = self.lookup_score_from_range_table(wave_period, period_scoring)
-            
-            # Calculate wind quality score
-            wind_score = self._calculate_wind_quality_score(wind_speed, wind_direction, spot_config, surf_scoring)
-            
-            # Calculate tide score (simple implementation for now)
-            tide_score = 0.8  # Placeholder - can be enhanced with actual tide phase
-            
-            # Calculate weighted overall score
-            overall_score = (
-                height_score * wave_height_weight +
-                period_score * wave_period_weight +
-                wind_score * wind_quality_weight +
-                tide_score * tide_phase_weight
-            )
-            
-            # Convert to 1-5 star rating
-            if overall_score >= 0.9:
-                rating = 5
-                text = "Excellent"
-            elif overall_score >= 0.7:
-                rating = 4
-                text = "Good"
-            elif overall_score >= 0.5:
-                rating = 3
-                text = "Fair"
-            elif overall_score >= 0.3:
-                rating = 2
-                text = "Poor"
-            else:
-                rating = 1
-                text = "Very Poor"
-            
-            return {
-                'rating': rating,
-                'text': text,
-                'overall_score': overall_score,
-                'component_scores': {
-                    'height_score': height_score,
-                    'period_score': period_score,
-                    'wind_score': wind_score,
-                    'tide_score': tide_score
-                },
-                'confidence': min(0.9, overall_score + 0.1)
-            }
+            for period in forecast_periods:
+                try:
+                    # Extract wave data - FAIL if critical data missing
+                    wave_height = period.get('wave_height_max', period.get('wave_height'))
+                    wave_period = period.get('wave_period')
+                    wind_speed = period.get('wind_speed')
+                    wind_direction = period.get('wind_direction')
+                    
+                    if wave_height is None or wave_period is None:
+                        log.warning(f"{CORE_ICONS['warning']} Missing critical wave data for quality assessment")
+                        continue
+                    
+                    # Extract swell component data (NEW GFS Wave fields)
+                    total_swell_height = period.get('total_swell_height', 0)
+                    total_swell_period = period.get('total_swell_period', 0)
+                    wind_wave_height = period.get('wind_wave_height', 0)
+                    wind_wave_period = period.get('wind_wave_period', 0)
+                    
+                    # Calculate scoring components - FAIL if scoring configuration missing
+                    size_score = self._score_wave_height(wave_height, surf_scoring)
+                    period_score = self._score_wave_period(wave_period, surf_scoring)
+                    wind_score = self._score_wind_effect(wind_speed or 0, wind_direction or 0, spot_config, surf_scoring)
+                    
+                    # Check if any scoring failed due to missing CONF
+                    if size_score is None or period_score is None or wind_score is None:
+                        log.warning(f"{CORE_ICONS['warning']} Scoring configuration incomplete - skipping quality assessment")
+                        continue
+                    
+                    # Enhanced swell quality assessment with total swell + wind wave approach
+                    swell_dominance = self._assess_swell_dominance_updated(
+                        total_swell_height, total_swell_period, wind_wave_height, wind_wave_period
+                    )
+                    swell_quality_score = self._score_swell_quality(swell_dominance, total_swell_period)
+                    
+                    # Calculate weighted overall rating using CONF weights
+                    overall_score = (
+                        size_score * wave_height_weight +
+                        period_score * wave_period_weight +
+                        wind_score * wind_quality_weight +
+                        swell_quality_score * tide_phase_weight  # Use tide_phase_weight for swell quality
+                    )
+                    
+                    # Convert to 1-5 star rating
+                    stars = max(1, min(5, int(overall_score * 5)))
+                    
+                    # Generate quality description  
+                    quality_text = self._generate_quality_description(
+                        stars, swell_dominance, wave_period, wind_speed or 0, wind_direction or 0, spot_config
+                    )
+                    
+                    # Calculate confidence based on data quality
+                    confidence = self._calculate_quality_confidence(
+                        total_swell_height, wind_wave_height, wave_period, wind_speed or 0
+                    )
+                    
+                    # Enhanced period with all existing fields plus new analysis
+                    enhanced_period = period.copy()
+                    enhanced_period.update({
+                        'quality_rating': stars,
+                        'quality_stars': stars,
+                        'quality_text': quality_text,
+                        'conditions_description': f"{wave_height:.1f}ft {swell_dominance} {quality_text}",
+                        'confidence': confidence,
+                        'wind_condition': self._assess_wind_effect(wind_direction or 0, spot_config),
+                        'swell_dominance': swell_dominance,
+                        'component_scores': {
+                            'size_score': size_score,
+                            'period_score': period_score, 
+                            'wind_score': wind_score,
+                            'swell_quality': swell_quality_score
+                        }
+                    })
+                    
+                    enhanced_forecast.append(enhanced_period)
+                    
+                except Exception as e:
+                    log.error(f"{CORE_ICONS['warning']} Error assessing period quality: {e}")
+                    continue
+                    
+            return enhanced_forecast
             
         except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error in surf quality assessment: {e}")
-            # Fallback scoring to preserve functionality
-            return {
-                'rating': 3,
-                'text': "Fair",
-                'overall_score': 0.5,
-                'component_scores': {'height_score': 0.5, 'period_score': 0.5, 'wind_score': 0.5, 'tide_score': 0.5},
-                'confidence': 0.5
-            }
+            log.error(f"{CORE_ICONS['warning']} Error in complete surf quality assessment: {e}")
+            return []
+
+    def _assess_swell_dominance_updated(self, total_swell_height, total_swell_period, 
+                                    wind_wave_height, wind_wave_period):
+        """Assess swell dominance using total swell + wind wave energy comparison"""
+        
+        try:
+            # Calculate wave energy using E = H²T² approximation
+            swell_energy = total_swell_height ** 2 * total_swell_period ** 2
+            wind_wave_energy = wind_wave_height ** 2 * wind_wave_period ** 2
+            
+            total_energy = swell_energy + wind_wave_energy
+            
+            if total_energy == 0:
+                return 'unknown'
+            
+            swell_percentage = swell_energy / total_energy
+            
+            # Determine dominance type with thresholds
+            if swell_percentage >= 0.7:
+                return 'swell_dominant'  # Clean groundswell conditions
+            elif swell_percentage <= 0.3:
+                return 'wind_wave_dominant'  # Local wind-driven conditions  
+            else:
+                return 'mixed'  # Combined swell and wind waves
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error assessing swell dominance: {e}")
+            return 'unknown'
     
     def _classify_wind_condition(self, wind_direction, wave_direction, wind_speed):
         """Classify wind condition relative to waves"""
@@ -1696,6 +1860,50 @@ class SurfForecastGenerator:
         
         return surf_forecast
 
+    def _score_swell_quality(self, swell_dominance, wave_period):
+        """Score swell quality based on dominance type and period characteristics"""
+        
+        try:
+            if swell_dominance == 'unknown':
+                return 0.5
+            
+            base_score = 0.5
+            
+            # Groundswell quality (clean, organized waves)
+            if swell_dominance == 'swell_dominant':
+                if wave_period >= 14:
+                    base_score = 0.9  # Excellent long-period groundswell
+                elif wave_period >= 11:
+                    base_score = 0.8  # Good groundswell
+                elif wave_period >= 8:
+                    base_score = 0.7  # Moderate groundswell
+                else:
+                    base_score = 0.6  # Short-period swell
+                    
+            # Wind wave quality (local conditions)  
+            elif swell_dominance == 'wind_wave_dominant':
+                if wave_period >= 8:
+                    base_score = 0.6  # Organized wind waves
+                elif wave_period >= 6:
+                    base_score = 0.4  # Moderate wind waves
+                else:
+                    base_score = 0.3  # Choppy wind waves
+                    
+            # Mixed conditions
+            else:  # mixed
+                if wave_period >= 10:
+                    base_score = 0.7  # Good mixed conditions
+                elif wave_period >= 8:
+                    base_score = 0.6  # Moderate mixed
+                else:
+                    base_score = 0.5  # Variable mixed conditions
+            
+            return max(0.0, min(1.0, base_score))
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error scoring swell quality: {e}")
+            return 0.5
+    
     def generate_star_display(self, rating):
         """
         Generate visual star display for surf rating
