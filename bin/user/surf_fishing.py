@@ -1179,6 +1179,8 @@ class SurfForecastGenerator:
             elif field_config.get('forecast_priority') == 2:  # Priority 2 = recommended
                 self.surf_recommended.append(db_field)
                 log.info(f"DEBUG: Added {db_field} to surf_recommended")
+            log.info(f"DEBUG: self.surf_critical now contains: {self.surf_critical}")
+            log.info(f"DEBUG: self.surf_recommended now contains: {self.surf_recommended}")
     
     def generate_surf_forecast(self, spot, forecast_data):
         """Generate surf forecast using updated GFS Wave field mappings"""
@@ -3954,46 +3956,7 @@ class SurfFishingService(StdService):
     def _forecast_loop(self):
         """Main forecast generation loop - complete operation in one method"""
         log.info(f"{CORE_ICONS['status']} Forecast generation thread started")
-        
-        # NEW: Generate forecasts immediately on startup (don't wait for interval)
-        try:
-            log.info(f"{CORE_ICONS['status']} Generating initial forecasts on startup...")
-            
-            # EXISTING LOGIC: Use same forecast generation as the main loop
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
-                fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
-                
-                active_surf_spots = self._get_active_surf_spots()
-                active_fishing_spots = self._get_active_fishing_spots()
-                
-                # Generate startup forecasts
-                for spot in active_surf_spots:
-                    try:
-                        wavewatch_data = []
-                        if self.grib_processor.is_available():
-                            wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
-                            wavewatch_data = wavewatch_collector.fetch_forecast_data(spot['latitude'], spot['longitude'])
-                        
-                        surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
-                        if surf_forecast:
-                            surf_generator.store_surf_forecasts(spot['id'], surf_forecast, db_manager)
-                    except Exception as e:
-                        log.error(f"{CORE_ICONS['warning']} Startup surf forecast failed for {spot.get('name', 'unknown')}: {e}")
-                
-                for spot in active_fishing_spots:
-                    try:
-                        fishing_forecast = fishing_generator.generate_fishing_forecast(spot)
-                        if fishing_forecast:
-                            fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast, db_manager)
-                    except Exception as e:
-                        log.error(f"{CORE_ICONS['warning']} Startup fishing forecast failed for {spot.get('name', 'unknown')}: {e}")
-            
-            log.info(f"{CORE_ICONS['status']} Initial forecasts completed")
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error in startup forecast generation: {e}")
-        
-        # EXISTING: Continue with regular scheduled forecasts (PRESERVE ALL EXISTING CODE)
+          
         while not self.shutdown_event.is_set():
             try:
                 log.debug("Starting forecast generation (API calls and processing)")
