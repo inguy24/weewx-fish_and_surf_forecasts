@@ -720,39 +720,72 @@ class WaveWatchDataCollector:
 
     def fetch_forecast_data(self, latitude, longitude):
         """Fetch GFS Wave forecast data for location with data-driven grid selection"""
-    
+
         if not self.grib_processor.is_available():
             log.warning("GRIB processing not available - skipping GFS Wave data")
             return []
         
         try:
-            # DATA-DRIVEN grid selection
-            grid_name = self._select_grid_data_driven(latitude, longitude)
+            # INLINE: Data-driven grid selection using CONF regional mappings
+            grid_name = None
+            try:
+                # Check each configured grid for coverage
+                for grid_candidate, grid_config in self.grids.items():
+                    bounds = grid_config.get('bounds', [])
+                    if bounds:
+                        # Parse bounds string from CONF (format: "lat_min,lat_max,lon_min,lon_max")
+                        if isinstance(bounds, str):
+                            bounds_list = [float(x.strip()) for x in bounds.split(',')]
+                            if len(bounds_list) == 4:
+                                lat_min, lat_max, lon_min, lon_max = bounds_list
+                                if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
+                                    grid_name = grid_config.get('grid_name', grid_candidate)
+                                    log.debug(f"Selected grid {grid_name} for location {latitude}, {longitude}")
+                                    break
+                
+                # Priority fallback system for grid coverage only
+                if not grid_name:
+                    fallback_grids = ['global.0p16', 'global.0p25']
+                    for fallback_grid in fallback_grids:
+                        for grid_candidate, grid_config in self.grids.items():
+                            if grid_config.get('grid_name') == fallback_grid:
+                                grid_name = fallback_grid
+                                log.info(f"Using fallback grid {grid_name} for location {latitude}, {longitude}")
+                                break
+                        if grid_name:
+                            break
+                
+                # If no global grids available, this is a configuration error
+                if not grid_name:
+                    raise RuntimeError(f"No suitable grid found for location {latitude}, {longitude} - CONF may be incomplete")
+                    
+            except Exception as e:
+                log.error(f"Error in grid selection: {e}")
+                raise RuntimeError(f"Grid selection failed for location {latitude}, {longitude}: {e}")
+            
             log.debug(f"Using GFS Wave grid: {grid_name} for location {latitude}, {longitude}")
             
             # Download GRIB files with updated URL structure
             grib_files = self._download_grib_files(grid_name)
             
-            # SURGICAL FIX 1: ADD FAIL-FAST CHECK FOR EMPTY GRIB FILES
             if not grib_files:
-                log.error("No GRIB files downloaded - failing forecast generation")
+                log.warning("No GRIB files downloaded")
                 return []
             
-            # Process GRIB files with data-driven parameter mapping
+            # Process GRIB files using existing processor
             forecast_data = []
             for grib_file in grib_files:
                 try:
                     data_points = self.grib_processor.process_gfs_wave_file(
-                        grib_file, latitude, longitude
+                        grib_file['file_path'], latitude, longitude
                     )
                     forecast_data.extend(data_points)
                 except Exception as e:
-                    log.error(f"Error processing GRIB file {grib_file}: {e}")
+                    log.error(f"Error processing GRIB file: {e}")
                     continue
             
-            log.info(f"DEBUG: Preserved {len(grib_files)} GRIB files in /tmp/ for inspection")
             return self._organize_forecast_data(forecast_data)
-        
+            
         except Exception as e:
             log.error(f"Error fetching GFS Wave data: {e}")
             return []
