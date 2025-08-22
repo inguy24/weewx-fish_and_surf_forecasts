@@ -113,84 +113,85 @@ noaa_gfs_wave:
   
   # All GFS Wave field mappings
   field_mappings:
-    # Essential wave parameters (HIGH priority)
+    
+    # ============================================================================
+    # ESSENTIAL WAVE PARAMETERS (HIGH priority - required for surf forecasting)
+    # ============================================================================
     wave_height:
-      grib_parameter: "HTSGW"
+      grib_parameter: "swh"                    # FIXED: was "HTSGW"
       database_field: "wave_height"
       database_type: "REAL"
-      unit_conversion_required: true
+      unit_conversion_required: true          # meters to feet
       forecast_priority: 1
       description: "Significant height of combined wind waves and swell"
       
     wave_period:
-      grib_parameter: "PERPW"
+      grib_parameter: "perpw"                  # CORRECT: no change needed
       database_field: "wave_period"
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Mean period of combined wind waves and swell"
+      description: "Primary wave mean period"
       
     wave_direction:
-      grib_parameter: "DIRPW"
+      grib_parameter: "dirpw"                  # CORRECT: no change needed
       database_field: "wave_direction"
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Direction of combined wind waves and swell"
+      description: "Primary wave direction"
       
-    # Essential wind parameters (HIGH priority)
+    # ============================================================================
+    # ESSENTIAL WIND PARAMETERS (HIGH priority - required for surf quality)
+    # ============================================================================
     wind_speed:
-      grib_parameter: "WIND"
+      grib_parameter: "ws"                     # FIXED: was "WIND"
       database_field: "wind_speed"
       database_type: "REAL"
-      unit_conversion_required: true
+      unit_conversion_required: true          # m/s to mph
       forecast_priority: 1
       description: "Wind speed at 10 meters"
       
     wind_direction:
-      grib_parameter: "WDIR"
+      grib_parameter: "wdir"                   # CORRECT: no change needed
       database_field: "wind_direction"
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
       description: "Wind direction at 10 meters"
       
-    # Primary swell components (HIGH priority)
-    swell_1_height:
-      grib_parameter: "SWELL:1"
-      database_field: "swell_1_height"
+    # ============================================================================
+    # WIND COMPONENTS (MEDIUM priority - backup for wind calculations)
+    # ============================================================================
+    wind_u_component:
+      grib_parameter: "u"                      # NEW: added based on GRIB contents
+      database_field: "wind_u_component"
       database_type: "REAL"
-      unit_conversion_required: true
-      forecast_priority: 1
-      description: "Significant wave height of first swell partition"
+      unit_conversion_required: true          # m/s to mph
+      forecast_priority: 2
+      description: "U component of wind at 10 meters"
       
-    swell_1_period:
-      grib_parameter: "SWPER:1"
-      database_field: "swell_1_period"
+    wind_v_component:
+      grib_parameter: "v"                      # NEW: added based on GRIB contents
+      database_field: "wind_v_component"
       database_type: "REAL"
-      unit_conversion_required: false
-      forecast_priority: 1
-      description: "Mean wave period of first swell partition"
+      unit_conversion_required: true          # m/s to mph
+      forecast_priority: 2
+      description: "V component of wind at 10 meters"
       
-    swell_1_direction:
-      grib_parameter: "SWDIR:1"
-      database_field: "swell_1_direction"
-      database_type: "REAL"
-      unit_conversion_required: false
-      forecast_priority: 1
-      description: "Mean wave direction of first swell partition"
-      
-    # Wind wave components (MEDIUM priority)
+    # ============================================================================
+    # WIND WAVE COMPONENTS (MEDIUM priority - local sea state)
+    # ============================================================================
     wind_wave_height:
-      grib_parameter: "WVHGT"
+      grib_parameter: "shww"                   # FIXED: was "WVHGT"
       database_field: "wind_wave_height"
       database_type: "REAL"
-      unit_conversion_required: true
+      unit_conversion_required: true          # meters to feet
       forecast_priority: 2
       description: "Significant height of wind waves"
       
     wind_wave_period:
-      grib_parameter: "WVPER"
+      grib_parameter: "mpww"                   # FIXED: was "WVPER"
       database_field: "wind_wave_period"
       database_type: "REAL"
       unit_conversion_required: false
@@ -198,54 +199,39 @@ noaa_gfs_wave:
       description: "Mean period of wind waves"
       
     wind_wave_direction:
-      grib_parameter: "WVDIR"
+      grib_parameter: "wvdir"                  # CORRECT: no change needed
       database_field: "wind_wave_direction"
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 2
       description: "Direction of wind waves"
       
-    # Secondary swell components (MEDIUM priority)
-    swell_2_height:
-      grib_parameter: "SWELL:2"
-      database_field: "swell_2_height"
+    # ============================================================================
+    # TOTAL SWELL COMPONENTS (HIGH priority - distant storm swell)
+    # ============================================================================
+    total_swell_height:
+      grib_parameter: "shts"                   # NEW: replaces non-existent "SWELL:1"
+      database_field: "total_swell_height"
       database_type: "REAL"
-      unit_conversion_required: true
-      forecast_priority: 2
-      description: "Significant wave height of second swell partition"
+      unit_conversion_required: true          # meters to feet
+      forecast_priority: 1
+      description: "Significant height of total swell"
       
-    swell_2_period:
-      grib_parameter: "SWPER:2"
-      database_field: "swell_2_period"
+    total_swell_period:
+      grib_parameter: "mpts"                   # NEW: replaces non-existent "SWPER:1"
+      database_field: "total_swell_period"
       database_type: "REAL"
       unit_conversion_required: false
-      forecast_priority: 2
-      description: "Mean wave period of second swell partition"
+      forecast_priority: 1
+      description: "Mean period of total swell"
       
-    swell_2_direction:
-      grib_parameter: "SWDIR:2"
-      database_field: "swell_2_direction"
+    total_swell_direction:
+      grib_parameter: "swdir"                  # NEW: replaces non-existent "SWDIR:1"
+      database_field: "total_swell_direction"
       database_type: "REAL"
       unit_conversion_required: false
-      forecast_priority: 2
-      description: "Mean wave direction of second swell partition"
-      
-    # Wind components for calculations (LOW priority)
-    wind_u:
-      grib_parameter: "UGRD"
-      database_field: "wind_u"
-      database_type: "REAL"
-      unit_conversion_required: true
-      forecast_priority: 3
-      description: "U-component of wind"
-      
-    wind_v:
-      grib_parameter: "VGRD"
-      database_field: "wind_v"
-      database_type: "REAL"
-      unit_conversion_required: true
-      forecast_priority: 3
-      description: "V-component of wind"
+      forecast_priority: 1
+      description: "Direction of swell waves"
 
 # =============================================================================
 # BATHYMETRY DATA SOURCE - Future data source placeholder
