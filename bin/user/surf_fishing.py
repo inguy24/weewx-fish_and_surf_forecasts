@@ -669,8 +669,6 @@ class WaveWatchDataCollector:
             self.file_pattern = gfs_wave_data.get('file_pattern', '')
         
         # Grid configuration - Read from data_sources section where it actually is in your CONF
-        data_sources = service_config.get('data_sources', {})
-        gfs_wave_data = data_sources.get('gfs_wave', {})
         self.default_grid = gfs_wave_data.get('grid_selected', '')
         
         # If not found in data_sources, try directly under noaa_gfs_wave as fallback
