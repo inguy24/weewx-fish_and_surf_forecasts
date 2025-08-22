@@ -1171,7 +1171,7 @@ class SurfForecastGenerator:
         self.surf_recommended = []
         for field_name, field_config in field_mappings.items():
             db_field = field_config.get('database_field', field_name)
-            priority = field_config.get('forecast_priority', 3) 
+            priority = int(field_config.get('forecast_priority', 3))
             log.info(f"DEBUG: Field {field_name}, db_field={db_field}, priority={priority}") 
             if priority == 1:  # Priority 1 = critical
                 self.surf_critical.append(db_field)
