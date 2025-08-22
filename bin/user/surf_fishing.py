@@ -634,10 +634,15 @@ class DataFusionProcessor:
 class WaveWatchDataCollector:
     """Collect WaveWatch III offshore wave forecast data"""
     
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, grib_processor=None):
         """Initialize WaveWatchDataCollector using CONF configuration with validation"""
         self.config_dict = config_dict
-        self.grib_processor = GRIBProcessor(config_dict)
+        
+        # Use provided grib_processor or create new one (maintain compatibility)
+        if grib_processor is not None:
+            self.grib_processor = grib_processor
+        else:
+            self.grib_processor = GRIBProcessor(config_dict)
         
         # READ FROM CONF - FAIL HARD if missing
         service_config = config_dict.get('SurfFishingService', {})
