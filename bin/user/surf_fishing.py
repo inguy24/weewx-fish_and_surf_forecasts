@@ -886,14 +886,16 @@ class WaveWatchDataCollector:
                         # VALIDATE FILE - Detect bogus files
                         file_size = os.path.getsize(temp_file.name)
                         
-                        # Check minimum file size (varies by grid)
+                        # Check minimum file size (varies by grid) - CONSERVATIVE VALUES
                         min_sizes = {
-                            'global.0p16': 8000000,   # ~8MB minimum
-                            'atlocn.0p16': 2000000,   # ~2MB minimum  
-                            'wcoast.0p16': 2000000,   # ~2MB minimum
-                            'arctic.9km': 1000000     # ~1MB minimum
+                            'global.0p16': 200000,     # ~200KB minimum for global
+                            'atlocn.0p16': 100000,     # ~100KB minimum for Atlantic
+                            'wcoast.0p16': 100000,     # ~100KB minimum for West Coast  
+                            'arctic.9km': 80000,       # ~80KB minimum for Arctic
+                            'epacif.0p16': 100000,     # ~100KB minimum for Pacific
+                            'global.0p25': 150000      # ~150KB minimum for global 25km
                         }
-                        min_size = min_sizes.get(grid_name, 1000000)
+                        min_size = min_sizes.get(grid_name, 50000)  # 50KB default minimum
                         
                         # Validate file size and GRIB header
                         if file_size >= min_size:
