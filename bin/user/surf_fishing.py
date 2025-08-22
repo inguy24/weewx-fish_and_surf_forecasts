@@ -639,62 +639,68 @@ class WaveWatchDataCollector:
         self.config_dict = config_dict
         
         # Use provided grib_processor or create new one (maintain compatibility)
-        if grib_processor is not None:
+        if grib_processor:
             self.grib_processor = grib_processor
         else:
             self.grib_processor = GRIBProcessor(config_dict)
         
-        # READ FROM CONF - FAIL HARD if missing
+        # Get service configuration
         service_config = config_dict.get('SurfFishingService', {})
-        if not service_config:
-            raise RuntimeError("SurfFishingService configuration missing from CONF")
         
-        self.gfs_wave_config = service_config.get('noaa_gfs_wave', {})
-        if not self.gfs_wave_config:
-            raise RuntimeError("noaa_gfs_wave configuration missing from CONF - installation incomplete")
+        # READ FROM CONF: GFS Wave configuration (must be complete from installer)
+        gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+        if not gfs_wave_config:
+            raise RuntimeError("GFS Wave configuration missing from CONF - installer may have failed")
         
-        # REQUIRED CONF VALUES - FAIL HARD if missing
-        self.base_url = self.gfs_wave_config.get('base_url', '').rstrip('/')
-        if not self.base_url:
-            raise RuntimeError("base_url missing from noaa_gfs_wave CONF")
+        # CRITICAL FIX: Initialize missing attributes from CONF (no fallbacks)
+        self.base_url = gfs_wave_config['base_url']
+        self.url_pattern = gfs_wave_config['url_pattern'] 
+        self.file_pattern = gfs_wave_config['file_pattern']
         
-        self.url_pattern = self.gfs_wave_config.get('url_pattern', '')
-        if not self.url_pattern:
-            raise RuntimeError("url_pattern missing from noaa_gfs_wave CONF")
+        # READ FROM CONF: Grid definitions (must be complete)
+        self.grids = gfs_wave_config['grids']
+        if not self.grids:
+            raise RuntimeError("Grid definitions missing from CONF - installer may have failed")
         
-        # URL patterns - Read from data_sources section where they actually are in your CONF
-        if not self.url_pattern:
-            self.url_pattern = gfs_wave_data.get('url_pattern', '')
-        if not self.file_pattern:
-            self.file_pattern = gfs_wave_data.get('file_pattern', '')
+        # READ FROM CONF: Schedule configuration (must be complete)
+        schedule_config = gfs_wave_config['schedule']
         
-        # Grid configuration - Read from data_sources section where it actually is in your CONF
-        self.default_grid = gfs_wave_data.get('grid_selected', '')
+        # Parse model runs from comma-separated string
+        model_runs_str = schedule_config['model_runs']
+        self.run_cycles = [int(x.strip()) for x in model_runs_str.split(',')]
         
-        # If not found in data_sources, try directly under noaa_gfs_wave as fallback
-        if not self.default_grid:
-            self.default_grid = self.gfs_wave_config.get('grid_selected', '')
+        # Parse forecast hours from comma-separated string
+        forecast_hours_str = schedule_config['forecast_hours']
+        self.forecast_hours = [int(x.strip()) for x in forecast_hours_str.split(',')]
         
-        if not self.default_grid:
-            raise RuntimeError("grid_selected missing from gfs_wave configuration in CONF")
+        # READ FROM CONF: Error handling configuration (must be complete)
+        error_handling = gfs_wave_config['error_handling']
+        self.api_timeout = int(error_handling['timeout_seconds'])
+        self.retry_attempts = int(error_handling['max_retries'])
+        self.connection_timeout = int(error_handling['timeout_seconds'])
+        self.read_timeout = int(error_handling['timeout_seconds'])
         
-        # OPERATIONAL CONSTANTS (GFS Wave standard - these don't change)
-        self.run_cycles = [0, 6, 12, 18]  # GFS Wave runs 4x daily
-        self.forecast_hours = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
+        # INLINE: GFS cycle calculation (moved from separate method)
+        from datetime import datetime, timedelta
         
-        # Grid selection settings - Use actual YAML structure from GitHub folder
-        self.auto_select_regional = self.gfs_wave_config.get('auto_select_regional', 'true').lower() == 'true'
-        self.global_grid = self.gfs_wave_config.get('global_grid', self.default_grid)
+        def get_expected_gfs_cycle(current_time):
+            """Calculate the most recent GFS Wave cycle that should be available"""
+            # Processing delay: GFS Wave takes 3-4 hours to be available
+            processing_delay = 4
+            effective_time = current_time - timedelta(hours=processing_delay)
+            
+            # Find most recent cycle from configured run cycles
+            current_hour = effective_time.hour
+            for cycle in reversed(self.run_cycles):
+                if current_hour >= cycle:
+                    return effective_time.replace(hour=cycle, minute=0, second=0, microsecond=0)
+            
+            # If before first cycle of day, use last cycle of previous day
+            last_cycle = self.run_cycles[-1] if self.run_cycles else 18
+            return effective_time.replace(hour=last_cycle, minute=0, second=0, microsecond=0) - timedelta(days=1)
         
-        # Read grids structure from YAML (if available in CONF)
-        self.grids = self.gfs_wave_config.get('grids', {})
-        
-        # Error handling settings from CONF with defaults
-        error_handling = self.gfs_wave_config.get('error_handling', {})
-        self.api_timeout = int(error_handling.get('api_timeout', '30'))
-        self.retry_attempts = int(error_handling.get('retry_attempts', '3'))
-        self.connection_timeout = int(error_handling.get('connection_timeout', '10'))
-        self.read_timeout = int(error_handling.get('read_timeout', '20'))
+        # Store as instance method
+        self.get_expected_gfs_cycle = get_expected_gfs_cycle
         
         # Validate CONF templates on initialization
         try:
@@ -709,25 +715,8 @@ class WaveWatchDataCollector:
         log.info(f"{CORE_ICONS['status']} WaveWatchDataCollector initialized from CONF")
         log.debug(f"{CORE_ICONS['navigation']} Base URL: {self.base_url}")
         log.debug(f"{CORE_ICONS['navigation']} Run Cycles: {self.run_cycles}")
+        log.debug(f"{CORE_ICONS['navigation']} Forecast Hours: {len(self.forecast_hours)} hours configured")
         log.debug(f"{CORE_ICONS['navigation']} Available Grids: {list(self.grids.keys()) if self.grids else 'None configured'}")
-
-    def _get_expected_gfs_cycle(self, current_time):
-        """Calculate the most recent GFS Wave cycle that should be available"""
-        # GFS Wave runs at 00Z, 06Z, 12Z, 18Z
-        gfs_cycles = [0, 6, 12, 18]
-        
-        # Processing delay: GFS Wave takes 3-4 hours to be available
-        processing_delay = 4
-        effective_time = current_time - timedelta(hours=processing_delay)
-        
-        # Find most recent cycle
-        current_hour = effective_time.hour
-        for cycle in reversed(gfs_cycles):
-            if current_hour >= cycle:
-                return effective_time.replace(hour=cycle, minute=0, second=0, microsecond=0)
-        
-        # If before first cycle of day, use last cycle of previous day
-        return effective_time.replace(hour=18, minute=0, second=0, microsecond=0) - timedelta(days=1)
 
     def fetch_forecast_data(self, latitude, longitude):
         """Fetch GFS Wave forecast data for location with data-driven grid selection"""
@@ -799,32 +788,18 @@ class WaveWatchDataCollector:
     
     def _download_grib_files(self, grid_name):
         """Download GFS Wave GRIB files with smart cycle selection and validation"""
+        
+        current_time = datetime.utcnow()
         grib_files = []
         successful_cycle = None
         
         try:
-            current_time = datetime.utcnow()
-            
-            # SMART CYCLE SELECTION: Calculate most recent available GFS Wave cycle (INLINE)
-            gfs_cycles = [0, 6, 12, 18]  # GFS Wave runs 4x daily
-            processing_delay = 4  # GFS Wave takes 3-4 hours to be available
-            effective_time = current_time - timedelta(hours=processing_delay)
-            
-            # Find most recent cycle
-            current_hour = effective_time.hour
-            expected_cycle = None
-            for cycle in reversed(gfs_cycles):
-                if current_hour >= cycle:
-                    expected_cycle = effective_time.replace(hour=cycle, minute=0, second=0, microsecond=0)
-                    break
-            
-            # If before first cycle of day, use last cycle of previous day
-            if expected_cycle is None:
-                expected_cycle = effective_time.replace(hour=18, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            # INLINE: Smart cycle selection (uses instance method)
+            expected_cycle = self.get_expected_gfs_cycle(current_time)
             
             log.info(f"{CORE_ICONS['navigation']} Expected most recent cycle: {expected_cycle.strftime('%Y%m%d %HZ')}")
             
-            # FALLBACK LOGIC: Try cycles in order of preference
+            # Try multiple recent cycles to find available data
             cycles_to_try = []
             cycles_to_try.append(expected_cycle)  # Try expected cycle first
             
@@ -842,7 +817,7 @@ class WaveWatchDataCollector:
                 cycle_files = []
                 
                 # Try to download files for this cycle
-                for forecast_hour in self.forecast_hours[:24]:  # First 72 hours
+                for forecast_hour in self.forecast_hours[:24]:  # First 72 hours (limit to 24 files)
                     
                     # BUILD URL FROM CONF - FAIL HARD if missing variables
                     try:
@@ -857,7 +832,7 @@ class WaveWatchDataCollector:
                             hh=run_hour_str
                         )
                         
-                        url = f"{self.base_url}/{url_path}/{filename}"
+                        url = f"{self.base_url}{url_path}{filename}"
                         
                     except KeyError as e:
                         raise RuntimeError(f"CONF template missing variable: {e}")
@@ -869,6 +844,8 @@ class WaveWatchDataCollector:
                         
                         # Download with timeout from CONF
                         request = urllib.request.Request(url)
+                        request.add_header('User-Agent', 'weewx-surf-fishing-extension/1.0')
+                        
                         with urllib.request.urlopen(request, timeout=self.connection_timeout) as response:
                             with open(temp_file.name, 'wb') as f:
                                 f.write(response.read())
@@ -890,7 +867,13 @@ class WaveWatchDataCollector:
                             with open(temp_file.name, 'rb') as f:
                                 header = f.read(4)
                                 if header == b'GRIB':
-                                    cycle_files.append(temp_file.name)
+                                    cycle_files.append({
+                                        'file_path': temp_file.name,
+                                        'forecast_hour': forecast_hour,
+                                        'grid_name': grid_name,
+                                        'run_time': potential_run,
+                                        'file_size': file_size
+                                    })
                                     log.debug(f"{CORE_ICONS['status']} Downloaded: {filename} ({file_size} bytes)")
                                 else:
                                     log.debug(f"{CORE_ICONS['warning']} Invalid GRIB header: {filename}")
@@ -900,10 +883,17 @@ class WaveWatchDataCollector:
                             os.unlink(temp_file.name)
                             
                     except (urllib.error.URLError, urllib.error.HTTPError) as e:
-                        log.debug(f"{CORE_ICONS['warning']} HTTP error for {filename}: {e}")
+                        if hasattr(e, 'code') and e.code == 404:
+                            log.debug(f"{CORE_ICONS['warning']} GFS Wave file not yet available: {filename}")
+                        else:
+                            log.debug(f"{CORE_ICONS['warning']} HTTP error for {filename}: {e}")
+                        if temp_file and os.path.exists(temp_file.name):
+                            os.unlink(temp_file.name)
                         continue
                     except Exception as e:
                         log.debug(f"{CORE_ICONS['warning']} Download error for {filename}: {e}")
+                        if temp_file and os.path.exists(temp_file.name):
+                            os.unlink(temp_file.name)
                         continue
                 
                 # If we got enough files from this cycle, use it
@@ -913,17 +903,17 @@ class WaveWatchDataCollector:
                     break
                 else:
                     # Clean up partial download
-                    for temp_file in cycle_files:
+                    for file_info in cycle_files:
                         try:
-                            os.unlink(temp_file)
+                            os.unlink(file_info['file_path'])
                         except:
                             pass
                     log.debug(f"{CORE_ICONS['warning']} Cycle {run_date_str} {run_hour_str}Z: only {len(cycle_files)} files, need 8+")
             
             if grib_files and successful_cycle:
-                log.info(f"{CORE_ICONS['status']} Downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
+                log.info(f"{CORE_ICONS['status']} Downloaded {len(grib_files)} GFS Wave files from {successful_cycle.strftime('%Y%m%d %HZ')}")
             else:
-                log.warning(f"{CORE_ICONS['warning']} No GRIB files could be downloaded")
+                log.warning(f"{CORE_ICONS['warning']} No GFS Wave files could be downloaded for grid {grid_name}")
                 return []
             
             return grib_files
