@@ -662,24 +662,34 @@ class WaveWatchDataCollector:
         if not self.url_pattern:
             raise RuntimeError("url_pattern missing from noaa_gfs_wave CONF")
         
-        self.file_pattern = self.gfs_wave_config.get('file_pattern', '')
+        # URL patterns - Read from data_sources section where they actually are in your CONF
+        if not self.url_pattern:
+            self.url_pattern = gfs_wave_data.get('url_pattern', '')
         if not self.file_pattern:
-            raise RuntimeError("file_pattern missing from noaa_gfs_wave CONF")
+            self.file_pattern = gfs_wave_data.get('file_pattern', '')
         
-        # Grid configuration - FAIL HARD if missing
-        self.default_grid = self.gfs_wave_config.get('grid_selected', '')
+        # Grid configuration - Read from data_sources section where it actually is in your CONF
+        data_sources = service_config.get('data_sources', {})
+        gfs_wave_data = data_sources.get('gfs_wave', {})
+        self.default_grid = gfs_wave_data.get('grid_selected', '')
+        
+        # If not found in data_sources, try directly under noaa_gfs_wave as fallback
         if not self.default_grid:
-            raise RuntimeError("grid_selected missing from noaa_gfs_wave CONF")
+            self.default_grid = self.gfs_wave_config.get('grid_selected', '')
+        
+        if not self.default_grid:
+            raise RuntimeError("grid_selected missing from gfs_wave configuration in CONF")
         
         # OPERATIONAL CONSTANTS (GFS Wave standard - these don't change)
         self.run_cycles = [0, 6, 12, 18]  # GFS Wave runs 4x daily
         self.forecast_hours = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
         
-        # Grid selection settings (optional in CONF)
+        # Grid selection settings - Use actual YAML structure from GitHub folder
         self.auto_select_regional = self.gfs_wave_config.get('auto_select_regional', 'true').lower() == 'true'
         self.global_grid = self.gfs_wave_config.get('global_grid', self.default_grid)
-        self.atlantic_grid = self.gfs_wave_config.get('atlantic_grid', '')
-        self.pacific_grid = self.gfs_wave_config.get('pacific_grid', '')
+        
+        # Read grids structure from YAML (if available in CONF)
+        self.grids = self.gfs_wave_config.get('grids', {})
         
         # Error handling settings from CONF with defaults
         error_handling = self.gfs_wave_config.get('error_handling', {})
@@ -701,7 +711,7 @@ class WaveWatchDataCollector:
         log.info(f"{CORE_ICONS['status']} WaveWatchDataCollector initialized from CONF")
         log.debug(f"{CORE_ICONS['navigation']} Base URL: {self.base_url}")
         log.debug(f"{CORE_ICONS['navigation']} Run Cycles: {self.run_cycles}")
-        log.debug(f"{CORE_ICONS['navigation']} Default Grid: {self.default_grid}")
+        log.debug(f"{CORE_ICONS['navigation']} Available Grids: {list(self.grids.keys()) if self.grids else 'None configured'}")
 
     def _get_expected_gfs_cycle(self, current_time):
         """Calculate the most recent GFS Wave cycle that should be available"""
@@ -797,8 +807,23 @@ class WaveWatchDataCollector:
         try:
             current_time = datetime.utcnow()
             
-            # SMART CYCLE SELECTION: Find most recent available GFS Wave cycle
-            expected_cycle = self._get_expected_gfs_cycle(current_time)
+            # SMART CYCLE SELECTION: Calculate most recent available GFS Wave cycle (INLINE)
+            gfs_cycles = [0, 6, 12, 18]  # GFS Wave runs 4x daily
+            processing_delay = 4  # GFS Wave takes 3-4 hours to be available
+            effective_time = current_time - timedelta(hours=processing_delay)
+            
+            # Find most recent cycle
+            current_hour = effective_time.hour
+            expected_cycle = None
+            for cycle in reversed(gfs_cycles):
+                if current_hour >= cycle:
+                    expected_cycle = effective_time.replace(hour=cycle, minute=0, second=0, microsecond=0)
+                    break
+            
+            # If before first cycle of day, use last cycle of previous day
+            if expected_cycle is None:
+                expected_cycle = effective_time.replace(hour=18, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            
             log.info(f"{CORE_ICONS['navigation']} Expected most recent cycle: {expected_cycle.strftime('%Y%m%d %HZ')}")
             
             # FALLBACK LOGIC: Try cycles in order of preference
