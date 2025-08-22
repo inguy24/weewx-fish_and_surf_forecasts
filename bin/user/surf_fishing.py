@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Mud Swallow
+# Magic Animal: Blue Bird
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -935,6 +935,7 @@ class WaveWatchDataCollector:
                 if len(cycle_files) >= 8:  # Need at least 8 files for useful forecast
                     grib_files = cycle_files
                     successful_cycle = potential_run
+                    log.info(f"{CORE_ICONS['status']} Cycle {run_date_str} {run_hour_str}Z: Got {len(cycle_files)} files - using this cycle")
                     break
                 else:
                     # Clean up partial download
@@ -943,12 +944,12 @@ class WaveWatchDataCollector:
                             os.unlink(file_info['file_path'])
                         except:
                             pass
-                    log.debug(f"{CORE_ICONS['warning']} Cycle {run_date_str} {run_hour_str}Z: only {len(cycle_files)} files, need 8+")
+                    log.warning(f"{CORE_ICONS['warning']} Cycle {run_date_str} {run_hour_str}Z: only {len(cycle_files)} files, need 8+ - trying previous cycle")
             
             if grib_files and successful_cycle:
                 log.info(f"{CORE_ICONS['status']} Downloaded {len(grib_files)} GFS Wave files from {successful_cycle.strftime('%Y%m%d %HZ')}")
             else:
-                log.warning(f"{CORE_ICONS['warning']} No GFS Wave files could be downloaded for grid {grid_name}")
+                log.warning(f"{CORE_ICONS['warning']} No GFS Wave files could be downloaded for grid {grid_name} after trying {len(cycles_to_try)} cycles")
                 return []
             
             return grib_files
