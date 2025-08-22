@@ -1181,6 +1181,9 @@ class SurfForecastGenerator:
             # REQUIRED: Fail if no field configuration available
             if not surf_critical:
                 log.error(f"{CORE_ICONS['warning']} No critical surf fields configured in CONF")
+                log.info(f"DEBUG: surf_critical = {surf_critical}")
+                log.info(f"DEBUG: required_fields = {required_fields}")
+                log.info(f"DEBUG: service_config keys = {list(service_config.keys())}")
                 return []
             
             for period_data in forecast_data:
