@@ -93,7 +93,7 @@ class GRIBProcessor:
             
             # READ FROM NEW CONF: Field mappings for parameter processing
             service_config = self.config_dict.get('SurfFishingService', {})
-            gfs_wave_config = service_config.get('gfs_wave', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
             field_mappings = gfs_wave_config.get('field_mappings', {})
             
             # Build parameter mapping from CONF with proper type conversion
@@ -176,7 +176,7 @@ class GRIBProcessor:
             
             # READ FROM NEW CONF: Field mappings for parameter processing
             service_config = self.config_dict.get('SurfFishingService', {})
-            gfs_wave_config = service_config.get('gfs_wave', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
             field_mappings = gfs_wave_config.get('field_mappings', {})
             
             # Build parameter mapping from CONF with proper type conversion
@@ -4719,7 +4719,8 @@ class SurfFishingService(StdService):
         try:
             # Get field definitions from CONF (written by installer)
             service_config = self.config_dict.get('SurfFishingService', {})
-            field_definitions = service_config.get('field_definitions', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+            field_definitions = gfs_wave_config.get('field_mappings', {})
             
             if not field_definitions:
                 error_msg = "Phase II field definitions not found in CONF. Phase II installation may be incomplete."
