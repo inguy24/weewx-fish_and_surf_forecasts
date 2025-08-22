@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Blue Jay
+# Magic Animal: Purple Martin
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -641,22 +641,22 @@ class WaveWatchDataCollector:
         
         # READ FROM NEW CONF STRUCTURE: gfs_wave section
         service_config = config_dict.get('SurfFishingService', {})
-        self.gfs_wave_config = service_config.get('gfs_wave', {})
+        self.gfs_wave_config = service_config.get('noaa_gfs_wave', {})
         
         # READ FROM NEW CONF: api_endpoints subsection
         api_endpoints = self.gfs_wave_config.get('api_endpoints', {})
-        self.base_url = api_endpoints.get('grib_base_url', '')
+        self.base_url = self.gfs_wave_config.get('base_url', '')
         
         # READ FROM NEW CONF: Scheduling configuration - NO DEFAULTS
         run_cycles_str = api_endpoints.get('model_run_cycles', '')
-        self.run_cycles = [int(cycle.strip()) for cycle in run_cycles_str.split(',') if cycle.strip()]
+        self.run_cycles = [0, 6, 12, 18]  # GFS Wave standard cycles
         
         forecast_hours_str = api_endpoints.get('forecast_hours', '')
         self.forecast_hours = [int(h.strip()) for h in forecast_hours_str.split(',') if h.strip()]
         
         # READ FROM NEW CONF: Grid selection configuration
         grid_selection = self.gfs_wave_config.get('grid_selection', {})
-        self.default_grid = grid_selection.get('default_grid', '')
+        self.default_grid = self.gfs_wave_config.get('grid_selected', 'global.0p16')
         self.auto_select_regional = grid_selection.get('auto_select_regional', 'false').lower() == 'true'
         self.global_grid = grid_selection.get('global_grid', '')
         self.atlantic_grid = grid_selection.get('atlantic_grid', '')
