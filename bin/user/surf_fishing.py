@@ -1173,10 +1173,10 @@ class SurfForecastGenerator:
             db_field = field_config.get('database_field', field_name)
             priority = field_config.get('forecast_priority', 3) 
             log.info(f"DEBUG: Field {field_name}, db_field={db_field}, priority={priority}") 
-            if field_config.get('forecast_priority') == 1:  # Priority 1 = critical
+            if priority == 1:  # Priority 1 = critical
                 self.surf_critical.append(db_field)
                 log.info(f"DEBUG: Added {db_field} to surf_critical")
-            elif field_config.get('forecast_priority') == 2:  # Priority 2 = recommended
+            elif priority == 2:  # Priority 2 = recommended
                 self.surf_recommended.append(db_field)
                 log.info(f"DEBUG: Added {db_field} to surf_recommended")
             log.info(f"DEBUG: self.surf_critical now contains: {self.surf_critical}")
