@@ -1163,14 +1163,21 @@ class SurfForecastGenerator:
         
         gfs_wave_config = service_config.get('noaa_gfs_wave', {})
         field_mappings = gfs_wave_config.get('field_mappings', {})
+
+        log.info(f"DEBUG: Found {len(field_mappings)} field mappings in noaa_gfs_wave")
+        log.info(f"DEBUG: field_mappings keys: {list(field_mappings.keys())}")
+
         self.surf_critical = []
         self.surf_recommended = []
         for field_name, field_config in field_mappings.items():
             db_field = field_config.get('database_field', field_name)
+            log.info(f"DEBUG: Field {field_name}, db_field={db_field}, priority={priority}")
             if field_config.get('forecast_priority') == 1:  # Priority 1 = critical
                 self.surf_critical.append(db_field)
+                log.info(f"DEBUG: Added {db_field} to surf_critical")
             elif field_config.get('forecast_priority') == 2:  # Priority 2 = recommended
                 self.surf_recommended.append(db_field)
+                log.info(f"DEBUG: Added {db_field} to surf_recommended")
     
     def generate_surf_forecast(self, spot, forecast_data):
         """Generate surf forecast using updated GFS Wave field mappings"""
