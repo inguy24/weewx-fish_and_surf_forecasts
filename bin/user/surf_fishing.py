@@ -1161,10 +1161,16 @@ class SurfForecastGenerator:
         service_config = config_dict.get('SurfFishingService', {})
         self.surf_rating_factors = service_config.get('surf_rating_factors', {})
         
-        # READ FROM CONF: Required fields for surf forecasting
-        self.required_fields = service_config.get('required_fields', {})
-        self.surf_critical = self.required_fields.get('surf_forecasting', {}).get('critical', [])
-        self.surf_recommended = self.required_fields.get('surf_forecasting', {}).get('recommended', [])
+        gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+        field_mappings = gfs_wave_config.get('field_mappings', {})
+        self.surf_critical = []
+        self.surf_recommended = []
+        for field_name, field_config in field_mappings.items():
+            db_field = field_config.get('database_field', field_name)
+            if field_config.get('forecast_priority') == 1:  # Priority 1 = critical
+                self.surf_critical.append(db_field)
+            elif field_config.get('forecast_priority') == 2:  # Priority 2 = recommended
+                self.surf_recommended.append(db_field)
     
     def generate_surf_forecast(self, spot, forecast_data):
         """Generate surf forecast using updated GFS Wave field mappings"""
@@ -1174,15 +1180,13 @@ class SurfForecastGenerator:
             
             # Get data-driven field configuration from CONF
             service_config = self.config_dict.get('SurfFishingService', {})
-            required_fields = service_config.get('required_fields', {})
-            surf_critical = required_fields.get('surf_forecasting', {}).get('critical', [])
-            surf_recommended = required_fields.get('surf_forecasting', {}).get('recommended', [])
+            surf_critical = self.surf_critical
+            surf_recommended = self.surf_recommended
             
             # REQUIRED: Fail if no field configuration available
             if not surf_critical:
                 log.error(f"{CORE_ICONS['warning']} No critical surf fields configured in CONF")
                 log.info(f"DEBUG: surf_critical = {surf_critical}")
-                log.info(f"DEBUG: required_fields = {required_fields}")
                 log.info(f"DEBUG: service_config keys = {list(service_config.keys())}")
                 return []
             
