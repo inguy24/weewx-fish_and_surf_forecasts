@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Purple Martin
+# Magic Animal: Mud Swallow
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -634,47 +634,87 @@ class DataFusionProcessor:
 class WaveWatchDataCollector:
     """Collect WaveWatch III offshore wave forecast data"""
     
-    def __init__(self, config_dict, grib_processor):
-        """Initialize GFS Wave data collector with configuration and GRIB processor"""
+    def __init__(self, config_dict):
+        """Initialize WaveWatchDataCollector using CONF configuration with validation"""
         self.config_dict = config_dict
-        self.grib_processor = grib_processor
+        self.grib_processor = GRIBProcessor(config_dict)
         
-        # READ FROM NEW CONF STRUCTURE: gfs_wave section
+        # READ FROM CONF - FAIL HARD if missing
         service_config = config_dict.get('SurfFishingService', {})
+        if not service_config:
+            raise RuntimeError("SurfFishingService configuration missing from CONF")
+        
         self.gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+        if not self.gfs_wave_config:
+            raise RuntimeError("noaa_gfs_wave configuration missing from CONF - installation incomplete")
         
-        # READ FROM NEW CONF: api_endpoints subsection
-        api_endpoints = self.gfs_wave_config.get('api_endpoints', {})
-        self.base_url = self.gfs_wave_config.get('base_url', '')
+        # REQUIRED CONF VALUES - FAIL HARD if missing
+        self.base_url = self.gfs_wave_config.get('base_url', '').rstrip('/')
+        if not self.base_url:
+            raise RuntimeError("base_url missing from noaa_gfs_wave CONF")
         
-        # READ FROM NEW CONF: Scheduling configuration - NO DEFAULTS
-        run_cycles_str = api_endpoints.get('model_run_cycles', '')
-        self.run_cycles = [0, 6, 12, 18]  # GFS Wave standard cycles
+        self.url_pattern = self.gfs_wave_config.get('url_pattern', '')
+        if not self.url_pattern:
+            raise RuntimeError("url_pattern missing from noaa_gfs_wave CONF")
         
-        forecast_hours_str = api_endpoints.get('forecast_hours', '')
-        self.forecast_hours = [int(h.strip()) for h in forecast_hours_str.split(',') if h.strip()]
+        self.file_pattern = self.gfs_wave_config.get('file_pattern', '')
+        if not self.file_pattern:
+            raise RuntimeError("file_pattern missing from noaa_gfs_wave CONF")
         
-        # READ FROM NEW CONF: Grid selection configuration
-        grid_selection = self.gfs_wave_config.get('grid_selection', {})
-        self.default_grid = self.gfs_wave_config.get('grid_selected', 'global.0p16')
-        self.auto_select_regional = grid_selection.get('auto_select_regional', 'false').lower() == 'true'
-        self.global_grid = grid_selection.get('global_grid', '')
-        self.atlantic_grid = grid_selection.get('atlantic_grid', '')
-        self.pacific_grid = grid_selection.get('pacific_grid', '')
+        # Grid configuration - FAIL HARD if missing
+        self.default_grid = self.gfs_wave_config.get('grid_selected', '')
+        if not self.default_grid:
+            raise RuntimeError("grid_selected missing from noaa_gfs_wave CONF")
         
-        # READ FROM NEW CONF: Error handling configuration
+        # OPERATIONAL CONSTANTS (GFS Wave standard - these don't change)
+        self.run_cycles = [0, 6, 12, 18]  # GFS Wave runs 4x daily
+        self.forecast_hours = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42, 48, 54, 60, 66, 72]
+        
+        # Grid selection settings (optional in CONF)
+        self.auto_select_regional = self.gfs_wave_config.get('auto_select_regional', 'true').lower() == 'true'
+        self.global_grid = self.gfs_wave_config.get('global_grid', self.default_grid)
+        self.atlantic_grid = self.gfs_wave_config.get('atlantic_grid', '')
+        self.pacific_grid = self.gfs_wave_config.get('pacific_grid', '')
+        
+        # Error handling settings from CONF with defaults
         error_handling = self.gfs_wave_config.get('error_handling', {})
         self.api_timeout = int(error_handling.get('api_timeout', '30'))
         self.retry_attempts = int(error_handling.get('retry_attempts', '3'))
-        self.retry_delay = int(error_handling.get('retry_delay', '5'))
-        self.max_retry_delay = int(error_handling.get('max_retry_delay', '30'))
         self.connection_timeout = int(error_handling.get('connection_timeout', '10'))
         self.read_timeout = int(error_handling.get('read_timeout', '20'))
         
-        log.info(f"{CORE_ICONS['status']} WaveWatchDataCollector initialized with new CONF structure")
+        # Validate CONF templates on initialization
+        try:
+            test_url = self.url_pattern.format(yyyymmdd='20250821', hh='12')
+            test_file = self.file_pattern.format(hh='12', grid_name='test', fff='000')
+            log.debug(f"{CORE_ICONS['status']} CONF template validation passed")
+        except KeyError as e:
+            raise RuntimeError(f"CONF template pattern missing required variable {e}")
+        except Exception as e:
+            raise RuntimeError(f"CONF template validation failed: {e}")
+        
+        log.info(f"{CORE_ICONS['status']} WaveWatchDataCollector initialized from CONF")
         log.debug(f"{CORE_ICONS['navigation']} Base URL: {self.base_url}")
-        log.debug(f"{CORE_ICONS['navigation']} Run cycles: {self.run_cycles}")
-        log.debug(f"{CORE_ICONS['navigation']} Default grid: {self.default_grid}")
+        log.debug(f"{CORE_ICONS['navigation']} Run Cycles: {self.run_cycles}")
+        log.debug(f"{CORE_ICONS['navigation']} Default Grid: {self.default_grid}")
+
+    def _get_expected_gfs_cycle(self, current_time):
+        """Calculate the most recent GFS Wave cycle that should be available"""
+        # GFS Wave runs at 00Z, 06Z, 12Z, 18Z
+        gfs_cycles = [0, 6, 12, 18]
+        
+        # Processing delay: GFS Wave takes 3-4 hours to be available
+        processing_delay = 4
+        effective_time = current_time - timedelta(hours=processing_delay)
+        
+        # Find most recent cycle
+        current_hour = effective_time.hour
+        for cycle in reversed(gfs_cycles):
+            if current_hour >= cycle:
+                return effective_time.replace(hour=cycle, minute=0, second=0, microsecond=0)
+        
+        # If before first cycle of day, use last cycle of previous day
+        return effective_time.replace(hour=18, minute=0, second=0, microsecond=0) - timedelta(days=1)
 
     def fetch_forecast_data(self, latitude, longitude):
         """Fetch GFS Wave forecast data for location with data-driven grid selection"""
@@ -745,110 +785,118 @@ class WaveWatchDataCollector:
         return self.global_grid if self.global_grid else self.default_grid
     
     def _download_grib_files(self, grid_name):
-        """Download GFS Wave GRIB files for specified grid"""
-        import urllib.request
-        import urllib.error
-        from datetime import datetime, timedelta
-        
+        """Download GFS Wave GRIB files with smart cycle selection and validation"""
         grib_files = []
         successful_cycle = None
         
         try:
             current_time = datetime.utcnow()
             
-            # DATA-DRIVEN: Use lookback hours from CONF
-            error_handling = self.gfs_wave_config.get('error_handling', {})
-            lookback_hours = int(error_handling.get('lookback_hours', '24'))
-            processing_delay_hours = int(error_handling.get('processing_delay_hours', '3'))
+            # SMART CYCLE SELECTION: Find most recent available GFS Wave cycle
+            expected_cycle = self._get_expected_gfs_cycle(current_time)
+            log.info(f"{CORE_ICONS['navigation']} Expected most recent cycle: {expected_cycle.strftime('%Y%m%d %HZ')}")
             
-            # Try each run cycle in reverse order to get most recent
-            for cycle_hours_back in range(lookback_hours):
-                for run_cycle in reversed(self.run_cycles):
+            # FALLBACK LOGIC: Try cycles in order of preference
+            cycles_to_try = []
+            cycles_to_try.append(expected_cycle)  # Try expected cycle first
+            
+            # Add previous cycles as fallbacks (up to 3 cycles back = 18 hours)
+            for i in range(1, 4):
+                fallback_cycle = expected_cycle - timedelta(hours=6 * i)
+                cycles_to_try.append(fallback_cycle)
+            
+            for cycle_attempt, potential_run in enumerate(cycles_to_try, 1):
+                run_date_str = potential_run.strftime("%Y%m%d")
+                run_hour_str = f"{potential_run.hour:02d}"
+                
+                log.debug(f"{CORE_ICONS['navigation']} Trying GFS Wave cycle {cycle_attempt}/{len(cycles_to_try)}: {run_date_str} {run_hour_str}Z")
+                
+                cycle_files = []
+                
+                # Try to download files for this cycle
+                for forecast_hour in self.forecast_hours[:24]:  # First 72 hours
                     
-                    potential_run = current_time.replace(
-                        hour=run_cycle, minute=0, second=0, microsecond=0
-                    ) - timedelta(hours=cycle_hours_back)
-                    
-                    # Skip future runs - use processing delay from CONF
-                    if potential_run > current_time - timedelta(hours=processing_delay_hours):
-                        continue
-                    
-                    run_date_str = potential_run.strftime("%Y%m%d")
-                    run_hour_str = f"{potential_run.hour:02d}"
-                    
-                    log.debug(f"{CORE_ICONS['navigation']} Trying GFS Wave cycle: {run_date_str} {run_hour_str}Z")
-                    
-                    cycle_files = []
-                    
-                    # DATA-DRIVEN: Use forecast hours from CONF
-                    max_forecast_files = int(error_handling.get('max_forecast_files', '25'))
-                    for forecast_hour in self.forecast_hours[:max_forecast_files]:
-                        
-                        # DATA-DRIVEN: Build filename using CONF pattern
-                        api_endpoints = self.gfs_wave_config.get('api_endpoints', {})
-                        url_pattern = api_endpoints.get('url_pattern', '')
-                        file_pattern = api_endpoints.get('file_pattern', '')
-                        
-                        if not url_pattern or not file_pattern:
-                            log.error(f"{CORE_ICONS['warning']} Missing url_pattern or file_pattern in CONF")
-                            continue
-                        
-                        # Replace template variables
-                        filename = file_pattern.format(
+                    # BUILD URL FROM CONF - FAIL HARD if missing variables
+                    try:
+                        filename = self.file_pattern.format(
                             hh=run_hour_str,
-                            grid=grid_name,
+                            grid_name=grid_name,
                             fff=f"{forecast_hour:03d}"
                         )
                         
-                        url = f"{self.base_url}/{url_pattern.format(yyyymmdd=run_date_str, hh=run_hour_str)}/{filename}"
+                        url_path = self.url_pattern.format(
+                            yyyymmdd=run_date_str,
+                            hh=run_hour_str
+                        )
                         
-                        try:
-                            # DATA-DRIVEN: Use timeout values from CONF
-                            request = urllib.request.Request(url)
-                            with urllib.request.urlopen(request, timeout=self.connection_timeout) as response:
-                                
-                                # Download to temporary file
-                                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
-                                
-                                # Read in chunks with timeout
-                                import socket
-                                socket.setdefaulttimeout(self.read_timeout)
-                                
-                                while True:
-                                    chunk = response.read(8192)
-                                    if not chunk:
-                                        break
-                                    temp_file.write(chunk)
-                                
-                                temp_file.close()
-                                cycle_files.append(temp_file.name)
-                                
-                                log.debug(f"{CORE_ICONS['status']} Downloaded: {filename}")
-                                
-                        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
-                            log.debug(f"{CORE_ICONS['warning']} Failed to download {filename}: {e}")
-                            continue
-                        except Exception as e:
-                            log.error(f"{CORE_ICONS['warning']} Unexpected error downloading {filename}: {e}")
-                            continue
+                        url = f"{self.base_url}/{url_path}/{filename}"
+                        
+                    except KeyError as e:
+                        raise RuntimeError(f"CONF template missing variable: {e}")
                     
-                    # If we got files from this cycle, use it
-                    if cycle_files:
-                        grib_files = cycle_files
-                        successful_cycle = potential_run
-                        break
+                    # DOWNLOAD AND VALIDATE
+                    try:
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
+                        temp_file.close()
+                        
+                        # Download with timeout from CONF
+                        request = urllib.request.Request(url)
+                        with urllib.request.urlopen(request, timeout=self.connection_timeout) as response:
+                            with open(temp_file.name, 'wb') as f:
+                                f.write(response.read())
+                        
+                        # VALIDATE FILE - Detect bogus files
+                        file_size = os.path.getsize(temp_file.name)
+                        
+                        # Check minimum file size (varies by grid)
+                        min_sizes = {
+                            'global.0p16': 8000000,   # ~8MB minimum
+                            'atlocn.0p16': 2000000,   # ~2MB minimum  
+                            'wcoast.0p16': 2000000,   # ~2MB minimum
+                            'arctic.9km': 1000000     # ~1MB minimum
+                        }
+                        min_size = min_sizes.get(grid_name, 1000000)
+                        
+                        # Validate file size and GRIB header
+                        if file_size >= min_size:
+                            with open(temp_file.name, 'rb') as f:
+                                header = f.read(4)
+                                if header == b'GRIB':
+                                    cycle_files.append(temp_file.name)
+                                    log.debug(f"{CORE_ICONS['status']} Downloaded: {filename} ({file_size} bytes)")
+                                else:
+                                    log.debug(f"{CORE_ICONS['warning']} Invalid GRIB header: {filename}")
+                                    os.unlink(temp_file.name)
+                        else:
+                            log.debug(f"{CORE_ICONS['warning']} File too small: {filename} ({file_size} bytes, need {min_size}+)")
+                            os.unlink(temp_file.name)
+                            
+                    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+                        log.debug(f"{CORE_ICONS['warning']} HTTP error for {filename}: {e}")
+                        continue
+                    except Exception as e:
+                        log.debug(f"{CORE_ICONS['warning']} Download error for {filename}: {e}")
+                        continue
                 
-                # If we found files, break out of the outer loop too
-                if grib_files:
+                # If we got enough files from this cycle, use it
+                if len(cycle_files) >= 8:  # Need at least 8 files for useful forecast
+                    grib_files = cycle_files
+                    successful_cycle = potential_run
                     break
-            
-            if grib_files:
-                if successful_cycle:
-                    log.info(f"{CORE_ICONS['status']} Successfully downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
                 else:
-                    log.info(f"{CORE_ICONS['status']} Successfully downloaded {len(grib_files)} GRIB files")
+                    # Clean up partial download
+                    for temp_file in cycle_files:
+                        try:
+                            os.unlink(temp_file)
+                        except:
+                            pass
+                    log.debug(f"{CORE_ICONS['warning']} Cycle {run_date_str} {run_hour_str}Z: only {len(cycle_files)} files, need 8+")
+            
+            if grib_files and successful_cycle:
+                log.info(f"{CORE_ICONS['status']} Downloaded {len(grib_files)} GRIB files from {successful_cycle.strftime('%Y%m%d %HZ')}")
             else:
                 log.warning(f"{CORE_ICONS['warning']} No GRIB files could be downloaded")
+                return []
             
             return grib_files
             
@@ -3345,46 +3393,80 @@ class SurfFishingService(StdService):
         self.forecast_thread.start()
 
     def _forecast_loop(self):
-        """
-        Main forecast generation loop - complete operation in one method
-        FIXED: Creates thread-local database manager and generators for each iteration
-        """
-        log.info("Forecast generation thread started")
+        """Main forecast generation loop - complete operation in one method"""
+        log.info(f"{CORE_ICONS['status']} Forecast generation thread started")
         
+        # NEW: Generate forecasts immediately on startup (don't wait for interval)
+        try:
+            log.info(f"{CORE_ICONS['status']} Generating initial forecasts on startup...")
+            
+            # EXISTING LOGIC: Use same forecast generation as the main loop
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
+                fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
+                
+                active_surf_spots = self._get_active_surf_spots()
+                active_fishing_spots = self._get_active_fishing_spots()
+                
+                # Generate startup forecasts
+                for spot in active_surf_spots:
+                    try:
+                        wavewatch_data = []
+                        if self.grib_processor.is_available():
+                            wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
+                            wavewatch_data = wavewatch_collector.fetch_forecast_data(spot['latitude'], spot['longitude'])
+                        
+                        surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
+                        if surf_forecast:
+                            surf_generator.store_surf_forecasts(spot['id'], surf_forecast, db_manager)
+                    except Exception as e:
+                        log.error(f"{CORE_ICONS['warning']} Startup surf forecast failed for {spot.get('name', 'unknown')}: {e}")
+                
+                for spot in active_fishing_spots:
+                    try:
+                        fishing_forecast = fishing_generator.generate_fishing_forecast(spot)
+                        if fishing_forecast:
+                            fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast, db_manager)
+                    except Exception as e:
+                        log.error(f"{CORE_ICONS['warning']} Startup fishing forecast failed for {spot.get('name', 'unknown')}: {e}")
+            
+            log.info(f"{CORE_ICONS['status']} Initial forecasts completed")
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in startup forecast generation: {e}")
+        
+        # EXISTING: Continue with regular scheduled forecasts (PRESERVE ALL EXISTING CODE)
         while not self.shutdown_event.is_set():
             try:
                 log.debug("Starting forecast generation (API calls and processing)")
                 
-                # Open thread-local database connection for entire forecast cycle
+                # EXISTING: Open thread-local database connection for entire forecast cycle
                 with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
                     
-                    # Create thread-local generators with database manager
+                    # EXISTING: Create thread-local generators with database manager
                     surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
                     fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
                     
-                    # Get active spots
+                    # EXISTING: Get active spots
                     active_surf_spots = self._get_active_surf_spots()
                     active_fishing_spots = self._get_active_fishing_spots()
                     
                     surf_count = 0
                     fishing_count = 0
                     
-                    # Generate surf forecasts
+                    # EXISTING: Generate surf forecasts
                     for spot in active_surf_spots:
                         try:
-                            # Get WaveWatch III data if available
+                            # EXISTING: Get WaveWatch III data if available
                             wavewatch_data = []
                             if self.grib_processor.is_available():
                                 wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
-                                wavewatch_data = wavewatch_collector.fetch_forecast_data(
-                                    spot['latitude'], spot['longitude']
-                                )
+                                wavewatch_data = wavewatch_collector.fetch_forecast_data(spot['latitude'], spot['longitude'])
                             
-                            # Generate surf forecast
+                            # EXISTING: Generate surf forecast
                             surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
                             
                             if surf_forecast:
-                                # Store directly with the generator's method
+                                # EXISTING: Store directly with the generator's method
                                 surf_generator.store_surf_forecasts(spot['id'], surf_forecast, db_manager)
                                 surf_count += 1
                                 
@@ -3392,14 +3474,14 @@ class SurfFishingService(StdService):
                             log.error(f"Error generating surf forecast for {spot.get('name', 'unknown')}: {e}")
                             continue
                     
-                    # Generate fishing forecasts
+                    # EXISTING: Generate fishing forecasts
                     for spot in active_fishing_spots:
                         try:
-                            # Generate fishing forecast
+                            # EXISTING: Generate fishing forecast
                             fishing_forecast = fishing_generator.generate_fishing_forecast(spot)
                             
                             if fishing_forecast:
-                                # Store directly with the generator's method
+                                # EXISTING: Store directly with the generator's method
                                 fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast, db_manager)
                                 fishing_count += 1
                                 
@@ -3409,7 +3491,7 @@ class SurfFishingService(StdService):
                     
                     log.info(f"Forecast generation completed for {surf_count} surf spots and {fishing_count} fishing spots")
                 
-                # Sleep outside of database context
+                # EXISTING: Sleep outside of database context
                 log.debug(f"Sleeping for {self.forecast_interval} seconds")
                 self.shutdown_event.wait(timeout=self.forecast_interval)
                 
@@ -3417,7 +3499,7 @@ class SurfFishingService(StdService):
                 log.error(f"Error in forecast loop: {e}")
                 self.shutdown_event.wait(timeout=300)
         
-        log.info("Forecast generation thread stopped")
+        log.info(f"{CORE_ICONS['status']} Forecast generation thread stopped")
         
     def _get_active_surf_spots(self):
         """Get all surf spots from CONF configuration"""
