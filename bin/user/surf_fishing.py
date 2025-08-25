@@ -218,17 +218,12 @@ class GRIBProcessor:
                         # Get nearest grid point value
                         # Normalize longitude to match GRIB file format (0-360 if needed)
                         normalized_lon = target_lon + 360 if (target_lon < 0 and grb.longitudes.min() >= 0) else target_lon
+                        nearest_values = grb.nearest(target_lat, normalized_lon)
                         
-                        # Get the full data grid
-                        values, lats, lons = grb.data()
-                        
-                        # Find closest point manually
-                        import numpy as np
-                        distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
-                        min_idx = np.argmin(distances)
-                        closest_value = float(values.flat[min_idx])
-                        
-                        if not np.isnan(closest_value):
+                        # Find closest point
+                        if nearest_values:
+                            # Get the first (closest) value
+                            closest_value = float(nearest_values[0][0])
                             
                             data_points.append({
                                 'parameter': param_name,
