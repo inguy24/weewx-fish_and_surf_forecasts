@@ -806,9 +806,7 @@ class SurfFishingConfigurator:
         adaptive_offshore_distance = adaptive_distances.get(detected_region, 10000)  # Default 10km
         
         # EXISTING: Use offshore bearing to determine offshore direction
-        offshore_bearing = beach_angle + 180  # Perpendicular seaward direction
-        if offshore_bearing >= 360:
-            offshore_bearing -= 360
+        offshore_bearing = beach_angle  # Perpendicular seaward direction
         
         # EXISTING: Calculate offshore coordinates using great circle math
         offshore_distance_degrees = adaptive_offshore_distance / 111320  # Convert meters to degrees
