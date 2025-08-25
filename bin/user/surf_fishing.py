@@ -725,9 +725,24 @@ class WaveWatchDataCollector:
         log.debug(f"{CORE_ICONS['navigation']} Forecast Hours: {len(self.forecast_hours)} hours configured")
         log.debug(f"{CORE_ICONS['navigation']} Available Grids: {list(self.grids.keys()) if self.grids else 'None configured'}")
 
-    def fetch_forecast_data(self, latitude, longitude):
+    def fetch_forecast_data(self, spot_config):
         """Fetch GFS Wave forecast data for location with data-driven grid selection"""
 
+        # Extract offshore coordinates for GRIB data (deep water)
+        bathymetric_path = spot_config.get('bathymetric_path', {})
+        
+        if not bathymetric_path.get('offshore_latitude') or not bathymetric_path.get('offshore_longitude'):
+            log.error(f"Missing bathymetric_path offshore coordinates for spot {spot_config.get('name', 'unknown')}")
+            return []
+        
+        offshore_lat = float(bathymetric_path['offshore_latitude'])
+        offshore_lon = float(bathymetric_path['offshore_longitude'])
+        
+        log.debug(f"Using offshore coordinates for GRIB data: lat={offshore_lat}, lon={offshore_lon}")
+        
+        # All original grid selection logic uses offshore coordinates
+        latitude, longitude = offshore_lat, offshore_lon
+    
         if not self.grib_processor.is_available():
             log.warning("GRIB processing not available - skipping GFS Wave data")
             return []
@@ -3989,7 +4004,7 @@ class SurfFishingService(StdService):
                             wavewatch_data = []
                             if self.grib_processor.is_available():
                                 wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
-                                wavewatch_data = wavewatch_collector.fetch_forecast_data(spot['latitude'], spot['longitude'])
+                                wavewatch_data = wavewatch_collector.fetch_forecast_data(spot)
                             
                             # EXISTING: Generate surf forecast
                             surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
