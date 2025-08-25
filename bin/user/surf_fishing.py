@@ -145,9 +145,13 @@ class GRIBProcessor:
                         
                         # Get nearest grid point value
                         # Normalize longitude to match GRIB file format (0-360 if needed)
-                        lon_min = eccodes.codes_get(msg_id, 'longitudeOfFirstGridPointInDegrees')
-                        normalized_lon = target_lon + 360 if (target_lon < 0 and lon_min >= 0) else target_lon
-                        value = eccodes.codes_get_nearest(msg_id, target_lat, normalized_lon)[0]['value']
+                        try:
+                            lon_min = eccodes.codes_get(msg_id, 'longitudeOfFirstGridPointInDegrees')
+                            normalized_lon = target_lon + 360 if (target_lon < 0 and lon_min >= 0) else target_lon
+                            value = eccodes.codes_get_nearest(msg_id, target_lat, normalized_lon)[0]['value']
+                        except:
+                            # Fallback if longitude normalization fails
+                            value = eccodes.codes_get_nearest(msg_id, target_lat, target_lon)[0]['value']
                         
                         data_points.append({
                             'parameter': param_name,
@@ -215,16 +219,19 @@ class GRIBProcessor:
                         valid_date = grb.validDate
                         forecast_timestamp = valid_date.timestamp()
                         
-                        # Get nearest grid point value
-                        # Normalize longitude to match GRIB file format (0-360 if needed)
-                        normalized_lon = target_lon + 360 if (target_lon < 0 and grb.longitudes.min() >= 0) else target_lon
-                        nearest_values = grb.nearest(target_lat, normalized_lon)
-                        
-                        # Find closest point
-                        if nearest_values:
-                            # Get the first (closest) value
-                            closest_value = float(nearest_values[0][0])
-                            
+                        # Get the full data grid first to avoid Key/value errors
+                        values, lats, lons = grb.data()
+
+                        # Normalize longitude using actual grid data
+                        normalized_lon = target_lon + 360 if (target_lon < 0 and lons.min() >= 0) else target_lon
+
+                        # Find closest point manually (more reliable than grb.nearest)
+                        import numpy as np
+                        distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
+                        min_idx = np.argmin(distances)
+                        closest_value = float(values.flat[min_idx])
+
+                        if not np.isnan(closest_value):
                             data_points.append({
                                 'parameter': param_name,
                                 'value': closest_value,
