@@ -202,6 +202,9 @@ class GRIBProcessor:
                         if param_name not in grib_parameters:
                             continue
                         
+                        log.debug(f"Processing parameter: {param_name}")
+                        log.debug(f"Target coordinates: lat={target_lat}, lon={target_lon}")
+                        log.debug(f"GRIB domain: lat=[{grb.latitudes.min():.2f},{grb.latitudes.max():.2f}], lon=[{grb.longitudes.min():.2f},{grb.longitudes.max():.2f}]")
                         # Get forecast time info
                         forecast_time_offset = grb.forecastTime
                         
