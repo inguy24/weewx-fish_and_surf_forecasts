@@ -221,24 +221,23 @@ class GRIBProcessor:
                         
                         # Get the full data grid first to avoid Key/value errors
                         values, lats, lons = grb.data()
+                        log.debug(f"Data grid shape: values={values.shape}, lats={lats.shape}, lons={lons.shape}")
 
                         # Normalize longitude using actual grid data
                         normalized_lon = target_lon + 360 if (target_lon < 0 and lons.min() >= 0) else target_lon
+                        log.debug(f"Normalized longitude: {normalized_lon} (original: {target_lon})")
 
                         # Find closest point manually (more reliable than grb.nearest)
                         import numpy as np
                         distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
                         min_idx = np.argmin(distances)
                         closest_value = float(values.flat[min_idx])
+                        log.debug(f"Closest value for {param_name}: {closest_value} (min_distance: {distances.flat[min_idx]:.4f})")
 
                         if not np.isnan(closest_value):
-                            data_points.append({
-                                'parameter': param_name,
-                                'value': closest_value,
-                                'forecast_time': forecast_timestamp,
-                                'latitude': target_lat,
-                                'longitude': target_lon
-                            })
+                            log.debug(f"✅ Adding data point for {param_name}: {closest_value}")
+                        else:
+                            log.debug(f"❌ Skipping NaN value for {param_name}")
                         
                     except Exception as e:
                         log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message with pygrib: {e}")
