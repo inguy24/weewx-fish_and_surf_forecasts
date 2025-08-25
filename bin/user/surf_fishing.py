@@ -228,11 +228,6 @@ class GRIBProcessor:
                         min_idx = np.argmin(distances)
                         closest_value = float(values.flat[min_idx])
                         
-                        # DEBUG: Check what we're getting
-                        log.debug(f"Data shape: values={values.shape}, lats={lats.shape}, lons={lons.shape}")
-                        log.debug(f"Normalized lon: {normalized_lon}, Min distance: {distances.min():.4f}")
-                        log.debug(f"Closest value for {param_name}: {closest_value}, is NaN: {np.isnan(closest_value)}")
-                        
                         if not np.isnan(closest_value):
                             
                             data_points.append({
