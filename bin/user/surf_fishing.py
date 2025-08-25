@@ -144,7 +144,10 @@ class GRIBProcessor:
                         forecast_timestamp = forecast_dt.timestamp()
                         
                         # Get nearest grid point value
-                        value = eccodes.codes_get_nearest(msg_id, target_lat, target_lon)[0]['value']
+                        # Normalize longitude to match GRIB file format (0-360 if needed)
+                        lon_min = eccodes.codes_get(msg_id, 'longitudeOfFirstGridPointInDegrees')
+                        normalized_lon = target_lon + 360 if (target_lon < 0 and lon_min >= 0) else target_lon
+                        value = eccodes.codes_get_nearest(msg_id, target_lat, normalized_lon)[0]['value']
                         
                         data_points.append({
                             'parameter': param_name,
@@ -213,13 +216,14 @@ class GRIBProcessor:
                         forecast_timestamp = valid_date.timestamp()
                         
                         # Get nearest grid point value
-                        value, lat, lon = grb.data(lat1=target_lat-0.1, lat2=target_lat+0.1, 
-                                                lon1=target_lon-0.1, lon2=target_lon+0.1)
+                        # Normalize longitude to match GRIB file format (0-360 if needed)
+                        normalized_lon = target_lon + 360 if (target_lon < 0 and grb.longitudes.min() >= 0) else target_lon
+                        nearest_values = grb.nearest(target_lat, normalized_lon)
                         
                         # Find closest point
-                        if value.size > 0:
+                        if nearest_values:
                             # Get the first (closest) value
-                            closest_value = float(value.flat[0])
+                            closest_value = float(nearest_values[0][0])
                             
                             data_points.append({
                                 'parameter': param_name,
