@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Hermit Crab
+# Magic Animal: Moray Eel
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -776,7 +776,7 @@ class SurfFishingConfigurator:
             print(f"  {CORE_ICONS['error']} No total_points_per_spot configured in YAML")
             return None
         
-        # NEW: Detect geographic region for adaptive distance (inline helper code)
+        # EXISTING: Detect geographic region for adaptive distance (inline helper code)
         detected_region = None
         geographic_regions = self.yaml_data.get('geographic_regions')
         
@@ -784,7 +784,7 @@ class SurfFishingConfigurator:
             print(f"  {CORE_ICONS['error']} No geographic_regions found in YAML configuration")
             return None
         
-        # Check all region categories for coordinate match (inline geographic detection)
+        # EXISTING: Check all region categories for coordinate match (inline geographic detection)
         for category_name, category_data in geographic_regions.items():
             if isinstance(category_data, dict):
                 for region_name, region_data in category_data.items():
@@ -792,38 +792,26 @@ class SurfFishingConfigurator:
                         lat_range = region_data.get('lat_range')
                         lon_range = region_data.get('lon_range')
                         
-                        if (lat_range and lon_range and len(lat_range) == 2 and len(lon_range) == 2 and
-                            lat_range[0] <= lat <= lat_range[1] and 
-                            lon_range[0] <= lon <= lon_range[1]):
-                            detected_region = region_name
-                            print(f"  {CORE_ICONS['navigation']} Detected region: {region_data.get('name', region_name)}")
-                            break
-                if detected_region:
-                    break
+                        if (lat_range and lon_range and 
+                            len(lat_range) == 2 and len(lon_range) == 2):
+                            if (lat_range[0] <= lat <= lat_range[1] and
+                                lon_range[0] <= lon <= lon_range[1]):
+                                detected_region = region_name
+                                break
+            if detected_region:
+                break
         
-        if not detected_region:
-            print(f"  {CORE_ICONS['error']} Coordinates {lat}, {lon} not found in any configured region")
-            print(f"  {CORE_ICONS['warning']} Installation failed - add geographic coverage for this location to YAML")
-            return None
+        # EXISTING: Get adaptive distance for detected region
+        adaptive_distances = self.yaml_data.get('geographic_regions', {}).get('adaptive_distances', {})
+        adaptive_offshore_distance = adaptive_distances.get(detected_region, 10000)  # Default 10km
         
-        # NEW: Get adaptive offshore distance based on detected region (data-driven, no fallbacks)
-        regional_distances = path_config.get('regional_distances')
-        if not regional_distances:
-            print(f"  {CORE_ICONS['error']} No regional_distances found in YAML configuration")
-            return None
-            
-        adaptive_offshore_distance = regional_distances.get(detected_region)
-        if not adaptive_offshore_distance:
-            print(f"  {CORE_ICONS['error']} No distance configured for region '{detected_region}' in YAML")
-            return None
+        # EXISTING: Use offshore bearing to determine offshore direction
+        offshore_bearing = beach_angle + 180  # Perpendicular seaward direction
+        if offshore_bearing >= 360:
+            offshore_bearing -= 360
         
-        print(f"  {CORE_ICONS['status']} Using offshore distance: {adaptive_offshore_distance/1000:.1f}km")
-        
-        # EXISTING: Calculate offshore point using beach angle (CORRECTED from original bug)
-        offshore_bearing = beach_angle  # CORRECTED: removed +180 that sent path toward land
-        
-        # EXISTING: Calculate offshore coordinates using proper great circle math
-        offshore_distance_degrees = adaptive_offshore_distance / 111320  # Rough conversion to degrees
+        # EXISTING: Calculate offshore coordinates using great circle math
+        offshore_distance_degrees = adaptive_offshore_distance / 111320  # Convert meters to degrees
         offshore_lat = lat + offshore_distance_degrees * math.cos(math.radians(offshore_bearing))
         offshore_lon = lon + offshore_distance_degrees * math.sin(math.radians(offshore_bearing)) / math.cos(math.radians(lat))
         
@@ -852,10 +840,12 @@ class SurfFishingConfigurator:
         bathymetric_path['path_points_total'] = str(total_points)
         bathymetric_path['data_source'] = 'fallback' if used_fallback else 'gebco_api'
         bathymetric_path['offshore_bearing'] = str(offshore_bearing)
-        
-        # NEW: Store adaptive distance information for debugging/verification
         bathymetric_path['adaptive_distance_used'] = str(adaptive_offshore_distance)
         bathymetric_path['detected_region'] = detected_region
+        
+        # NEW: Add offshore coordinates to CONF storage
+        bathymetric_path['offshore_latitude'] = f"{offshore_lat:.6f}"
+        bathymetric_path['offshore_longitude'] = f"{offshore_lon:.6f}"
         
         # EXISTING: Store depth points for each coordinate
         for i, depth in enumerate(bathymetry_data):
