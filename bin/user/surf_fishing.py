@@ -4068,6 +4068,7 @@ class SurfFishingService(StdService):
                     'longitude': float(spot_config.get('longitude', '0.0')),
                     'bottom_type': spot_config.get('bottom_type', 'sand'),
                     'exposure': spot_config.get('exposure', 'exposed'),
+                    'bathymetric_path': spot_config.get('bathymetric_path', {}),
                     'type': spot_config.get('type', 'surf')
                 }
                 spots.append(spot)
