@@ -802,8 +802,15 @@ class SurfFishingConfigurator:
                 break
         
         # EXISTING: Get adaptive distance for detected region
-        adaptive_distances = self.yaml_data.get('geographic_regions', {}).get('adaptive_distances', {})
-        adaptive_offshore_distance = adaptive_distances.get(detected_region, 10000)  # Default 10km
+        regional_distances = path_config.get('regional_distances')
+        if not regional_distances:
+            print(f"  {CORE_ICONS['error']} No regional_distances found in YAML configuration")
+            return None
+            
+        adaptive_offshore_distance = regional_distances.get(detected_region)
+        if not adaptive_offshore_distance:
+            print(f"  {CORE_ICONS['error']} No distance configured for region '{detected_region}' in YAML")
+            return None
         
         # EXISTING: Use offshore bearing to determine offshore direction
         offshore_bearing = beach_angle  # Perpendicular seaward direction
