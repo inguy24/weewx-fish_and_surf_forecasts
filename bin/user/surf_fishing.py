@@ -17,6 +17,7 @@ import urllib.request
 import urllib.error
 import tempfile
 import configobj
+import shutil
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 
