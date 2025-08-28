@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Cuckoo
+# Magic Animal: Magpie
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1179,6 +1179,491 @@ class WaveWatchDataCollector:
             return None
 
 
+class BathymetryProcessor:
+    """Handle deep water point determination and bathymetry profile calculations for surf spots"""
+    
+    def __init__(self, config_dict, grib_processor):
+        """Initialize bathymetry processor with access to CONF data and GRIB processing"""
+        self.config_dict = config_dict
+        self.grib_processor = grib_processor
+        
+        # Get bathymetry configuration from CONF
+        service_config = config_dict.get('SurfFishingService', {})
+        self.bathymetry_config = service_config.get('bathymetry_data', {})
+        
+        # GEBCO API configuration from CONF
+        api_config = self.bathymetry_config.get('api_configuration', {})
+        self.gebco_base_url = api_config.get('base_url', 'https://api.opentopodata.org/v1/gebco2020')
+        self.api_timeout = int(api_config.get('timeout_seconds', '30'))
+        self.retry_attempts = int(api_config.get('retry_attempts', '3'))
+        
+        # Path analysis configuration
+        path_config = self.bathymetry_config.get('path_analysis', {})
+        self.path_resolution_points = int(path_config.get('path_resolution_points', '15'))
+        self.offshore_distance_km = float(path_config.get('offshore_distance_meters', '20000')) / 1000.0  # Convert to km
+        
+        log.info(f"{CORE_ICONS['status']} BathymetryProcessor initialized from CONF")
+    
+    def process_surf_spot_bathymetry(self, spot):
+        """Main entry point - check flag and process if needed"""
+        
+        spot_id = spot['id']
+        spot_name = spot.get('name', spot_id)
+        
+        try:
+            log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
+            
+            # Get beach facing direction from CONF (set by install.py)
+            spot_config = self._get_spot_config_from_conf(spot_id)
+            if not spot_config:
+                log.error(f"{CORE_ICONS['warning']} No CONF data found for spot {spot_id}")
+                return False
+            
+            beach_facing = spot_config.get('beach_facing')
+            if not beach_facing:
+                log.error(f"{CORE_ICONS['warning']} No beach_facing direction in CONF for {spot_name}")
+                return False
+            
+            surf_break_lat = float(spot['latitude'])
+            surf_break_lon = float(spot['longitude'])
+            
+            # Step 1: Find valid deep water point
+            deep_water_result = self._find_deep_water_point(surf_break_lat, surf_break_lon, float(beach_facing))
+            
+            if not deep_water_result:
+                log.error(f"{CORE_ICONS['warning']} Could not find valid deep water point for {spot_name}")
+                return False
+            
+            # Step 2: Create surf path and collect bathymetry profile
+            surf_path_result = self._create_surf_path_and_collect_bathymetry(
+                deep_water_result, surf_break_lat, surf_break_lon
+            )
+            
+            if not surf_path_result:
+                log.error(f"{CORE_ICONS['warning']} Could not create bathymetry profile for {spot_name}")
+                return False
+            
+            # Step 3: Store results in CONF
+            bathymetry_data = {
+                **deep_water_result,
+                **surf_path_result,
+                'calculation_timestamp': time.time(),
+                'bathymetry_calculated': True
+            }
+            
+            success = self._store_bathymetry_in_conf(spot_id, bathymetry_data)
+            
+            if success:
+                log.info(f"{CORE_ICONS['status']} Bathymetry processing completed for {spot_name}")
+                return True
+            else:
+                log.error(f"{CORE_ICONS['warning']} Failed to store bathymetry data for {spot_name}")
+                return False
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error processing bathymetry for {spot_name}: {e}")
+            return False
+    
+    def _find_deep_water_point(self, surf_break_lat, surf_break_lon, beach_facing):
+        """Find valid deep water point (100-150m depth) with GFS Wave data validation"""
+        
+        try:
+            # Calculate perpendicular bearing from beach facing direction
+            # Beach facing is the direction the beach faces, we want perpendicular offshore direction
+            offshore_bearing = (beach_facing + 90) % 360  # Perpendicular to beach
+            
+            log.debug(f"Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
+            
+            # Search incrementally offshore
+            search_distances = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 40, 50]  # km
+            
+            for distance_km in search_distances:
+                # Calculate offshore point coordinates
+                offshore_lat, offshore_lon = self._calculate_point_at_bearing_distance(
+                    surf_break_lat, surf_break_lon, offshore_bearing, distance_km
+                )
+                
+                # Check bathymetry depth using GEBCO
+                depth = self._query_gebco_depth(offshore_lat, offshore_lon)
+                
+                if depth is None:
+                    continue
+                
+                log.debug(f"Offshore point at {distance_km}km: depth = {depth}m")
+                
+                # Check if depth is in target range (100-150m for deep water waves)
+                if 100 <= abs(depth) <= 150:
+                    # Validate GFS Wave data availability
+                    if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
+                        log.info(f"{CORE_ICONS['status']} Found valid deep water point: {offshore_lat:.4f}, {offshore_lon:.4f} (depth: {abs(depth):.1f}m)")
+                        
+                        return {
+                            'offshore_latitude': offshore_lat,
+                            'offshore_longitude': offshore_lon,
+                            'offshore_depth': abs(depth),
+                            'offshore_distance_km': distance_km,
+                            'search_bearing': offshore_bearing
+                        }
+            
+            # If no point found in ideal range, try edge case handling for parallel coastlines
+            return self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing)
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in deep water point search: {e}")
+            return None
+    
+    def _handle_parallel_coastline_search(self, surf_break_lat, surf_break_lon, beach_facing):
+        """Handle edge case for parallel coastlines (e.g., Southern California south-facing beaches)"""
+        
+        try:
+            log.info(f"{CORE_ICONS['navigation']} Trying adjusted bearings for parallel coastline")
+            
+            # Try adjusted bearings: ±15°, ±30° from original perpendicular
+            base_bearing = (beach_facing + 90) % 360
+            adjusted_bearings = [
+                (base_bearing + 15) % 360,
+                (base_bearing - 15) % 360,
+                (base_bearing + 30) % 360,
+                (base_bearing - 30) % 360,
+                (base_bearing + 45) % 360,
+                (base_bearing - 45) % 360
+            ]
+            
+            search_distances = [5, 10, 15, 20, 30, 40, 50, 60, 75]  # Extended range
+            
+            for bearing in adjusted_bearings:
+                log.debug(f"Trying adjusted bearing: {bearing}°")
+                
+                for distance_km in search_distances:
+                    offshore_lat, offshore_lon = self._calculate_point_at_bearing_distance(
+                        surf_break_lat, surf_break_lon, bearing, distance_km
+                    )
+                    
+                    depth = self._query_gebco_depth(offshore_lat, offshore_lon)
+                    
+                    if depth is None:
+                        continue
+                    
+                    # Relaxed depth criteria for edge cases (50-200m)
+                    if 50 <= abs(depth) <= 200:
+                        if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
+                            log.info(f"{CORE_ICONS['status']} Found valid deep water point with adjusted bearing: {offshore_lat:.4f}, {offshore_lon:.4f} (depth: {abs(depth):.1f}m)")
+                            
+                            return {
+                                'offshore_latitude': offshore_lat,
+                                'offshore_longitude': offshore_lon,
+                                'offshore_depth': abs(depth),
+                                'offshore_distance_km': distance_km,
+                                'search_bearing': bearing,
+                                'adjusted_search': True
+                            }
+            
+            log.warning(f"{CORE_ICONS['warning']} No valid deep water point found within 75km search limit")
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in parallel coastline search: {e}")
+            return None
+    
+    def _validate_gfs_wave_data(self, lat, lon):
+        """Check if coordinates have valid GFS Wave data (not land-masked)"""
+        
+        try:
+            if not self.grib_processor.is_available():
+                log.warning(f"{CORE_ICONS['warning']} GRIB processor not available for GFS Wave validation")
+                return True  # Assume valid if can't check
+            
+            # Download a sample GFS Wave GRIB file to test coordinates
+            # Use existing WaveWatchDataCollector logic but just for validation
+            test_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
+            
+            # Try to get data for this location - if it returns data, coordinates are valid
+            test_data = test_collector.fetch_forecast_data(lat, lon)
+            
+            if test_data and len(test_data) > 0:
+                # Check if we got actual wave data (not just empty response)
+                for period in test_data[:3]:  # Check first few periods
+                    if period.get('wave_height') is not None or period.get('wave_period') is not None:
+                        log.debug(f"GFS Wave data validation: VALID for {lat:.4f}, {lon:.4f}")
+                        return True
+                
+                log.debug(f"GFS Wave data validation: NO DATA for {lat:.4f}, {lon:.4f}")
+                return False
+            else:
+                log.debug(f"GFS Wave data validation: FAILED for {lat:.4f}, {lon:.4f}")
+                return False
+                
+        except Exception as e:
+            log.debug(f"GFS Wave validation error (assuming valid): {e}")
+            return True  # If validation fails, assume valid to not block processing
+    
+    def _create_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
+        """Create straight-line surf path and collect bathymetry profile"""
+        
+        try:
+            offshore_lat = deep_water_result['offshore_latitude']
+            offshore_lon = deep_water_result['offshore_longitude']
+            
+            # Create path points from deep water to surf break
+            path_points = []
+            
+            for i in range(self.path_resolution_points + 1):  # +1 to include both endpoints
+                fraction = i / self.path_resolution_points
+                
+                # Linear interpolation between deep water and surf break
+                path_lat = offshore_lat + fraction * (surf_break_lat - offshore_lat)
+                path_lon = offshore_lon + fraction * (surf_break_lon - offshore_lon)
+                
+                path_points.append({
+                    'latitude': path_lat,
+                    'longitude': path_lon,
+                    'fraction_to_shore': fraction
+                })
+            
+            # Collect bathymetry data for all path points in batch
+            bathymetry_profile = self._batch_query_gebco_depths(path_points)
+            
+            if not bathymetry_profile:
+                return None
+            
+            # Validate bathymetry profile shows logical shoaling progression
+            if not self._validate_bathymetry_profile(bathymetry_profile):
+                log.warning(f"{CORE_ICONS['warning']} Bathymetry profile failed validation - may affect forecast accuracy")
+            
+            return {
+                'surf_path_bathymetry': bathymetry_profile,
+                'path_points_total': len(bathymetry_profile),
+                'path_distance_km': deep_water_result['offshore_distance_km']
+            }
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error creating surf path: {e}")
+            return None
+    
+    def _batch_query_gebco_depths(self, path_points):
+        """Query GEBCO API for multiple points in batch for efficiency"""
+        
+        try:
+            # Build location string for batch API call
+            locations = []
+            for point in path_points:
+                locations.append(f"{point['latitude']:.6f},{point['longitude']:.6f}")
+            
+            locations_str = '|'.join(locations)
+            
+            # Make batch GEBCO API call
+            depths = self._query_gebco_batch(locations_str)
+            
+            if not depths or len(depths) != len(path_points):
+                log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed or returned wrong number of results")
+                return None
+            
+            # Combine path points with depths
+            bathymetry_profile = []
+            
+            for i, point in enumerate(path_points):
+                depth = depths[i]
+                if depth is not None:
+                    # Calculate distance from surf break
+                    distance_from_break = point['fraction_to_shore'] * self.offshore_distance_km
+                    
+                    bathymetry_profile.append({
+                        'latitude': point['latitude'],
+                        'longitude': point['longitude'],
+                        'depth': abs(depth),  # Always positive depth
+                        'distance_from_break_km': distance_from_break,
+                        'fraction_to_shore': point['fraction_to_shore']
+                    })
+            
+            return bathymetry_profile
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
+            return None
+    
+    def _validate_bathymetry_profile(self, bathymetry_profile):
+        """Validate bathymetry profile shows logical shoaling progression"""
+        
+        try:
+            if len(bathymetry_profile) < 3:
+                return False
+            
+            # Check for monotonic depth decrease (deep water to shallow)
+            depths = [point['depth'] for point in bathymetry_profile]
+            
+            # Allow some variation but look for general trend
+            violations = 0
+            for i in range(1, len(depths)):
+                if depths[i] > depths[i-1] + 20:  # Sudden depth increase > 20m
+                    violations += 1
+            
+            # Allow up to 20% violations for real-world bathymetry variations
+            violation_rate = violations / (len(depths) - 1)
+            
+            if violation_rate > 0.2:
+                log.warning(f"{CORE_ICONS['warning']} Bathymetry profile has {violation_rate:.1%} depth violations")
+                return False
+            
+            # Check minimum gradient
+            depth_change = depths[0] - depths[-1]
+            if depth_change < 10:
+                log.warning(f"{CORE_ICONS['warning']} Insufficient depth change for shoaling calculations: {depth_change:.1f}m")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error validating bathymetry profile: {e}")
+            return False
+    
+    def _query_gebco_depth(self, lat, lon):
+        """Query GEBCO API for single point depth"""
+        
+        try:
+            url = f"{self.gebco_base_url}?locations={lat:.6f},{lon:.6f}"
+            
+            for attempt in range(self.retry_attempts):
+                try:
+                    request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
+                    
+                    with urllib.request.urlopen(request, timeout=self.api_timeout) as response:
+                        data = json.loads(response.read().decode('utf-8'))
+                    
+                    if data.get('status') == 'OK' and data.get('results'):
+                        elevation = data['results'][0]['elevation']
+                        return elevation  # GEBCO uses negative for water depth
+                    
+                except urllib.error.URLError as e:
+                    if attempt == self.retry_attempts - 1:
+                        log.error(f"{CORE_ICONS['warning']} GEBCO API failed after {self.retry_attempts} attempts: {e}")
+                        return None
+                    else:
+                        time.sleep(1)  # Brief delay before retry
+            
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error querying GEBCO: {e}")
+            return None
+    
+    def _query_gebco_batch(self, locations_str):
+        """Query GEBCO API for multiple points in batch"""
+        
+        try:
+            url = f"{self.gebco_base_url}?locations={locations_str}"
+            
+            for attempt in range(self.retry_attempts):
+                try:
+                    request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
+                    
+                    with urllib.request.urlopen(request, timeout=self.api_timeout * 2) as response:  # Longer timeout for batch
+                        data = json.loads(response.read().decode('utf-8'))
+                    
+                    if data.get('status') == 'OK' and data.get('results'):
+                        return [result['elevation'] for result in data['results']]
+                    
+                except urllib.error.URLError as e:
+                    if attempt == self.retry_attempts - 1:
+                        log.error(f"{CORE_ICONS['warning']} GEBCO batch API failed after {self.retry_attempts} attempts: {e}")
+                        return None
+                    else:
+                        time.sleep(2)  # Longer delay for batch retries
+            
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
+            return None
+    
+    def _calculate_point_at_bearing_distance(self, lat, lon, bearing, distance_km):
+        """Calculate new coordinates at given bearing and distance using great circle math"""
+        
+        try:
+            # Convert to radians
+            lat1 = math.radians(lat)
+            lon1 = math.radians(lon)
+            bearing_rad = math.radians(bearing)
+            
+            # Earth radius in km
+            R = 6371.0
+            
+            # Angular distance
+            d = distance_km / R
+            
+            # Calculate new latitude
+            lat2 = math.asin(math.sin(lat1) * math.cos(d) + 
+                           math.cos(lat1) * math.sin(d) * math.cos(bearing_rad))
+            
+            # Calculate new longitude
+            lon2 = lon1 + math.atan2(math.sin(bearing_rad) * math.sin(d) * math.cos(lat1),
+                                   math.cos(d) - math.sin(lat1) * math.sin(lat2))
+            
+            # Convert back to degrees
+            return math.degrees(lat2), math.degrees(lon2)
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error calculating point coordinates: {e}")
+            return None, None
+    
+    def _get_spot_config_from_conf(self, spot_id):
+        """Get spot configuration data from CONF"""
+        
+        try:
+            service_config = self.config_dict.get('SurfFishingService', {})
+            surf_spots_config = service_config.get('surf_spots', {})
+            return surf_spots_config.get(spot_id, {})
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error getting spot config from CONF: {e}")
+            return {}
+    
+    def _store_bathymetry_in_conf(self, spot_id, bathymetry_data):
+        """Update CONF with calculated oceanographic data using proper WeeWX methods"""
+        
+        try:
+            # This is where we need to use proper WeeWX configuration update methods
+            # For now, we'll update the in-memory config_dict
+            # In full implementation, this should use WeeWX's config management system
+            
+            service_config = self.config_dict.get('SurfFishingService', {})
+            surf_spots_config = service_config.get('surf_spots', {})
+            
+            if spot_id not in surf_spots_config:
+                log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in CONF")
+                return False
+            
+            # Update spot configuration with bathymetry data
+            surf_spots_config[spot_id].update({
+                'offshore_latitude': str(bathymetry_data['offshore_latitude']),
+                'offshore_longitude': str(bathymetry_data['offshore_longitude']),
+                'offshore_depth': str(bathymetry_data['offshore_depth']),
+                'offshore_distance_km': str(bathymetry_data['offshore_distance_km']),
+                'bathymetry_calculated': 'true',
+                'bathymetry_calculation_timestamp': str(bathymetry_data['calculation_timestamp'])
+            })
+            
+            # Store bathymetry profile data
+            bathymetry_profile = bathymetry_data.get('surf_path_bathymetry', [])
+            if bathymetry_profile:
+                surf_spots_config[spot_id]['bathymetric_path'] = {}
+                surf_spots_config[spot_id]['bathymetric_path']['path_points_total'] = str(len(bathymetry_profile))
+                
+                for i, point in enumerate(bathymetry_profile):
+                    surf_spots_config[spot_id]['bathymetric_path'][f'point_{i}_depth'] = str(point['depth'])
+                    surf_spots_config[spot_id]['bathymetric_path'][f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
+            
+            log.info(f"{CORE_ICONS['status']} Updated CONF with bathymetry data for spot {spot_id}")
+            
+            # TODO: In full implementation, persist changes to weewx.conf file
+            # This would require using WeeWX's proper configuration management
+            
+            return True
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error storing bathymetry in CONF: {e}")
+            return False
+        
+        
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
     
@@ -3800,6 +4285,9 @@ class SurfFishingService(StdService):
         else:
             log.warning("No GRIB library available - WaveWatch III forecasts disabled")
         
+        # NEW: Initialize bathymetry processor
+        self.bathymetry_processor = BathymetryProcessor(config_dict, self.grib_processor)
+    
         # EXISTING CODE: Initialize forecast generators with CONF-based config - PRESERVED EXACTLY
         # NOTE: These will use _get_db_manager() when they need database access
         self.surf_generator = SurfForecastGenerator(config_dict, None)  # Pass None, will get via _get_db_manager
@@ -4006,14 +4494,49 @@ class SurfFishingService(StdService):
                     # EXISTING: Generate surf forecasts
                     for spot in active_surf_spots:
                         try:
+                            # NEW: Check if bathymetry processing needed
+                            if spot.get('needs_bathymetry', False):
+                                log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot['name']}")
+                                
+                                bathymetry_success = self.bathymetry_processor.process_surf_spot_bathymetry(spot)
+                                
+                                if not bathymetry_success:
+                                    log.warning(f"{CORE_ICONS['warning']} Bathymetry processing failed for {spot['name']} - continuing with basic forecast")
+                                    # Continue with forecast generation even if bathymetry fails
+                                else:
+                                    # Reload spot data to get updated bathymetry information
+                                    updated_spots = self._get_active_surf_spots()
+                                    spot = next((s for s in updated_spots if s['id'] == spot['id']), spot)
+                                
                             # EXISTING: Get WaveWatch III data if available
-                            wavewatch_data = []
+                            gfs_wave_data = []
                             if self.grib_processor.is_available():
-                                wavewatch_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
-                                wavewatch_data = wavewatch_collector.fetch_forecast_data(spot)
-                            
+                                gfs_wave_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
+
+                                # Use offshore coordinates if available, otherwise use surf break coordinates
+                                if not spot.get('needs_bathymetry', False):
+                                    # Bathymetry already processed - check if we have offshore coordinates
+                                    spot_config = self.config_dict.get('SurfFishingService', {}).get('surf_spots', {}).get(spot['id'], {})
+                                    if spot_config.get('offshore_latitude') and spot_config.get('offshore_longitude'):
+                                        # Use offshore coordinates for GRIB data collection
+                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
+                                            float(spot_config['offshore_latitude']),
+                                            float(spot_config['offshore_longitude'])
+                                        )
+                                        log.debug(f"Using offshore coordinates for GFS Wave data: {spot_config['offshore_latitude']}, {spot_config['offshore_longitude']}")
+                                    else:
+                                        # Fall back to surf break coordinates
+                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
+                                            spot['latitude'], spot['longitude']
+                                        )
+                                else:
+                                    # Bathymetry processing failed or not yet processed - use surf break coordinates
+                                    gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
+                                        spot['latitude'], spot['longitude']
+                                    )
+ 
                             # EXISTING: Generate surf forecast
-                            surf_forecast = surf_generator.generate_surf_forecast(spot, wavewatch_data)
+                            surf_forecast = surf_generator.generate_surf_forecast(spot, gfs_wave_data)
                             
                             if surf_forecast:
                                 # EXISTING: Store directly with the generator's method
@@ -4066,6 +4589,9 @@ class SurfFishingService(StdService):
             for spot_id, spot_config in surf_spots_config.items():
                 log.debug(f"Processing spot {spot_id}: {spot_config}")
                 
+                # Check bathymetry calculation status
+                bathymetry_calculated = spot_config.get('bathymetry_calculated', 'false').lower() == 'true'
+                
                 # Convert CONF data to expected format - all spots in CONF are active
                 spot = {
                     'id': spot_id,  # Use CONF key as ID
@@ -4075,7 +4601,8 @@ class SurfFishingService(StdService):
                     'bottom_type': spot_config.get('bottom_type', 'sand'),
                     'exposure': spot_config.get('exposure', 'exposed'),
                     'bathymetric_path': spot_config.get('bathymetric_path', {}),
-                    'type': spot_config.get('type', 'surf')
+                    'type': spot_config.get('type', 'surf'),
+                    'needs_bathymetry': not bathymetry_calculated
                 }
                 spots.append(spot)
                 log.debug(f"Added surf spot: {spot['name']} at {spot['latitude']}, {spot['longitude']}")
