@@ -1019,7 +1019,7 @@ class SurfFishingConfigurator:
                         'name': spot['name'],
                         'latitude': str(spot['latitude']),
                         'longitude': str(spot['longitude']),
-                        'beach_angle': str(spot['beach_angle']),
+                        'beach_facing': str(spot['beach_angle']),
                         'bottom_type': spot.get('bottom_type', 'sand'),
                         'exposure': spot.get('exposure', 'exposed'),
                         'bathymetry_calculated': 'false',  # Service trigger flag
