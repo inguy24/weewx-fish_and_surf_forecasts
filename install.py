@@ -456,36 +456,6 @@ class SurfFishingConfigurator:
             
             print(f"  {CORE_ICONS['warning']} Invalid input. Use cardinal directions (N, NE, etc) or degrees (0-360)")
 
-    def _get_coordinates_for_water_location(self, location_type="location"):
-        """Get coordinates with water validation and re-entry option"""
-        
-        print(f"  Enter coordinates for the {location_type} IN THE WATER:")
-        if location_type == "surf break":
-            print("  (This should be the wave breaking location, not the beach)")
-        elif location_type == "fishing spot":
-            print("  (Even for coastal fishing, ensure coordinates are in water, not on shore)")
-        
-        max_attempts = 3
-        attempt = 0
-        
-        while attempt < max_attempts:
-            lat, lon = self._get_coordinates_with_validation(location_type)
-            
-            # Validate coordinates are in water
-            if self._validate_water_location(lat, lon):
-                return lat, lon
-            
-            attempt += 1
-            if attempt < max_attempts:
-                print(f"  {CORE_ICONS['warning']} Coordinates appear to be on land.")
-                print(f"  Please verify the location is in the water and re-enter coordinates.")
-                print(f"  (Attempt {attempt + 1} of {max_attempts})")
-            else:
-                print(f"  {CORE_ICONS['warning']} Maximum attempts reached. Using coordinates as entered.")
-                return lat, lon
-        
-        return lat, lon
-
     def _validate_water_location(self, lat, lon, beach_angle=None, spot_name=None):
             """
             Combined water location validation and surf break depth adjustment using single GEBCO API call
@@ -807,7 +777,7 @@ class SurfFishingConfigurator:
                 break
                 
             # Get initial coordinates for surf break
-            lat, lon = self._get_coordinates_for_water_location("surf break")
+            lat, lon = self._get_coordinates_with_validation("surf break")
             
             # Get beach angle
             beach_angle = self._get_beach_angle()
