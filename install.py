@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Moray Eel
+# Magic Animal: Kitty Cat
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -487,8 +487,9 @@ class SurfFishingConfigurator:
         return lat, lon
 
     def _validate_water_location(self, lat, lon):
-        """Validate coordinates are in water using GEBCO API"""
-        
+        """
+        Enhanced water location validation with basic depth verification for surf suitability
+        """
         validation_config = self.yaml_data.get('bathymetry_data', {}).get('coordinate_validation', {})
         if not validation_config.get('enable_land_sea_validation'):
             return True
@@ -716,11 +717,12 @@ class SurfFishingConfigurator:
                 print(f"{CORE_ICONS['warning']} Please enter 1, 2, or 3")
     
     def _configure_surf_spots(self):
-        """Configure surf-specific locations with GEBCO bathymetry integration"""
-        
+        """
+        Configure surf spots with simplified approach removing complex bathymetry calculations
+        """
         surf_spots = []
         print(f"\n{CORE_ICONS['selection']} Surf Spot Configuration")
-        print("Enter your surf spots")
+        print("Configure your surf spots with enhanced depth validation")
         print()
         
         spot_count = 1
@@ -734,15 +736,25 @@ class SurfFishingConfigurator:
             # Get coordinates with water validation
             lat, lon = self._get_coordinates_for_water_location("surf break")
             
-            # Get beach angle
+            # Get beach angle (KEEP existing functionality)
             beach_angle = self._get_beach_angle()
             
-            # Get surf characteristics
+            # NEW: Enhanced depth validation with smart adjustment
+            print(f"  {CORE_ICONS['selection']} Validating surf break depth for optimal conditions...")
+            success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(
+                [(lat, lon)], self.progress)
+            
+            if success and bathymetry_data:
+                current_depth = bathymetry_data[0]
+                lat, lon = self._adjust_surf_break_coordinates_with_user_interaction(
+                    lat, lon, beach_angle, current_depth, name)
+            else:
+                print(f"  {CORE_ICONS['warning']} Could not validate depth - proceeding with coordinates as entered")
+            
+            # Get surf characteristics (KEEP existing functionality)
             spot_config = self._configure_surf_characteristics(name, lat, lon)
             
-            # Get bathymetric data for this surf spot
-            bathymetric_data = self._get_surf_spot_bathymetry(lat, lon, name, beach_angle)
-            
+            # SIMPLIFIED: Create spot data with service coordination flag
             spot_data = {
                 'name': name,
                 'latitude': lat,
@@ -750,7 +762,7 @@ class SurfFishingConfigurator:
                 'beach_angle': beach_angle,
                 'bottom_type': spot_config['bottom_type'],
                 'exposure': spot_config['exposure'],
-                'bathymetric_data': bathymetric_data
+                'bathymetry_calculated': False  # Service will handle complex calculations
             }
             
             surf_spots.append(spot_data)
@@ -759,104 +771,6 @@ class SurfFishingConfigurator:
             spot_count += 1
         
         return surf_spots
-
-    def _get_surf_spot_bathymetry(self, lat, lon, spot_name, beach_angle):
-        """Get bathymetric data for surf spot using GEBCO API with adaptive distance"""
-        
-        print(f"  {CORE_ICONS['selection']} Analyzing bathymetry for {spot_name}...")
-        
-        # EXISTING: Generate 7-point bathymetric path using beach angle (data-driven from YAML)
-        path_config = self.yaml_data.get('bathymetry_data', {}).get('path_analysis')
-        if not path_config:
-            print(f"  {CORE_ICONS['error']} No bathymetry_data.path_analysis found in YAML configuration")
-            return None
-            
-        total_points = path_config.get('total_points_per_spot')
-        if not total_points:
-            print(f"  {CORE_ICONS['error']} No total_points_per_spot configured in YAML")
-            return None
-        
-        # EXISTING: Detect geographic region for adaptive distance (inline helper code)
-        detected_region = None
-        geographic_regions = self.yaml_data.get('geographic_regions')
-        
-        if not geographic_regions:
-            print(f"  {CORE_ICONS['error']} No geographic_regions found in YAML configuration")
-            return None
-        
-        # EXISTING: Check all region categories for coordinate match (inline geographic detection)
-        for category_name, category_data in geographic_regions.items():
-            if isinstance(category_data, dict):
-                for region_name, region_data in category_data.items():
-                    if isinstance(region_data, dict):
-                        lat_range = region_data.get('lat_range')
-                        lon_range = region_data.get('lon_range')
-                        
-                        if (lat_range and lon_range and 
-                            len(lat_range) == 2 and len(lon_range) == 2):
-                            if (lat_range[0] <= lat <= lat_range[1] and
-                                lon_range[0] <= lon <= lon_range[1]):
-                                detected_region = region_name
-                                break
-            if detected_region:
-                break
-        
-        # EXISTING: Get adaptive distance for detected region
-        regional_distances = path_config.get('regional_distances')
-        if not regional_distances:
-            print(f"  {CORE_ICONS['error']} No regional_distances found in YAML configuration")
-            return None
-            
-        adaptive_offshore_distance = regional_distances.get(detected_region)
-        if not adaptive_offshore_distance:
-            print(f"  {CORE_ICONS['error']} No distance configured for region '{detected_region}' in YAML")
-            return None
-        
-        # EXISTING: Use offshore bearing to determine offshore direction
-        offshore_bearing = beach_angle  # Perpendicular seaward direction
-        
-        # EXISTING: Calculate offshore coordinates using great circle math
-        offshore_distance_degrees = adaptive_offshore_distance / 111320  # Convert meters to degrees
-        offshore_lat = lat + offshore_distance_degrees * math.cos(math.radians(offshore_bearing))
-        offshore_lon = lon + offshore_distance_degrees * math.sin(math.radians(offshore_bearing)) / math.cos(math.radians(lat))
-        
-        # EXISTING: Generate coordinate path from offshore to surf break
-        coordinates = []
-        for i in range(total_points):
-            factor = i / (total_points - 1)  # 0.0 to 1.0
-            path_lat = offshore_lat + factor * (lat - offshore_lat)
-            path_lon = offshore_lon + factor * (lon - offshore_lon)
-            coordinates.append((path_lat, path_lon))
-        
-        # EXISTING: Query GEBCO API for bathymetric path
-        success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(coordinates, self.progress)
-        
-        if not success:
-            print(f"  {CORE_ICONS['warning']} Failed to get bathymetry for {spot_name}")
-            return None
-        
-        if used_fallback:
-            print(f"  {CORE_ICONS['warning']} Using default bathymetry for {spot_name}")
-        else:
-            print(f"  {CORE_ICONS['status']} Retrieved GEBCO bathymetry for {spot_name}")
-        
-        # EXISTING: Format bathymetric data for CONF storage
-        bathymetric_path = {}
-        bathymetric_path['path_points_total'] = str(total_points)
-        bathymetric_path['data_source'] = 'fallback' if used_fallback else 'gebco_api'
-        bathymetric_path['offshore_bearing'] = str(offshore_bearing)
-        bathymetric_path['adaptive_distance_used'] = str(adaptive_offshore_distance)
-        bathymetric_path['detected_region'] = detected_region
-        
-        # NEW: Add offshore coordinates to CONF storage
-        bathymetric_path['offshore_latitude'] = f"{offshore_lat:.6f}"
-        bathymetric_path['offshore_longitude'] = f"{offshore_lon:.6f}"
-        
-        # EXISTING: Store depth points for each coordinate
-        for i, depth in enumerate(bathymetry_data):
-            bathymetric_path[f'point_{i}_depth'] = str(depth)
-        
-        return bathymetric_path
     
     def _configure_fishing_spots(self):
         """Configure fishing-specific locations with land/sea validation"""
@@ -997,109 +911,111 @@ class SurfFishingConfigurator:
         return config
     
     def _create_config_dict(self, forecast_types, data_sources, selected_locations, grib_available, station_analysis):
-        """Create configuration dictionary with adaptive bathymetry and excluded geographic boundaries"""
-        
-        # EXISTING: Base configuration structure
-        config_dict = {
-            'SurfFishingService': {
-                'enable': 'true',
-                'forecast_interval': '21600',  # 6 hours in seconds
-                'log_success': 'false',
-                'log_errors': 'true',
-                'timeout': '60',
-                'retry_attempts': '3',
-                
-                # EXISTING: Forecast configuration based on user selections
-                'forecast_settings': {
-                    'enabled_types': ','.join(forecast_types),
-                    'forecast_hours': '72',  # 3-day forecasts
-                    'rating_system': 'five_star',
-                    'update_interval_hours': '6'
-                },
-                
-                # EXISTING: Data source configuration
-                'data_integration': {
-                    'method': data_sources.get('type', 'noaa_only'),
-                    'local_station_distance_km': str(station_analysis.get('distance_km', 999) if station_analysis else 999),
-                    'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
-                },
-                
-                # EXISTING: GRIB processing configuration
-                'grib_processing': {
-                    'available': 'true' if grib_available else 'false',
-                    'library': 'pygrib' if grib_available else 'none'
-                },
-                
-                # EXISTING: Data sources configuration
-                'data_sources': {
-                    'gfs_wave': {
-                        'api_source': data_sources.get('api_source', 'gfs_wave'),
-                        'grid_selected': data_sources.get('grid_selected', 'global.0p16'),
-                        'collection_interval': str(data_sources.get('collection_interval', 10800))
+            """
+            Create simplified configuration dictionary removing complex bathymetric storage and adding service coordination
+            """
+            
+            # Base configuration structure - UNCHANGED
+            config_dict = {
+                'SurfFishingService': {
+                    'enable': 'true',
+                    'forecast_interval': '21600',  # 6 hours in seconds
+                    'log_success': 'false',
+                    'log_errors': 'true',
+                    'timeout': '60',
+                    'retry_attempts': '3',
+                    
+                    # Forecast configuration based on user selections - UNCHANGED
+                    'forecast_settings': {
+                        'enabled_types': ','.join(forecast_types),
+                        'forecast_hours': '72',  # 3-day forecasts
+                        'rating_system': 'five_star',
+                        'update_interval_hours': '6'
+                    },
+                    
+                    # Data source configuration - UNCHANGED
+                    'data_integration': {
+                        'method': data_sources.get('type', 'noaa_only'),
+                        'local_station_distance_km': str(station_analysis.get('distance_km', 999) if station_analysis else 999),
+                        'enable_station_data': 'true' if data_sources.get('type') == 'station_supplement' else 'false'
+                    },
+                    
+                    # GRIB processing configuration - UNCHANGED
+                    'grib_processing': {
+                        'available': 'true' if grib_available else 'false',
+                        'library': 'pygrib' if grib_available else 'none'
+                    },
+                    
+                    # Data sources configuration - UNCHANGED
+                    'data_sources': {
+                        'gfs_wave': {
+                            'api_source': data_sources.get('api_source', 'gfs_wave'),
+                            'grid_selected': data_sources.get('grid_selected', 'global.0p16'),
+                            'collection_interval': str(data_sources.get('collection_interval', 10800))
+                        }
                     }
                 }
             }
-        }
-        
-        # EXISTING: Process YAML sections but NEW: exclude geographic_regions
-        for section_name, section_data in self.yaml_data.items():
-            if section_name in ['noaa_gfs_wave', 'bathymetry_data', 'fish_categories', 'scoring_criteria']:
-                # Convert section using enhanced method that excludes geographic boundaries
-                converted_section = self._convert_yaml_section_to_conf(section_data)
-                config_dict['SurfFishingService'][section_name] = converted_section
-            elif section_name == 'geographic_regions':
-                # NEW: Explicitly skip - this is install-time only data
-                print(f"  {CORE_ICONS['navigation']} Skipping geographic_regions section (install-time only)")
-                continue
-        
-        # EXISTING: Add user surf spots with NEW: adaptive bathymetry storage
-        if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
-            config_dict['SurfFishingService']['surf_spots'] = {}
             
-            for i, spot in enumerate(selected_locations['surf_spots']):
-                spot_key = f'spot_{i}'
-                
-                # EXISTING: Basic spot configuration
-                spot_config = {
-                    'name': spot['name'],
-                    'latitude': str(spot['latitude']),
-                    'longitude': str(spot['longitude']),
-                    'beach_angle': str(spot['beach_angle']),
-                    'bottom_type': spot.get('bottom_type', 'sand'),
-                    'exposure': spot.get('exposure', 'exposed'),
-                    'active': 'true'
-                }
-                
-                # NEW: Add adaptive bathymetric data if available
-                if 'bathymetric_data' in spot and spot['bathymetric_data']:
-                    spot_config['bathymetric_path'] = spot['bathymetric_data']
-                
-                config_dict['SurfFishingService']['surf_spots'][spot_key] = spot_config
-        
-        # EXISTING: Add fishing spots (no changes)
-        if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
-            config_dict['SurfFishingService']['fishing_spots'] = {}
+            # Process YAML sections (exclude geographic_regions - install-time only)
+            for section_name, section_data in self.yaml_data.items():
+                if section_name in ['noaa_gfs_wave', 'bathymetry_data', 'fish_categories', 'scoring_criteria']:
+                    # Convert section using enhanced method that excludes geographic boundaries
+                    converted_section = self._convert_yaml_section_to_conf(section_data)
+                    config_dict['SurfFishingService'][section_name] = converted_section
+                elif section_name == 'geographic_regions':
+                    # Skip - this is install-time only data
+                    print(f"  {CORE_ICONS['navigation']} Skipping geographic_regions section (install-time only)")
+                    continue
             
-            for i, spot in enumerate(selected_locations['fishing_spots']):
-                spot_key = f'spot_{i}'
-                config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
-                    'name': spot['name'],
-                    'latitude': str(spot['latitude']),
-                    'longitude': str(spot['longitude']),
-                    'location_type': spot.get('location_type', 'shore'),
-                    'target_category': spot.get('target_category', 'mixed_bag'),
-                    'active': 'true'
+            # SIMPLIFIED: Add user surf spots with basic configuration only
+            if 'surf_spots' in selected_locations and selected_locations['surf_spots']:
+                config_dict['SurfFishingService']['surf_spots'] = {}
+                
+                for i, spot in enumerate(selected_locations['surf_spots']):
+                    spot_key = f'spot_{i}'
+                    
+                    # SIMPLIFIED: Basic spot configuration for service coordination
+                    spot_config = {
+                        'name': spot['name'],
+                        'latitude': str(spot['latitude']),
+                        'longitude': str(spot['longitude']),
+                        'beach_angle': str(spot['beach_angle']),
+                        'bottom_type': spot.get('bottom_type', 'sand'),
+                        'exposure': spot.get('exposure', 'exposed'),
+                        'bathymetry_calculated': 'false',  # Service trigger flag
+                        'active': 'true'
+                    }
+                    
+                    # REMOVED: No more complex bathymetric_path data storage
+                    # Service will add all bathymetric data when it performs calculations
+                    
+                    config_dict['SurfFishingService']['surf_spots'][spot_key] = spot_config
+            
+            # Add fishing spots - UNCHANGED
+            if 'fishing_spots' in selected_locations and selected_locations['fishing_spots']:
+                config_dict['SurfFishingService']['fishing_spots'] = {}
+                
+                for i, spot in enumerate(selected_locations['fishing_spots']):
+                    spot_key = f'spot_{i}'
+                    config_dict['SurfFishingService']['fishing_spots'][spot_key] = {
+                        'name': spot['name'],
+                        'latitude': str(spot['latitude']),
+                        'longitude': str(spot['longitude']),
+                        'location_type': spot.get('location_type', 'shore'),
+                        'target_category': spot.get('target_category', 'mixed_bag'),
+                        'active': 'true'
+                    }
+            
+            # Add station analysis results - UNCHANGED
+            if station_analysis:
+                config_dict['SurfFishingService']['station_analysis'] = {
+                    'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
+                    'accepted_recommendations': str(len(station_analysis.get('accepted_recommendations', []))),
+                    'coverage_quality': str(station_analysis.get('coverage_summary', {}).get('quality_score', 'unknown'))
                 }
-        
-        # EXISTING: Add station analysis results (no changes)
-        if station_analysis:
-            config_dict['SurfFishingService']['station_analysis'] = {
-                'analysis_completed': str(station_analysis.get('station_analysis_completed', False)),
-                'accepted_recommendations': str(len(station_analysis.get('accepted_recommendations', []))),
-                'coverage_quality': str(station_analysis.get('coverage_summary', {}).get('quality_score', 'unknown'))
-            }
-        
-        return config_dict
+            
+            return config_dict
 
     def _convert_yaml_section_to_conf(self, yaml_section):
         """Convert YAML section to CONF format - excludes geographic_regions from CONF"""
@@ -1384,7 +1300,172 @@ class SurfFishingConfigurator:
             
         return validation_passed
 
+    def _load_surf_depth_config(self):
+        """
+        Load surf break validation parameters from YAML bathymetry_data section
+        """
+        bathymetry_config = self.yaml_data.get('bathymetry_data', {})
+        surf_validation = bathymetry_config.get('surf_break_validation', {})
+        
+        # Defaults if not in YAML (fallback)
+        depth_range = surf_validation.get('optimal_depth_range', {})
+        adjustment_config = surf_validation.get('depth_adjustment', {})
+        
+        return {
+            'optimal_min': depth_range.get('min_meters', 1.5),
+            'optimal_max': depth_range.get('max_meters', 6.0),
+            'shallow_limit': adjustment_config.get('shallow_limit', 1.5),
+            'deep_warning': adjustment_config.get('deep_warning', 6.0),
+            'max_adjustment': adjustment_config.get('max_adjustment_meters', 250),
+            'adjustment_step': adjustment_config.get('adjustment_step_meters', 50),
+            'max_api_calls': adjustment_config.get('max_api_calls', 10)
+        }
 
+    def _adjust_surf_break_coordinates_with_user_interaction(self, lat, lon, beach_angle, current_depth, spot_name):
+        """
+        Intelligently adjust surf break coordinates based on depth validation with user interaction
+        """
+        config = self._load_surf_depth_config()
+        optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
+        
+        # Perfect depth - no adjustment needed
+        if optimal_min <= current_depth <= optimal_max:
+            print(f"  {CORE_ICONS['status']} Perfect surf break depth: {current_depth:.1f}m")
+            return lat, lon
+        
+        # Too shallow - mandatory adjustment (safety)
+        elif current_depth < config['shallow_limit']:
+            print(f"  {CORE_ICONS['warning']} Location too shallow: {current_depth:.1f}m")
+            print(f"  Adjusting seaward to find suitable surf break depth...")
+            
+            adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
+                lat, lon, beach_angle, current_depth, direction='seaward', spot_name=spot_name, config=config)
+            
+            if adjusted_lat is not None:
+                distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34  # Convert to meters
+                print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m seaward to {adjusted_depth:.1f}m depth")
+                return adjusted_lat, adjusted_lon
+            else:
+                return self._handle_adjustment_failure(lat, lon, current_depth, spot_name, "shallow")
+        
+        # Too deep - user choice
+        elif current_depth > config['deep_warning']:
+            print(f"  {CORE_ICONS['warning']} Depth Analysis: Current location depth is {current_depth:.1f}m")
+            print(f"  This is deeper than typical surf break range ({optimal_min}-{optimal_max}m).")
+            print(f"  This could be suitable for big wave conditions, or you may want")
+            print(f"  to move closer to shore for regular surf conditions.")
+            print()
+            print("  Options:")
+            print("  1. Keep current location (suitable for big waves)")
+            print("  2. Auto-adjust toward shore (find typical surf depth)")  
+            print("  3. Enter new coordinates")
+            
+            while True:
+                choice = input("  Choice (1-3): ").strip()
+                if choice == '1':
+                    print(f"  {CORE_ICONS['status']} Using deep water location ({current_depth:.1f}m)")
+                    return lat, lon
+                elif choice == '2':
+                    print(f"  Adjusting shoreward to find suitable surf break depth...")
+                    adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
+                        lat, lon, beach_angle, current_depth, direction='shoreward', spot_name=spot_name, config=config)
+                    
+                    if adjusted_lat is not None:
+                        distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34
+                        print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m shoreward to {adjusted_depth:.1f}m depth")
+                        return adjusted_lat, adjusted_lon
+                    else:
+                        return self._handle_adjustment_failure(lat, lon, current_depth, spot_name, "deep")
+                elif choice == '3':
+                    print(f"  Please enter new coordinates for {spot_name}")
+                    return self._get_coordinates_for_water_location("surf break") 
+                else:
+                    print(f"  {CORE_ICONS['warning']} Please enter 1, 2, or 3")
+        
+        return lat, lon
+
+    def _try_coordinate_adjustment(self, lat, lon, beach_angle, current_depth, direction, spot_name, config):
+        """
+        Attempt coordinate adjustment along beach-perpendicular line using proper beach angle geometry
+        """
+        # Calculate correct bearing for movement direction
+        if direction == 'seaward':
+            movement_bearing = beach_angle  # Same direction as looking out to sea
+        else:  # shoreward
+            movement_bearing = (beach_angle + 180) % 360  # Opposite direction (toward land)
+        
+        step_size_degrees = config['adjustment_step'] / 111320  # Convert meters to degrees
+        optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
+        
+        api_calls_used = 0
+        
+        for step in range(1, int(config['max_adjustment'] / config['adjustment_step']) + 1):
+            if api_calls_used >= config['max_api_calls']:
+                print(f"  {CORE_ICONS['warning']} Reached API call limit for adjustments")
+                break
+                
+            # Calculate new coordinates along movement bearing
+            distance_degrees = step * step_size_degrees
+            test_lat = lat + distance_degrees * math.cos(math.radians(movement_bearing))
+            test_lon = lon + distance_degrees * math.sin(math.radians(movement_bearing)) / math.cos(math.radians(lat))
+            
+            # Test depth at new location
+            self.progress.show_step_progress(f"Testing depth {step * config['adjustment_step']}m {direction}")
+            is_water = self._validate_water_location(test_lat, test_lon)
+            api_calls_used += 1
+            
+            if not is_water:
+                # Hit land - stop adjustment in this direction
+                print(f"  {CORE_ICONS['warning']} Reached land boundary during adjustment")
+                break
+                
+            # Get depth at test location
+            success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(
+                [(test_lat, test_lon)], self.progress)
+            api_calls_used += 1
+                
+            if success and bathymetry_data:
+                test_depth = bathymetry_data[0]
+                
+                # Check if we found suitable depth
+                if optimal_min <= test_depth <= optimal_max:
+                    self.progress.complete_step(f"Found suitable depth: {test_depth:.1f}m")
+                    return test_lat, test_lon, test_depth
+                    
+                # For shallow adjustment, any deeper water helps
+                if direction == 'seaward' and test_depth > current_depth:
+                    continue
+                    
+                # For deep adjustment, any shallower water helps  
+                if direction == 'shoreward' and test_depth < current_depth:
+                    continue
+        
+        return None, None, None
+
+    def _handle_adjustment_failure(self, lat, lon, current_depth, spot_name, depth_issue):
+        """
+        Handle cases where coordinate adjustment failed to find suitable depth with user override options
+        """
+        print(f"  {CORE_ICONS['warning']} Could not find suitable surf break depth within 250m")
+        print(f"  Current location: {current_depth:.1f}m depth")
+        print(f"  This may indicate unusual bathymetry that could greatly impact forecast accuracy.")
+        print()
+        print("  Options:")
+        print("  1. Keep current coordinates (may affect forecast accuracy)")
+        print("  2. Enter new surf break coordinates")
+        
+        while True:
+            choice = input("  Choice (1-2): ").strip()
+            if choice == '1':
+                print(f"  {CORE_ICONS['warning']} Using coordinates with {depth_issue} depth - forecast accuracy may be affected")
+                return lat, lon
+            elif choice == '2':
+                print(f"  Please enter new coordinates for {spot_name} surf break")
+                return self._get_coordinates_for_water_location("surf break")
+            else:
+                print(f"  {CORE_ICONS['warning']} Please enter 1 or 2")
+                
+                
 class PhaseIAnalyzer:
     """
     Analyze existing Phase I station configuration from CONF metadata
