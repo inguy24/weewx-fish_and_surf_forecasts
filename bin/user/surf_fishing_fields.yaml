@@ -389,6 +389,7 @@ bathymetry_data:
     retry_delay_seconds: 2
     max_locations_per_request: 100
     rate_limit_delay: 1.1
+    interpolation: "bilinear"       # FIXED: Moved here from path_analysis
     
   # Attribution requirements
   attribution:
@@ -396,17 +397,17 @@ bathymetry_data:
     source: "Bathymetry data via OpenTopo Data API"
     disclaimer: "Not for navigation or safety at sea"
     
-  bathymetry_data:
-    surf_break_validation:
-      optimal_depth_range:
-        min_meters: 1.5              # Minimum depth for safe surfing
-        max_meters: 6.0              # Maximum for typical surf breaks
-      depth_adjustment:
-        shallow_limit: 1.5           # Always adjust if shallower
-        deep_warning: 6.0            # User choice if deeper
-        max_adjustment_meters: 250   # Conservative 0.25km limit
-        adjustment_step_meters: 50   # Distance per adjustment attempt
-        max_api_calls: 10            # Budget for adjustment attemptsx
+  # Surf break validation settings
+  surf_break_validation:
+    optimal_depth_range:
+      min_meters: 1.5              # Minimum depth for safe surfing
+      max_meters: 6.0              # Maximum for typical surf breaks
+    depth_adjustment:
+      shallow_limit: 1.5           # Always adjust if shallower
+      deep_warning: 6.0            # User choice if deeper
+      max_adjustment_meters: 250   # Conservative 0.25km limit
+      adjustment_step_meters: 50   # Distance per adjustment attempt
+      max_api_calls: 10            # Budget for adjustment attempts
     
   # Land/sea validation
   coordinate_validation:
