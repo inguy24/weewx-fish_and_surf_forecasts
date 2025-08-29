@@ -486,31 +486,104 @@ class SurfFishingConfigurator:
         
         return lat, lon
 
-    def _validate_water_location(self, lat, lon):
-        """
-        Enhanced water location validation with basic depth verification for surf suitability
-        """
-        validation_config = self.yaml_data.get('bathymetry_data', {}).get('coordinate_validation', {})
-        if not validation_config.get('enable_land_sea_validation'):
-            return True
-        
-        self.progress.show_step_progress("Validating water location")
-        
-        # Query GEBCO for land/sea validation
-        success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback([(lat, lon)], self.progress)
-        
-        if not success:
-            self.progress.show_error("Location validation", "Cannot validate - proceeding anyway")
-            return True
-        
-        depth = bathymetry_data[0] if bathymetry_data else 0.0
-        land_threshold = validation_config.get('land_elevation_threshold', 0.0)
-        
-        if depth <= land_threshold:
-            self.progress.show_error("Location validation", f"Location on land (elevation: {depth:.1f}m)")
-            return False
-        else:
+    def _validate_water_location(self, lat, lon, beach_angle=None, spot_name=None):
+            """
+            Combined water location validation and surf break depth adjustment using single GEBCO API call
+            """
+            validation_config = self.yaml_data.get('bathymetry_data', {}).get('coordinate_validation', {})
+            if not validation_config.get('enable_land_sea_validation'):
+                if beach_angle is not None and spot_name is not None:
+                    return lat, lon  # Return coordinates for surf spot usage
+                return True  # Return boolean for simple water validation
+            
+            self.progress.show_step_progress("Validating water location")
+            
+            # Single GEBCO query for both land/sea and depth validations
+            success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback([(lat, lon)], self.progress)
+            
+            if not success:
+                self.progress.show_error("Location validation", "Cannot validate - proceeding anyway")
+                if beach_angle is not None and spot_name is not None:
+                    return lat, lon  # Return coordinates for surf spot usage
+                return True  # Return boolean for simple water validation
+            
+            depth = bathymetry_data[0] if bathymetry_data else 0.0
+            land_threshold = validation_config.get('land_elevation_threshold', 0.0)
+            
+            # First validation: Land/sea check
+            if depth <= land_threshold:
+                self.progress.show_error("Location validation", f"Location on land (elevation: {depth:.1f}m)")
+                if beach_angle is not None and spot_name is not None:
+                    return None, None  # Invalid location for surf spots
+                return False  # Invalid for simple water validation
+            
             self.progress.complete_step(f"Valid water location (depth: {depth:.1f}m)")
+            
+            # If this is a surf spot validation (beach_angle and spot_name provided), do surf depth validation
+            if beach_angle is not None and spot_name is not None:
+                print(f"  {CORE_ICONS['selection']} Validating surf break depth for optimal conditions...")
+                
+                # Load surf depth configuration from YAML
+                config = self._load_surf_depth_config()
+                optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
+                
+                # Perfect depth - no adjustment needed
+                if optimal_min <= depth <= optimal_max:
+                    print(f"  {CORE_ICONS['status']} Perfect surf break depth: {depth:.1f}m")
+                    return lat, lon
+                
+                # Too shallow - mandatory adjustment (safety)
+                elif depth < config['shallow_limit']:
+                    print(f"  {CORE_ICONS['warning']} Location too shallow: {depth:.1f}m")
+                    print(f"  Adjusting seaward to find suitable surf break depth...")
+                    
+                    adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
+                        lat, lon, beach_angle, depth, direction='seaward', spot_name=spot_name, config=config)
+                    
+                    if adjusted_lat is not None:
+                        distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34  # Convert to meters
+                        print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m seaward to {adjusted_depth:.1f}m depth")
+                        return adjusted_lat, adjusted_lon
+                    else:
+                        return self._handle_adjustment_failure(lat, lon, depth, spot_name, "shallow")
+                
+                # Too deep - user choice
+                elif depth > config['deep_warning']:
+                    print(f"  {CORE_ICONS['warning']} Depth Analysis: Current location depth is {depth:.1f}m")
+                    print(f"  This is deeper than typical surf break range ({optimal_min}-{optimal_max}m).")
+                    print(f"  This could be suitable for big wave conditions, or you may want")
+                    print(f"  to move closer to shore for regular surf conditions.")
+                    print()
+                    print("  Options:")
+                    print("  1. Keep current location (suitable for big waves)")
+                    print("  2. Auto-adjust toward shore (find typical surf depth)")  
+                    print("  3. Enter new coordinates")
+                    
+                    while True:
+                        choice = input("  Choice (1-3): ").strip()
+                        if choice == '1':
+                            print(f"  {CORE_ICONS['status']} Using deep water location ({depth:.1f}m)")
+                            return lat, lon
+                        elif choice == '2':
+                            print(f"  Adjusting shoreward to find suitable surf break depth...")
+                            adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
+                                lat, lon, beach_angle, depth, direction='shoreward', spot_name=spot_name, config=config)
+                            
+                            if adjusted_lat is not None:
+                                distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34
+                                print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m shoreward to {adjusted_depth:.1f}m depth")
+                                return adjusted_lat, adjusted_lon
+                            else:
+                                return self._handle_adjustment_failure(lat, lon, depth, spot_name, "deep")
+                        elif choice == '3':
+                            print(f"  Please enter new coordinates for {spot_name}")
+                            return self._get_coordinates_for_water_location("surf break")
+                        else:
+                            print(f"  {CORE_ICONS['warning']} Please enter 1, 2, or 3")
+                
+                return lat, lon
+            
+            # For simple water validation, just return True
             return True
        
     def run_interactive_setup(self):
@@ -733,23 +806,19 @@ class SurfFishingConfigurator:
             if not name:
                 break
                 
-            # Get coordinates with water validation
+            # Get initial coordinates for surf break
             lat, lon = self._get_coordinates_for_water_location("surf break")
             
-            # Get beach angle (KEEP existing functionality)
+            # Get beach angle
             beach_angle = self._get_beach_angle()
             
-            # NEW: Enhanced depth validation with smart adjustment
-            print(f"  {CORE_ICONS['selection']} Validating surf break depth for optimal conditions...")
-            success, bathymetry_data, used_fallback = self.gebco_client.query_bathymetry_with_fallback(
-                [(lat, lon)], self.progress)
+            # Combined water validation and surf depth adjustment (single GEBCO call)
+            lat, lon = self._validate_water_location(lat, lon, beach_angle, name)
             
-            if success and bathymetry_data:
-                current_depth = bathymetry_data[0]
-                lat, lon = self._adjust_surf_break_coordinates_with_user_interaction(
-                    lat, lon, beach_angle, current_depth, name)
-            else:
-                print(f"  {CORE_ICONS['warning']} Could not validate depth - proceeding with coordinates as entered")
+            # Check if validation failed
+            if lat is None or lon is None:
+                print(f"  {CORE_ICONS['warning']} Location validation failed - please try different coordinates")
+                continue
             
             # Get surf characteristics (KEEP existing functionality)
             spot_config = self._configure_surf_characteristics(name, lat, lon)
@@ -1320,69 +1389,6 @@ class SurfFishingConfigurator:
             'adjustment_step': adjustment_config.get('adjustment_step_meters', 50),
             'max_api_calls': adjustment_config.get('max_api_calls', 10)
         }
-
-    def _adjust_surf_break_coordinates_with_user_interaction(self, lat, lon, beach_angle, current_depth, spot_name):
-        """
-        Intelligently adjust surf break coordinates based on depth validation with user interaction
-        """
-        config = self._load_surf_depth_config()
-        optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
-        
-        # Perfect depth - no adjustment needed
-        if optimal_min <= current_depth <= optimal_max:
-            print(f"  {CORE_ICONS['status']} Perfect surf break depth: {current_depth:.1f}m")
-            return lat, lon
-        
-        # Too shallow - mandatory adjustment (safety)
-        elif current_depth < config['shallow_limit']:
-            print(f"  {CORE_ICONS['warning']} Location too shallow: {current_depth:.1f}m")
-            print(f"  Adjusting seaward to find suitable surf break depth...")
-            
-            adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
-                lat, lon, beach_angle, current_depth, direction='seaward', spot_name=spot_name, config=config)
-            
-            if adjusted_lat is not None:
-                distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34  # Convert to meters
-                print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m seaward to {adjusted_depth:.1f}m depth")
-                return adjusted_lat, adjusted_lon
-            else:
-                return self._handle_adjustment_failure(lat, lon, current_depth, spot_name, "shallow")
-        
-        # Too deep - user choice
-        elif current_depth > config['deep_warning']:
-            print(f"  {CORE_ICONS['warning']} Depth Analysis: Current location depth is {current_depth:.1f}m")
-            print(f"  This is deeper than typical surf break range ({optimal_min}-{optimal_max}m).")
-            print(f"  This could be suitable for big wave conditions, or you may want")
-            print(f"  to move closer to shore for regular surf conditions.")
-            print()
-            print("  Options:")
-            print("  1. Keep current location (suitable for big waves)")
-            print("  2. Auto-adjust toward shore (find typical surf depth)")  
-            print("  3. Enter new coordinates")
-            
-            while True:
-                choice = input("  Choice (1-3): ").strip()
-                if choice == '1':
-                    print(f"  {CORE_ICONS['status']} Using deep water location ({current_depth:.1f}m)")
-                    return lat, lon
-                elif choice == '2':
-                    print(f"  Adjusting shoreward to find suitable surf break depth...")
-                    adjusted_lat, adjusted_lon, adjusted_depth = self._try_coordinate_adjustment(
-                        lat, lon, beach_angle, current_depth, direction='shoreward', spot_name=spot_name, config=config)
-                    
-                    if adjusted_lat is not None:
-                        distance_moved = self._calculate_distance(lat, lon, adjusted_lat, adjusted_lon) * 1609.34
-                        print(f"  {CORE_ICONS['status']} Adjusted {distance_moved:.0f}m shoreward to {adjusted_depth:.1f}m depth")
-                        return adjusted_lat, adjusted_lon
-                    else:
-                        return self._handle_adjustment_failure(lat, lon, current_depth, spot_name, "deep")
-                elif choice == '3':
-                    print(f"  Please enter new coordinates for {spot_name}")
-                    return self._get_coordinates_for_water_location("surf break") 
-                else:
-                    print(f"  {CORE_ICONS['warning']} Please enter 1, 2, or 3")
-        
-        return lat, lon
 
     def _try_coordinate_adjustment(self, lat, lon, beach_angle, current_depth, direction, spot_name, config):
         """
