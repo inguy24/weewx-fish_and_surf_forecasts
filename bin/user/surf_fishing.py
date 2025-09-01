@@ -739,12 +739,12 @@ class WaveWatchDataCollector:
         # Extract offshore coordinates for GRIB data (deep water)
         bathymetric_path = spot_config.get('bathymetric_path', {})
         
-        if not bathymetric_path.get('offshore_latitude') or not bathymetric_path.get('offshore_longitude'):
-            log.error(f"Missing bathymetric_path offshore coordinates for spot {spot_config.get('name', 'unknown')}")
+        if not spot_config.get('offshore_latitude') or not spot_config.get('offshore_longitude'):
+            log.error(f"Missing offshore coordinates for spot {spot_config.get('name', 'unknown')}")
             return []
         
-        offshore_lat = float(bathymetric_path['offshore_latitude'])
-        offshore_lon = float(bathymetric_path['offshore_longitude'])
+        offshore_lat = float(spot_config['offshore_latitude'])
+        offshore_lon = float(spot_config['offshore_longitude'])
         
         log.debug(f"Using offshore coordinates for GRIB data: lat={offshore_lat}, lon={offshore_lon}")
         
