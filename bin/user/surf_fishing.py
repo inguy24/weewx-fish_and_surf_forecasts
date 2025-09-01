@@ -4521,10 +4521,7 @@ class SurfFishingService(StdService):
                                     spot_config = self.config_dict.get('SurfFishingService', {}).get('surf_spots', {}).get(spot['id'], {})
                                     if spot_config.get('offshore_latitude') and spot_config.get('offshore_longitude'):
                                         # Use offshore coordinates for GRIB data collection
-                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
-                                            float(spot_config['offshore_latitude']),
-                                            float(spot_config['offshore_longitude'])
-                                        )
+                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(spot_config)
                                         log.debug(f"Using offshore coordinates for GFS Wave data: {spot_config['offshore_latitude']}, {spot_config['offshore_longitude']}")
                                     else:
                                         # Fall back to surf break coordinates
