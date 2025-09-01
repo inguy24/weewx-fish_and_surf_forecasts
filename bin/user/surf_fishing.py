@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Raccoon
+# Magic Animal: Muskrat
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1704,7 +1704,7 @@ class BathymetryProcessor:
                     shutil.copy2(config_path, backup_path)
                 
                 # Write the updated configuration
-                config.write()
+                config.write(encoding='utf-8')
                 
                 # Update in-memory configuration to reflect changes
                 self.config_dict.update(dict(config))
@@ -4582,24 +4582,16 @@ class SurfFishingService(StdService):
                             if self.grib_processor.is_available():
                                 gfs_wave_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
 
-                                # Use offshore coordinates if available, otherwise use surf break coordinates
-                                if not spot.get('needs_bathymetry', False):
-                                    # Bathymetry already processed - check if we have offshore coordinates
-                                    spot_config = self.config_dict.get('SurfFishingService', {}).get('surf_spots', {}).get(spot['id'], {})
-                                    if spot_config.get('offshore_latitude') and spot_config.get('offshore_longitude'):
-                                        # Use offshore coordinates for GRIB data collection
-                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(spot_config)
-                                        log.debug(f"Using offshore coordinates for GFS Wave data: {spot_config['offshore_latitude']}, {spot_config['offshore_longitude']}")
-                                    else:
-                                        # Fall back to surf break coordinates
-                                        gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
-                                            spot['latitude'], spot['longitude']
-                                        )
+                                # Only collect GFS Wave data if we have valid deep water coordinates
+                                spot_config = self.config_dict.get('SurfFishingService', {}).get('surf_spots', {}).get(spot['id'], {})
+                                if spot_config.get('offshore_latitude') and spot_config.get('offshore_longitude'):
+                                    # Use offshore coordinates for GRIB data collection (deep water only)
+                                    gfs_wave_data = gfs_wave_collector.fetch_forecast_data(spot_config)
+                                    log.debug(f"Using offshore coordinates for GFS Wave data: {spot_config['offshore_latitude']}, {spot_config['offshore_longitude']}")
                                 else:
-                                    # Bathymetry processing failed or not yet processed - use surf break coordinates
-                                    gfs_wave_data = gfs_wave_collector.fetch_forecast_data(
-                                        spot['latitude'], spot['longitude']
-                                    )
+                                    # No deep water coordinates available - skip GFS Wave data collection
+                                    log.warning(f"No deep water coordinates available for {spot['name']} - skipping GFS Wave data")
+                                    gfs_wave_data = []
  
                             # EXISTING: Generate surf forecast
                             surf_forecast = surf_generator.generate_surf_forecast(spot, gfs_wave_data)
