@@ -1704,7 +1704,8 @@ class BathymetryProcessor:
                     shutil.copy2(config_path, backup_path)
                 
                 # Write the updated configuration
-                config.write(encoding='utf-8')
+                config.encoding = 'utf-8'
+                config.write()
                 
                 # Update in-memory configuration to reflect changes
                 self.config_dict.update(dict(config))
