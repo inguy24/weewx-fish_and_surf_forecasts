@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Magpie
+# Magic Animal: Raccoon
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1184,10 +1184,11 @@ class WaveWatchDataCollector:
 class BathymetryProcessor:
     """Handle deep water point determination and bathymetry profile calculations for surf spots"""
     
-    def __init__(self, config_dict, grib_processor):
+    def __init__(self, config_dict, grib_processor, engine):
         """Initialize bathymetry processor with access to CONF data and GRIB processing"""
         self.config_dict = config_dict
         self.grib_processor = grib_processor
+        self.engine = engine  # Store engine reference for weewx.conf access
         
         # Get bathymetry configuration from CONF
         service_config = config_dict.get('SurfFishingService', {})
@@ -1253,7 +1254,7 @@ class BathymetryProcessor:
                 'bathymetry_calculated': True
             }
             
-            success = self._store_bathymetry_in_conf(spot_id, bathymetry_data)
+            success = self.persist_bathymetry_to_weewx_conf(spot_id, bathymetry_data)
             
             if success:
                 log.info(f"{CORE_ICONS['status']} Bathymetry processing completed for {spot_name}")
@@ -1618,53 +1619,119 @@ class BathymetryProcessor:
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error getting spot config from CONF: {e}")
             return {}
-    
-    def _store_bathymetry_in_conf(self, spot_id, bathymetry_data):
-        """Update CONF with calculated oceanographic data using proper WeeWX methods"""
+
+    def persist_bathymetry_to_weewx_conf(self, spot_id, bathymetry_data):
+        """Properly persist bathymetry data to weewx.conf using WeeWX methods"""
         
         try:
-            # This is where we need to use proper WeeWX configuration update methods
-            # For now, we'll update the in-memory config_dict
-            # In full implementation, this should use WeeWX's config management system
+            # Get the path to weewx.conf
+            # Use engine's config path if available, otherwise default location
+            if hasattr(self.engine, 'config_path'):
+                config_path = self.engine.config_path
+            elif hasattr(self.engine, 'config_dict') and 'WEEWX_ROOT' in self.engine.config_dict:
+                config_path = os.path.join(self.engine.config_dict['WEEWX_ROOT'], 'weewx.conf')
+            else:
+                # Fallback to common weewx.conf locations
+                possible_paths = [
+                    '/etc/weewx/weewx.conf',
+                    '/home/weewx/weewx.conf', 
+                    '/opt/weewx/weewx.conf'
+                ]
+                config_path = None
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        config_path = path
+                        break
+                
+                if not config_path:
+                    log.error(f"{CORE_ICONS['warning']} Could not locate weewx.conf file")
+                    return False
             
-            service_config = self.config_dict.get('SurfFishingService', {})
-            surf_spots_config = service_config.get('surf_spots', {})
+            log.debug(f"{CORE_ICONS['navigation']} Using weewx.conf path: {config_path}")
             
-            if spot_id not in surf_spots_config:
-                log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in CONF")
+            # Read current weewx.conf
+            config = configobj.ConfigObj(config_path, interpolation=False)
+            
+            # Navigate to the surf spots section, creating if necessary
+            if 'SurfFishingService' not in config:
+                config['SurfFishingService'] = {}
+            if 'surf_spots' not in config['SurfFishingService']:
+                config['SurfFishingService']['surf_spots'] = {}
+            if spot_id not in config['SurfFishingService']['surf_spots']:
+                log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in weewx.conf")
                 return False
             
-            # Update spot configuration with bathymetry data
-            surf_spots_config[spot_id].update({
-                'offshore_latitude': str(bathymetry_data['offshore_latitude']),
-                'offshore_longitude': str(bathymetry_data['offshore_longitude']),
-                'offshore_depth': str(bathymetry_data['offshore_depth']),
-                'offshore_distance_km': str(bathymetry_data['offshore_distance_km']),
-                'bathymetry_calculated': 'true',
-                'bathymetry_calculation_timestamp': str(bathymetry_data['calculation_timestamp'])
-            })
+            spot_section = config['SurfFishingService']['surf_spots'][spot_id]
             
-            # Store bathymetry profile data
+            # Update with bathymetry data
+            spot_section['offshore_latitude'] = str(bathymetry_data['offshore_latitude'])
+            spot_section['offshore_longitude'] = str(bathymetry_data['offshore_longitude']) 
+            spot_section['offshore_depth'] = str(bathymetry_data['offshore_depth'])
+            spot_section['offshore_distance_km'] = str(bathymetry_data['offshore_distance_km'])
+            spot_section['bathymetry_calculated'] = 'true'
+            spot_section['bathymetry_calculation_timestamp'] = str(bathymetry_data['calculation_timestamp'])
+            
+            # Store additional fields if present
+            if 'search_bearing' in bathymetry_data:
+                spot_section['search_bearing'] = str(bathymetry_data['search_bearing'])
+            if 'adjusted_search' in bathymetry_data:
+                spot_section['adjusted_search'] = str(bathymetry_data['adjusted_search'])
+            
+            # Store bathymetry profile
             bathymetry_profile = bathymetry_data.get('surf_path_bathymetry', [])
             if bathymetry_profile:
-                surf_spots_config[spot_id]['bathymetric_path'] = {}
-                surf_spots_config[spot_id]['bathymetric_path']['path_points_total'] = str(len(bathymetry_profile))
+                if 'bathymetric_path' not in spot_section:
+                    spot_section['bathymetric_path'] = {}
                 
+                path_section = spot_section['bathymetric_path']
+                path_section['path_points_total'] = str(len(bathymetry_profile))
+                path_section['path_distance_km'] = str(bathymetry_data.get('path_distance_km', '0.0'))
+                
+                # Store each bathymetry point
                 for i, point in enumerate(bathymetry_profile):
-                    surf_spots_config[spot_id]['bathymetric_path'][f'point_{i}_depth'] = str(point['depth'])
-                    surf_spots_config[spot_id]['bathymetric_path'][f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
+                    path_section[f'point_{i}_latitude'] = str(point.get('latitude', '0.0'))
+                    path_section[f'point_{i}_longitude'] = str(point.get('longitude', '0.0'))
+                    path_section[f'point_{i}_depth'] = str(point['depth'])
+                    path_section[f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
+                    if 'fraction_to_shore' in point:
+                        path_section[f'point_{i}_fraction'] = str(point['fraction_to_shore'])
             
-            log.info(f"{CORE_ICONS['status']} Updated CONF with bathymetry data for spot {spot_id}")
+            # Write changes back to file with error handling
+            try:
+                # Create backup of original file
+                backup_path = config_path + '.bak'
+                if os.path.exists(config_path):
+                    shutil.copy2(config_path, backup_path)
+                
+                # Write the updated configuration
+                config.write()
+                
+                # Update in-memory configuration to reflect changes
+                self.config_dict.update(dict(config))
+                
+                log.info(f"{CORE_ICONS['status']} Successfully persisted bathymetry data to weewx.conf for spot {spot_id}")
+                return True
+                
+            except Exception as write_error:
+                log.error(f"{CORE_ICONS['warning']} Error writing to weewx.conf: {write_error}")
+                
+                # Attempt to restore backup if write failed
+                if os.path.exists(backup_path):
+                    try:
+                        shutil.copy2(backup_path, config_path)
+                        log.info(f"{CORE_ICONS['status']} Restored weewx.conf from backup")
+                    except Exception as restore_error:
+                        log.error(f"{CORE_ICONS['warning']} Could not restore backup: {restore_error}")
+                
+                return False
             
-            # TODO: In full implementation, persist changes to weewx.conf file
-            # This would require using WeeWX's proper configuration management
-            
-            return True
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error storing bathymetry in CONF: {e}")
+        except ImportError:
+            log.error(f"{CORE_ICONS['warning']} configobj not available - cannot persist to weewx.conf")
             return False
-        
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error persisting bathymetry to weewx.conf: {e}")
+            return False
+      
         
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
@@ -4288,7 +4355,7 @@ class SurfFishingService(StdService):
             log.warning("No GRIB library available - WaveWatch III forecasts disabled")
         
         # NEW: Initialize bathymetry processor
-        self.bathymetry_processor = BathymetryProcessor(config_dict, self.grib_processor)
+        self.bathymetry_processor = BathymetryProcessor(config_dict, self.grib_processor, self.engine)
     
         # EXISTING CODE: Initialize forecast generators with CONF-based config - PRESERVED EXACTLY
         # NOTE: These will use _get_db_manager() when they need database access
@@ -5272,117 +5339,7 @@ class SurfFishingService(StdService):
                 log.error(f"{CORE_ICONS['warning']} {error_msg}")
                 raise RuntimeError(error_msg)
 
-    def persist_bathymetry_to_weewx_conf(self, spot_id, bathymetry_data):
-        """Properly persist bathymetry data to weewx.conf using WeeWX methods"""
-        
-        try:
-            # Get the path to weewx.conf
-            # Use engine's config path if available, otherwise default location
-            if hasattr(self.engine, 'config_path'):
-                config_path = self.engine.config_path
-            elif hasattr(self.engine, 'config_dict') and 'WEEWX_ROOT' in self.engine.config_dict:
-                config_path = os.path.join(self.engine.config_dict['WEEWX_ROOT'], 'weewx.conf')
-            else:
-                # Fallback to common weewx.conf locations
-                possible_paths = [
-                    '/etc/weewx/weewx.conf',
-                    '/home/weewx/weewx.conf', 
-                    '/opt/weewx/weewx.conf'
-                ]
-                config_path = None
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        config_path = path
-                        break
-                
-                if not config_path:
-                    log.error(f"{CORE_ICONS['warning']} Could not locate weewx.conf file")
-                    return False
-            
-            log.debug(f"{CORE_ICONS['navigation']} Using weewx.conf path: {config_path}")
-            
-            # Read current weewx.conf
-            config = configobj.ConfigObj(config_path, interpolation=False)
-            
-            # Navigate to the surf spots section, creating if necessary
-            if 'SurfFishingService' not in config:
-                config['SurfFishingService'] = {}
-            if 'surf_spots' not in config['SurfFishingService']:
-                config['SurfFishingService']['surf_spots'] = {}
-            if spot_id not in config['SurfFishingService']['surf_spots']:
-                log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in weewx.conf")
-                return False
-            
-            spot_section = config['SurfFishingService']['surf_spots'][spot_id]
-            
-            # Update with bathymetry data
-            spot_section['offshore_latitude'] = str(bathymetry_data['offshore_latitude'])
-            spot_section['offshore_longitude'] = str(bathymetry_data['offshore_longitude']) 
-            spot_section['offshore_depth'] = str(bathymetry_data['offshore_depth'])
-            spot_section['offshore_distance_km'] = str(bathymetry_data['offshore_distance_km'])
-            spot_section['bathymetry_calculated'] = 'true'
-            spot_section['bathymetry_calculation_timestamp'] = str(bathymetry_data['calculation_timestamp'])
-            
-            # Store additional fields if present
-            if 'search_bearing' in bathymetry_data:
-                spot_section['search_bearing'] = str(bathymetry_data['search_bearing'])
-            if 'adjusted_search' in bathymetry_data:
-                spot_section['adjusted_search'] = str(bathymetry_data['adjusted_search'])
-            
-            # Store bathymetry profile
-            bathymetry_profile = bathymetry_data.get('surf_path_bathymetry', [])
-            if bathymetry_profile:
-                if 'bathymetric_path' not in spot_section:
-                    spot_section['bathymetric_path'] = {}
-                
-                path_section = spot_section['bathymetric_path']
-                path_section['path_points_total'] = str(len(bathymetry_profile))
-                path_section['path_distance_km'] = str(bathymetry_data.get('path_distance_km', '0.0'))
-                
-                # Store each bathymetry point
-                for i, point in enumerate(bathymetry_profile):
-                    path_section[f'point_{i}_latitude'] = str(point.get('latitude', '0.0'))
-                    path_section[f'point_{i}_longitude'] = str(point.get('longitude', '0.0'))
-                    path_section[f'point_{i}_depth'] = str(point['depth'])
-                    path_section[f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
-                    if 'fraction_to_shore' in point:
-                        path_section[f'point_{i}_fraction'] = str(point['fraction_to_shore'])
-            
-            # Write changes back to file with error handling
-            try:
-                # Create backup of original file
-                backup_path = config_path + '.bak'
-                if os.path.exists(config_path):
-                    shutil.copy2(config_path, backup_path)
-                
-                # Write the updated configuration
-                config.write()
-                
-                # Update in-memory configuration to reflect changes
-                self.config_dict.update(dict(config))
-                
-                log.info(f"{CORE_ICONS['status']} Successfully persisted bathymetry data to weewx.conf for spot {spot_id}")
-                return True
-                
-            except Exception as write_error:
-                log.error(f"{CORE_ICONS['warning']} Error writing to weewx.conf: {write_error}")
-                
-                # Attempt to restore backup if write failed
-                if os.path.exists(backup_path):
-                    try:
-                        shutil.copy2(backup_path, config_path)
-                        log.info(f"{CORE_ICONS['status']} Restored weewx.conf from backup")
-                    except Exception as restore_error:
-                        log.error(f"{CORE_ICONS['warning']} Could not restore backup: {restore_error}")
-                
-                return False
-            
-        except ImportError:
-            log.error(f"{CORE_ICONS['warning']} configobj not available - cannot persist to weewx.conf")
-            return False
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error persisting bathymetry to weewx.conf: {e}")
-            return False
+
     
                
     @property
