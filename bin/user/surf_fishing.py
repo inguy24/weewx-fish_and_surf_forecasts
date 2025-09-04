@@ -1249,10 +1249,25 @@ class BathymetryProcessor:
         validation_log = []
         
         for distance_km in search_distances:
-            # Calculate offshore coordinates (existing logic - keep unchanged)
-            offshore_lat, offshore_lon = self._calculate_coordinates_from_bearing(
-                surf_break_lat, surf_break_lon, offshore_bearing, distance_km
+            # Calculate offshore coordinates using existing inline math
+            distance_rad = distance_km * 1000 / 6371000  # Convert km to radians
+            bearing_rad = math.radians(offshore_bearing)
+            
+            surf_break_lat_rad = math.radians(surf_break_lat)
+            surf_break_lon_rad = math.radians(surf_break_lon)
+            
+            offshore_lat_rad = math.asin(
+                math.sin(surf_break_lat_rad) * math.cos(distance_rad) +
+                math.cos(surf_break_lat_rad) * math.sin(distance_rad) * math.cos(bearing_rad)
             )
+            
+            offshore_lon_rad = surf_break_lon_rad + math.atan2(
+                math.sin(bearing_rad) * math.sin(distance_rad) * math.cos(surf_break_lat_rad),
+                math.cos(distance_rad) - math.sin(surf_break_lat_rad) * math.sin(offshore_lat_rad)
+            )
+            
+            offshore_lat = math.degrees(offshore_lat_rad)
+            offshore_lon = math.degrees(offshore_lon_rad)
             
             log.debug(f"{CORE_ICONS['navigation']} Testing point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
             
