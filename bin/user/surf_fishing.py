@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Muskrat
+# Magic Animal: Grey Wolf
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1268,100 +1268,163 @@ class BathymetryProcessor:
             return False
     
     def _find_deep_water_point(self, surf_break_lat, surf_break_lon, beach_facing):
-        """Find valid deep water point (100-150m depth) with GFS Wave data validation"""
+        """Find valid deep water point with enhanced GRIB Wave data validation and comprehensive logging for scientific traceability"""
         
         try:
             # Calculate perpendicular bearing from beach facing direction
-            # Beach facing is the direction the beach faces, we want perpendicular offshore direction
-            offshore_bearing = (beach_facing + 90) % 360  # Perpendicular to beach
+            offshore_bearing = (beach_facing + 90) % 360
             
-            log.debug(f"Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
+            # Enhanced logging for scientific traceability
+            log.info(f"{CORE_ICONS['navigation']} Starting deep water point search for coordinates {surf_break_lat:.4f}, {surf_break_lon:.4f}")
+            log.info(f"{CORE_ICONS['selection']} Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
             
-            # Search incrementally offshore
-            search_distances = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 40, 50]  # km
+            # Search distances (preserve current approach)
+            search_distances = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75]
+            
+            # Track all tested points for comprehensive analysis
+            validation_log = []
             
             for distance_km in search_distances:
-                # Calculate offshore point coordinates
                 offshore_lat, offshore_lon = self._calculate_point_at_bearing_distance(
                     surf_break_lat, surf_break_lon, offshore_bearing, distance_km
                 )
                 
-                # Check bathymetry depth using GEBCO
+                log.debug(f"{CORE_ICONS['navigation']} Testing point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                
+                # Check depth with GEBCO  
                 depth = self._query_gebco_depth(offshore_lat, offshore_lon)
                 
                 if depth is None:
+                    log.debug(f"{CORE_ICONS['warning']} No depth data at {distance_km}km")
+                    validation_log.append({'distance': distance_km, 'status': 'no_depth_data'})
                     continue
                 
-                log.debug(f"Offshore point at {distance_km}km: depth = {depth}m")
+                depth_abs = abs(depth)
+                log.debug(f"{CORE_ICONS['navigation']} Depth at {distance_km}km: {depth_abs:.1f}m")
                 
-                # Check if depth is in target range (100-150m for deep water waves)
-                if 100 <= abs(depth) <= 150:
-                    # Validate GFS Wave data availability
-                    if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
-                        log.info(f"{CORE_ICONS['status']} Found valid deep water point: {offshore_lat:.4f}, {offshore_lon:.4f} (depth: {abs(depth):.1f}m)")
+                # Improved depth criteria (40-200m instead of rigid 100-150m)
+                if 40 <= depth_abs <= 200:
+                    log.debug(f"{CORE_ICONS['status']} Valid depth range at {distance_km}km: {depth_abs:.1f}m")
+                    
+                    # Use enhanced GRIB validation (fixed method)
+                    grib_valid = self._validate_gfs_wave_data(offshore_lat, offshore_lon)
+                    
+                    if grib_valid:
+                        # Found valid point with both depth and GRIB validation
+                        log.info(f"{CORE_ICONS['status']} FOUND VALID DEEP WATER POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                        log.info(f"{CORE_ICONS['navigation']} Distance: {distance_km}km, Depth: {depth_abs:.1f}m, Bearing: {offshore_bearing}°")
                         
                         return {
                             'offshore_latitude': offshore_lat,
                             'offshore_longitude': offshore_lon,
-                            'offshore_depth': abs(depth),
+                            'offshore_depth': depth_abs,
                             'offshore_distance_km': distance_km,
-                            'search_bearing': offshore_bearing
+                            'search_bearing': offshore_bearing,
+                            'adjusted_search': False
                         }
+                    else:
+                        log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km")
+                        validation_log.append({'distance': distance_km, 'status': 'grib_invalid', 'depth': depth_abs})
+                else:
+                    log.debug(f"{CORE_ICONS['warning']} Invalid depth at {distance_km}km: {depth_abs:.1f}m (need 40-200m)")
+                    validation_log.append({'distance': distance_km, 'status': 'depth_invalid', 'depth': depth_abs})
             
-            # If no point found in ideal range, try edge case handling for parallel coastlines
-            return self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing)
+            # Try parallel coastline search if perpendicular search fails
+            log.warning(f"{CORE_ICONS['warning']} Perpendicular search failed - trying parallel coastline search")
+            log.info(f"{CORE_ICONS['navigation']} Tested {len(search_distances)} points, detailed results in validation log")
+            
+            parallel_result = self._handle_parallel_coastline_search(
+                surf_break_lat, surf_break_lon, beach_facing, validation_log
+            )
+            
+            if parallel_result:
+                return parallel_result
+            
+            # Comprehensive failure logging
+            log.error(f"{CORE_ICONS['warning']} DEEP WATER SEARCH FAILED - No valid point found within 75km")
+            log.error(f"{CORE_ICONS['navigation']} Search Summary:")
+            log.error(f"   - Beach facing: {beach_facing}°, Offshore bearing: {offshore_bearing}°") 
+            log.error(f"   - Points tested: {len(search_distances)}")
+            
+            valid_depth_count = len([v for v in validation_log if v['status'] != 'depth_invalid'])
+            grib_invalid_count = len([v for v in validation_log if v['status'] == 'grib_invalid'])
+            
+            log.error(f"   - Points with valid depth: {valid_depth_count}")
+            log.error(f"   - Points with invalid GRIB: {grib_invalid_count}")
+            log.error(f"   - Points with valid GRIB: 0")
+            
+            return None
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error in deep water point search: {e}")
             return None
     
-    def _handle_parallel_coastline_search(self, surf_break_lat, surf_break_lon, beach_facing):
-        """Handle edge case for parallel coastlines (e.g., Southern California south-facing beaches)"""
+    def _handle_parallel_coastline_search(self, surf_break_lat, surf_break_lon, beach_facing, validation_log):
+        """Handle parallel coastline edge cases with enhanced search patterns and comprehensive logging for scientific analysis"""
         
         try:
-            log.info(f"{CORE_ICONS['navigation']} Trying adjusted bearings for parallel coastline")
+            log.info(f"{CORE_ICONS['selection']} Starting parallel coastline search with adjusted bearings")
             
-            # Try adjusted bearings: ±15°, ±30° from original perpendicular
-            base_bearing = (beach_facing + 90) % 360
-            adjusted_bearings = [
-                (base_bearing + 15) % 360,
-                (base_bearing - 15) % 360,
-                (base_bearing + 30) % 360,
-                (base_bearing - 30) % 360,
-                (base_bearing + 45) % 360,
-                (base_bearing - 45) % 360
-            ]
+            # Bearing adjustments and search distances (preserve current logic)
+            bearing_adjustments = [-30, -15, 15, 30, -45, 45]  
+            search_distances = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75]
             
-            search_distances = [5, 10, 15, 20, 30, 40, 50, 60, 75]  # Extended range
+            # Track adjusted search attempts
+            adjusted_attempts = 0
+            total_tests = 0
             
-            for bearing in adjusted_bearings:
-                log.debug(f"Trying adjusted bearing: {bearing}°")
+            for adjustment in bearing_adjustments:
+                adjusted_bearing = (beach_facing + 90 + adjustment) % 360
+                log.info(f"{CORE_ICONS['navigation']} Trying adjusted bearing: {adjusted_bearing}° (adjustment: {adjustment:+d}°)")
+                adjusted_attempts += 1
                 
                 for distance_km in search_distances:
+                    total_tests += 1
+                    
                     offshore_lat, offshore_lon = self._calculate_point_at_bearing_distance(
-                        surf_break_lat, surf_break_lon, bearing, distance_km
+                        surf_break_lat, surf_break_lon, adjusted_bearing, distance_km
                     )
                     
+                    log.debug(f"{CORE_ICONS['navigation']} Testing adjusted point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                    
+                    # Depth checking logic
                     depth = self._query_gebco_depth(offshore_lat, offshore_lon)
                     
                     if depth is None:
                         continue
                     
-                    # Relaxed depth criteria for edge cases (50-200m)
-                    if 50 <= abs(depth) <= 200:
-                        if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
-                            log.info(f"{CORE_ICONS['status']} Found valid deep water point with adjusted bearing: {offshore_lat:.4f}, {offshore_lon:.4f} (depth: {abs(depth):.1f}m)")
+                    depth_abs = abs(depth)
+                    
+                    # Slightly relaxed depth criteria for edge cases (30-200m)
+                    if 30 <= depth_abs <= 200:
+                        log.debug(f"{CORE_ICONS['status']} Valid adjusted depth at {distance_km}km: {depth_abs:.1f}m")
+                        
+                        # Use enhanced GRIB validation
+                        grib_valid = self._validate_gfs_wave_data(offshore_lat, offshore_lon)
+                        
+                        if grib_valid:
+                            log.info(f"{CORE_ICONS['status']} FOUND VALID ADJUSTED DEEP WATER POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                            log.info(f"{CORE_ICONS['navigation']} Adjusted bearing: {adjusted_bearing}°, Distance: {distance_km}km, Depth: {depth_abs:.1f}m")
                             
                             return {
                                 'offshore_latitude': offshore_lat,
                                 'offshore_longitude': offshore_lon,
-                                'offshore_depth': abs(depth),
+                                'offshore_depth': depth_abs,
                                 'offshore_distance_km': distance_km,
-                                'search_bearing': bearing,
+                                'search_bearing': adjusted_bearing,
                                 'adjusted_search': True
                             }
+                        else:
+                            log.debug(f"{CORE_ICONS['warning']} GRIB validation failed for adjusted point at {distance_km}km")
             
-            log.warning(f"{CORE_ICONS['warning']} No valid deep water point found within 75km search limit")
+            # Comprehensive failure analysis
+            log.error(f"{CORE_ICONS['warning']} PARALLEL COASTLINE SEARCH FAILED")
+            log.error(f"{CORE_ICONS['status']} Adjusted Search Summary:")
+            log.error(f"   - Bearing adjustments tried: {adjusted_attempts}")
+            log.error(f"   - Total adjusted points tested: {total_tests}")
+            log.error(f"   - Original perpendicular failures: {len(validation_log)}")
+            log.error(f"   - Result: NO VALID DEEP WATER POINT FOUND")
+            
             return None
             
         except Exception as e:
@@ -1369,36 +1432,225 @@ class BathymetryProcessor:
             return None
     
     def _validate_gfs_wave_data(self, lat, lon):
-        """Check if coordinates have valid GFS Wave data (not land-masked)"""
+        """Check if coordinates have valid GFS Wave data using direct GRIB access instead of circular validation"""
         
         try:
             if not self.grib_processor.is_available():
                 log.warning(f"{CORE_ICONS['warning']} GRIB processor not available for GFS Wave validation")
                 return True  # Assume valid if can't check
             
-            # Download a sample GFS Wave GRIB file to test coordinates
-            # Use existing WaveWatchDataCollector logic but just for validation
+            # Get GFS Wave configuration from CONF
+            service_config = self.config_dict.get('SurfFishingService', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+            
+            if not gfs_wave_config:
+                log.debug(f"No GFS Wave configuration found - assuming coordinates valid")
+                return True
+            
+            # Use existing WaveWatchDataCollector for grid selection
             test_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
             
-            # Try to get data for this location - if it returns data, coordinates are valid
-            test_data = test_collector.fetch_forecast_data(lat, lon)
+            # Get appropriate grid for coordinates using existing logic
+            grid_name = None
+            for grid_candidate, grid_config in test_collector.grids.items():
+                bounds = grid_config.get('bounds', [])
+                if bounds:
+                    if isinstance(bounds, str):
+                        bounds_list = [float(x.strip()) for x in bounds.split(',')]
+                        if len(bounds_list) == 4:
+                            lat_min, lat_max, lon_min, lon_max = bounds_list
+                            if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+                                grid_name = grid_config.get('grid_name', grid_candidate)
+                                break
             
-            if test_data and len(test_data) > 0:
-                # Check if we got actual wave data (not just empty response)
-                for period in test_data[:3]:  # Check first few periods
-                    if period.get('wave_height') is not None or period.get('wave_period') is not None:
-                        log.debug(f"GFS Wave data validation: VALID for {lat:.4f}, {lon:.4f}")
-                        return True
+            if not grid_name:
+                grid_name = 'global.0p16'  # Default fallback
                 
-                log.debug(f"GFS Wave data validation: NO DATA for {lat:.4f}, {lon:.4f}")
+            if not grid_name:
+                log.debug(f"No suitable grid found for validation at {lat:.4f}, {lon:.4f}")
                 return False
-            else:
-                log.debug(f"GFS Wave data validation: FAILED for {lat:.4f}, {lon:.4f}")
-                return False
+            
+            # Download single recent GRIB file for validation testing
+            from datetime import datetime, timedelta
+            import tempfile
+            
+            # Try recent model runs
+            cycles_to_try = []
+            now = datetime.utcnow()
+            
+            for hours_back in range(0, 24, 6):  # Check last 4 cycles
+                potential_time = now - timedelta(hours=hours_back)
+                cycle_hour = (potential_time.hour // 6) * 6
+                cycle_time = potential_time.replace(hour=cycle_hour, minute=0, second=0, microsecond=0)
                 
+                if cycle_time <= now - timedelta(hours=3):
+                    cycles_to_try.append(cycle_time)
+            
+            sample_file = None
+            
+            # Try to download f000 file from most recent cycles
+            for cycle_time in cycles_to_try:
+                try:
+                    date_str = cycle_time.strftime('%Y%m%d')
+                    hour_str = f"{cycle_time.hour:02d}"
+                    
+                    filename = f"gfswave.t{hour_str}z.{grid_name}.f000.grib2"
+                    url = f"{test_collector.base_url}gfs.{date_str}/{hour_str}/wave/gridded/{filename}"
+                    
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
+                    
+                    log.debug(f"Downloading validation GRIB: {url}")
+                    
+                    request = urllib.request.Request(url)
+                    with urllib.request.urlopen(request, timeout=30) as response:
+                        data = response.read()
+                    
+                    if len(data) > 500000:  # Expect at least 500KB for valid file
+                        temp_file.write(data)
+                        temp_file.close()
+                        sample_file = temp_file.name
+                        log.debug(f"Downloaded validation file: {sample_file} ({len(data)} bytes)")
+                        break
+                    else:
+                        temp_file.close()
+                        os.unlink(temp_file.name)
+                        
+                except (urllib.error.URLError, urllib.error.HTTPError) as e:
+                    if hasattr(e, 'code') and e.code == 404:
+                        log.debug(f"Validation file not available: {filename}")
+                        continue
+                    else:
+                        log.debug(f"Download error: {e}")
+                        continue
+                except Exception as e:
+                    log.debug(f"General download error: {e}")
+                    continue
+            
+            if not sample_file:
+                log.debug(f"Could not download validation file - assuming coordinates valid")
+                return True
+            
+            try:
+                # Direct GRIB validation using available library
+                validation_result = False
+                
+                # Use pygrib if available
+                if self.grib_processor.grib_library == 'pygrib':
+                    try:
+                        import pygrib
+                        import numpy as np
+                        
+                        grbs = pygrib.open(sample_file)
+                        
+                        # Find wave height parameter
+                        wave_grb = None
+                        for grb in grbs:
+                            param_name = str(getattr(grb, 'parameterName', ''))
+                            if 'Significant height of combined wind waves and swell' in param_name:
+                                wave_grb = grb
+                                break
+                        
+                        if wave_grb:
+                            # Get data and coordinates
+                            values, lats, lons = wave_grb.data()
+                            
+                            # Find closest grid point
+                            lat_diff = np.abs(lats - lat)
+                            lon_diff = np.abs(lons - lon)
+                            distance = np.sqrt(lat_diff**2 + lon_diff**2)
+                            closest_idx = np.unravel_index(np.argmin(distance), distance.shape)
+                            
+                            # Check if closest point has valid data
+                            closest_value = values[closest_idx]
+                            
+                            if not (np.ma.is_masked(closest_value) or np.isnan(closest_value)):
+                                validation_result = True
+                                
+                    except ImportError:
+                        log.debug("pygrib not available")
+                        validation_result = True
+                    except Exception as e:
+                        log.debug(f"pygrib validation error: {e}")
+                        
+                # Use eccodes if available
+                elif self.grib_processor.grib_library == 'eccodes':
+                    try:
+                        import eccodes as ec
+                        
+                        with open(sample_file, 'rb') as f:
+                            # Find wave height message
+                            wave_msg = None
+                            while True:
+                                msg = ec.codes_grib_new_from_file(f)
+                                if msg is None:
+                                    break
+                                
+                                param_name = ec.codes_get(msg, 'parameterName', str)
+                                if 'Significant height of combined wind waves and swell' in param_name:
+                                    wave_msg = msg
+                                    break
+                                else:
+                                    ec.codes_release(msg)
+                            
+                            if wave_msg:
+                                try:
+                                    ni = ec.codes_get(wave_msg, 'Ni')
+                                    nj = ec.codes_get(wave_msg, 'Nj')
+                                    lat_first = ec.codes_get(wave_msg, 'latitudeOfFirstGridPointInDegrees')
+                                    lon_first = ec.codes_get(wave_msg, 'longitudeOfFirstGridPointInDegrees')
+                                    lat_last = ec.codes_get(wave_msg, 'latitudeOfLastGridPointInDegrees')
+                                    lon_last = ec.codes_get(wave_msg, 'longitudeOfLastGridPointInDegrees')
+                                    
+                                    # Calculate grid resolution
+                                    lat_step = (lat_last - lat_first) / max(1, (nj - 1))
+                                    lon_step = (lon_last - lon_first) / max(1, (ni - 1))
+                                    
+                                    # Find closest grid point
+                                    lat_idx = int(round((lat - lat_first) / lat_step)) if lat_step != 0 else 0
+                                    lon_idx = int(round((lon - lon_first) / lon_step)) if lon_step != 0 else 0
+                                    
+                                    # Check bounds
+                                    if 0 <= lat_idx < nj and 0 <= lon_idx < ni:
+                                        # Get values and check point
+                                        values = ec.codes_get_values(wave_msg)
+                                        linear_idx = lat_idx * ni + lon_idx
+                                        
+                                        if linear_idx < len(values):
+                                            point_value = values[linear_idx]
+                                            
+                                            # Check for valid data (not missing)
+                                            if not (point_value > 9000 or point_value < 0):
+                                                validation_result = True
+                                                
+                                finally:
+                                    ec.codes_release(wave_msg)
+                                    
+                    except ImportError:
+                        log.debug("eccodes not available")
+                        validation_result = True
+                    except Exception as e:
+                        log.debug(f"eccodes validation error: {e}")
+                else:
+                    validation_result = True
+                    
+                if validation_result:
+                    log.debug(f"{CORE_ICONS['status']} GFS Wave data validation: VALID for {lat:.4f}, {lon:.4f}")
+                    return True
+                else:
+                    log.debug(f"{CORE_ICONS['warning']} GFS Wave data validation: INVALID (land-masked) for {lat:.4f}, {lon:.4f}")
+                    return False
+                    
+            finally:
+                # Clean up temporary file
+                if sample_file and os.path.exists(sample_file):
+                    try:
+                        os.unlink(sample_file)
+                    except:
+                        pass
+                        
         except Exception as e:
-            log.debug(f"GFS Wave validation error (assuming valid): {e}")
-            return True  # If validation fails, assume valid to not block processing
+            log.error(f"GFS Wave validation error: {e}")
+            return False
     
     def _create_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
         """Create straight-line surf path and collect bathymetry profile"""
