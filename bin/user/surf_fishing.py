@@ -1472,17 +1472,18 @@ class BathymetryProcessor:
             current_time = datetime.utcnow()
             expected_cycle = test_collector.get_expected_gfs_cycle(current_time)
             
-            log.debug(f"{CORE_ICONS['navigation']} Validating GRIB data for coordinates {lat:.4f}, {lon:.4f}")
+            log.debug(f"{CORE_ICONS['navigation']} Validating GRIB data for coordinates {lat:.4f}, {lon:.4f} using grid {grid_name}")
             
             # Download just f000 file using existing working infrastructure
-            run_date_str = expected_cycle.strftime('%Y%m%d')
-            run_hour_str = f"{expected_cycle.hour:02d}"
-            
-            cycle_files = test_collector._download_grib_files_for_cycle(
-                expected_cycle, 
-                grid_name, 
-                forecast_hours=[0]  # Only download f000 for validation
-            )
+            try:
+                cycle_files = test_collector._download_grib_files_for_cycle(
+                    expected_cycle, 
+                    grid_name, 
+                    forecast_hours=[0]  # Only download f000 for validation
+                )
+            except Exception as e:
+                log.debug(f"{CORE_ICONS['warning']} Could not download validation GRIB file: {e}")
+                return False
             
             if not cycle_files:
                 log.debug(f"{CORE_ICONS['warning']} No GRIB validation file available for {run_date_str} {run_hour_str}Z")
