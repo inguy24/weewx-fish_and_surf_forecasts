@@ -1431,56 +1431,67 @@ class BathymetryProcessor:
             # Use existing WaveWatchDataCollector infrastructure for validation
             test_collector = WaveWatchDataCollector(self.config_dict, self.grib_processor)
             
-            # Get appropriate grid using existing grid selection logic
-            grid_name = test_collector._select_grid_data_driven(lat, lon)
-            
-            if not grid_name:
-                log.debug(f"{CORE_ICONS['warning']} No suitable grid found for validation at {lat:.4f}, {lon:.4f}")
+            # Use the EXACT same grid selection logic from fetch_forecast_data method
+            grid_name = None
+            try:
+                # Check each configured grid for coverage - COPY from working method
+                for grid_candidate, grid_config in test_collector.grids.items():
+                    bounds = grid_config.get('bounds', [])
+                    if bounds:
+                        # Parse bounds string from CONF (format: "lat_min,lat_max,lon_min,lon_max")
+                        if isinstance(bounds, str):
+                            bounds_list = [float(x.strip()) for x in bounds.split(',')]
+                            if len(bounds_list) == 4:
+                                lat_min, lat_max, lon_min, lon_max = bounds_list
+                                if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+                                    grid_name = grid_config.get('grid_name', grid_candidate)
+                                    log.debug(f"{CORE_ICONS['navigation']} Selected grid {grid_name} for validation at {lat:.4f}, {lon:.4f}")
+                                    break
+                
+                # Priority fallback system for grid coverage - COPY from working method
+                if not grid_name:
+                    fallback_grids = ['global.0p16', 'global.0p25']
+                    for fallback_grid in fallback_grids:
+                        for grid_candidate, grid_config in test_collector.grids.items():
+                            if grid_config.get('grid_name') == fallback_grid:
+                                grid_name = fallback_grid
+                                log.debug(f"{CORE_ICONS['navigation']} Using fallback grid {grid_name} for validation")
+                                break
+                        if grid_name:
+                            break
+                
+                if not grid_name:
+                    log.debug(f"{CORE_ICONS['warning']} No suitable grid found for validation at {lat:.4f}, {lon:.4f}")
+                    return False
+                    
+            except Exception as e:
+                log.debug(f"{CORE_ICONS['warning']} Error in grid selection for validation: {e}")
                 return False
             
-            # Use simple, direct GRIB validation without complex methods
+            # Use existing working download method to get one validation file
             from datetime import datetime, timedelta
             current_time = datetime.utcnow()
+            expected_cycle = test_collector.get_expected_gfs_cycle(current_time)
             
             log.debug(f"{CORE_ICONS['navigation']} Validating GRIB data for coordinates {lat:.4f}, {lon:.4f} using grid {grid_name}")
             
-            # Download a single GRIB file for validation using basic approach
-            validation_file = None
+            # Download just f000 file using existing working infrastructure
             try:
-                # Find most recent cycle
-                cycle_hour = (current_time.hour // 6) * 6
-                cycle_time = current_time.replace(hour=cycle_hour, minute=0, second=0, microsecond=0)
-                
-                # Ensure cycle is at least 3 hours old (processing time)
-                if current_time - cycle_time < timedelta(hours=3):
-                    cycle_time -= timedelta(hours=6)
-                
-                # Create validation file URL
-                date_str = cycle_time.strftime('%Y%m%d')
-                hour_str = f"{cycle_time.hour:02d}"
-                filename = f"gfswave.t{hour_str}z.{grid_name}.f000.grib2"
-                url = f"{test_collector.base_url}gfs.{date_str}/{hour_str}/wave/gridded/{filename}"
-                
-                log.debug(f"{CORE_ICONS['navigation']} Downloading validation GRIB: {url}")
-                
-                # Simple download
-                import urllib.request
-                import tempfile
-                
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.grib2')
-                try:
-                    urllib.request.urlretrieve(url, temp_file.name)
-                    validation_file = temp_file.name
-                    log.debug(f"{CORE_ICONS['status']} Downloaded validation file: {validation_file}")
-                except Exception as download_error:
-                    temp_file.close()
-                    import os
-                    os.unlink(temp_file.name)
-                    raise download_error
-                    
+                cycle_files = test_collector._download_grib_files_for_cycle(
+                    expected_cycle, 
+                    grid_name, 
+                    forecast_hours=[0]  # Only download f000 for validation
+                )
             except Exception as e:
                 log.debug(f"{CORE_ICONS['warning']} Could not download validation GRIB file: {e}")
                 return False
+            
+            if not cycle_files:
+                log.debug(f"{CORE_ICONS['warning']} No GRIB validation file available")
+                return False
+            
+            # Get the f000 file for validation
+            validation_file = cycle_files[0]['file_path']
             
             # Direct GRIB validation using existing grib_processor
             validation_result = False
