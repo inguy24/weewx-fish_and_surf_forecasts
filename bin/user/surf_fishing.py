@@ -1477,11 +1477,8 @@ class BathymetryProcessor:
             
             # Download just f000 file using existing working infrastructure
             try:
-                cycle_files = test_collector._download_grib_files_for_cycle(
-                    expected_cycle, 
-                    grid_name, 
-                    forecast_hours=[0]  # Only download f000 for validation
-                )
+                cycle_files = test_collector._download_grib_files(grid_name)
+                
             except Exception as e:
                 log.debug(f"{CORE_ICONS['warning']} Could not download validation GRIB file: {e}")
                 return False
