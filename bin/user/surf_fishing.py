@@ -1272,8 +1272,8 @@ class BathymetryProcessor:
             log.info(f"{CORE_ICONS['navigation']} Starting deep water point search for coordinates {surf_break_lat:.4f}, {surf_break_lon:.4f}")
             log.info(f"{CORE_ICONS['selection']} Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
             
-            # Search along offshore bearing at increasing distances
-            search_distances = list(range(1, 51)) + list(range(52, 76, 2))  # 1-50km then 52,54,56...75km
+            # FIX 5: Consistent 1km increments throughout entire search (1-75km)
+            search_distances = list(range(1, 76))  # FIXED: 1km, 2km, 3km... 75km (no gaps)
             
             for distance_km in search_distances:
                 # Calculate offshore coordinates using corrected bearing
@@ -1306,11 +1306,11 @@ class BathymetryProcessor:
                     validation_log.append({'distance': distance_km, 'status': 'land_coordinate', 'depth': None})
                     continue
                 
-                # FIX 3: Proper depth validation for confirmed water coordinates
+                # FIX 3: Proper depth validation - only avoid shallow areas/islands
                 depth_abs = abs(depth)  # Convert negative elevation to positive depth
                 
-                # Enhanced depth criteria (40-200m range) - now only for confirmed water coordinates
-                if 40 <= depth_abs <= 200:
+                # FIXED: Only avoid obviously shallow areas (islands, reefs, very shallow water)
+                if depth_abs >= 15:  # Just ensure we're not hitting land/islands/shallow reefs
                     log.debug(f"{CORE_ICONS['status']} Valid water depth at {distance_km}km: {depth_abs}m")
                     
                     # Critical GRIB validation using existing method
@@ -1327,16 +1327,21 @@ class BathymetryProcessor:
                             'offshore_depth_m': depth_abs
                         }
                     else:
-                        log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km")
+                        log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km - continuing search")
                         validation_log.append({'distance': distance_km, 'status': 'grib_invalid', 'depth': depth_abs})
                 else:
-                    log.debug(f"{CORE_ICONS['warning']} Invalid depth at {distance_km}km: {depth_abs}m (need 40-200m)")
-                    validation_log.append({'distance': distance_km, 'status': 'depth_invalid', 'depth': depth_abs})
+                    log.debug(f"{CORE_ICONS['warning']} Shallow depth at {distance_km}km: {depth_abs}m (avoiding islands/reefs)")
+                    validation_log.append({'distance': distance_km, 'status': 'too_shallow', 'depth': depth_abs})
             
-            # If no valid point found, try parallel coastline search
-            result = self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing, validation_log)
-            if result:
-                return result
+            # FIX 4: Only use parallel coastline search when perpendicular path truly fails
+            # Check if we found ANY valid depths along the perpendicular path
+            valid_depths = [v for v in validation_log if v['status'] in ['grib_invalid'] and v.get('depth', 0) > 50]
+            
+            if len(valid_depths) < 3:  # Very few valid depth points suggests parallel coastline issue
+                log.info(f"{CORE_ICONS['navigation']} Perpendicular path may be parallel to coastline - trying adjusted bearings")
+                result = self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing, validation_log)
+                if result:
+                    return result
             
             # Complete failure logging
             log.error(f"{CORE_ICONS['warning']} DEEP WATER SEARCH FAILED - No valid point found within 75km")
@@ -1345,11 +1350,11 @@ class BathymetryProcessor:
             
             land_coords = len([v for v in validation_log if v['status'] == 'land_coordinate'])
             grib_invalid = len([v for v in validation_log if v['status'] == 'grib_invalid']) 
-            depth_invalid = len([v for v in validation_log if v['status'] == 'depth_invalid'])
+            too_shallow = len([v for v in validation_log if v['status'] == 'too_shallow'])
             
             log.error(f"  Land coordinates: {land_coords}")
             log.error(f"  Points with valid depth but invalid GRIB: {grib_invalid}")
-            log.error(f"  Points with invalid depth: {depth_invalid}")
+            log.error(f"  Points too shallow (likely islands/reefs): {too_shallow}")
             
             return None
             
@@ -1367,7 +1372,8 @@ class BathymetryProcessor:
             
             # Try adjusted bearings for parallel coastline situations
             bearing_adjustments = [-45, 45, -30, 30, -60, 60]
-            search_distances = [25, 30, 35, 40, 45, 50, 60, 70, 75]
+            # FIX 5: Use consistent 1km increments for parallel coastline search too
+            search_distances = list(range(25, 76))  # FIXED: 25km-75km in 1km increments
             
             total_tested = len(validation_log)
             adjusted_attempts = 0
@@ -1409,7 +1415,8 @@ class BathymetryProcessor:
                     if depth is not None:
                         depth_abs = abs(depth)
                         
-                        if 40 <= depth_abs <= 200:
+                        # FIXED: Only avoid shallow areas, not arbitrary depth limits
+                        if depth_abs >= 15:
                             if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
                                 log.info(f"{CORE_ICONS['status']} FOUND VALID ADJUSTED POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
                                 log.info(f"{CORE_ICONS['navigation']} Adjusted bearing: {adjusted_bearing}°, Distance: {distance_km}km, Depth: {depth_abs}m")
