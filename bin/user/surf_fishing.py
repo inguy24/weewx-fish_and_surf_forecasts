@@ -750,37 +750,57 @@ class WaveWatchDataCollector:
         
         # All original grid selection logic uses offshore coordinates
         latitude, longitude = offshore_lat, offshore_lon
-    
+
         if not self.grib_processor.is_available():
             log.warning("GRIB processing not available - skipping GFS Wave data")
             return []
         
         try:
-            # INLINE: Data-driven grid selection using CONF regional mappings
+            # FIX 4: Enhanced inline grid selection logic with priority system
             grid_name = None
+            selected_grid = None
+            best_priority = 999
+            
+            # Normalize longitude to -180 to 180 format for consistent comparison
+            norm_longitude = longitude
+            if longitude > 180:
+                norm_longitude = longitude - 360
+            
+            log.debug(f"{CORE_ICONS['selection']} Grid selection for coordinates: {latitude:.4f}, {norm_longitude:.4f}")
+            
             try:
-                # Check each configured grid for coverage
+                # Check each configured grid for coverage with priority system
                 for grid_candidate, grid_config in self.grids.items():
                     bounds = grid_config.get('bounds', [])
-                    if bounds:
+                    grid_name_candidate = grid_config.get('grid_name', grid_candidate)
+                    priority = int(grid_config.get('priority', 999))
+                    
+                    if bounds and grid_name_candidate:
                         # Parse bounds string from CONF (format: "lat_min,lat_max,lon_min,lon_max")
                         if isinstance(bounds, str):
                             bounds_list = [float(x.strip()) for x in bounds.split(',')]
                             if len(bounds_list) == 4:
                                 lat_min, lat_max, lon_min, lon_max = bounds_list
-                                if lat_min <= latitude <= lat_max and lon_min <= longitude <= lon_max:
-                                    grid_name = grid_config.get('grid_name', grid_candidate)
-                                    log.debug(f"Selected grid {grid_name} for location {latitude}, {longitude}")
-                                    break
+                                
+                                # Check if coordinates fall within this grid's coverage
+                                if lat_min <= latitude <= lat_max and lon_min <= norm_longitude <= lon_max:
+                                    # ENHANCED: Select highest priority (lowest number) grid that matches
+                                    if priority < best_priority:
+                                        selected_grid = grid_name_candidate
+                                        best_priority = priority
+                                        log.debug(f"{CORE_ICONS['status']} Grid {grid_name_candidate} matches location (priority {priority})")
                 
-                # Priority fallback system for grid coverage only
-                if not grid_name:
+                if selected_grid:
+                    grid_name = selected_grid
+                    log.info(f"{CORE_ICONS['status']} Selected regional grid: {grid_name} for location {latitude:.4f}, {norm_longitude:.4f}")
+                else:
+                    # Priority fallback system for grid coverage
                     fallback_grids = ['global.0p16', 'global.0p25']
                     for fallback_grid in fallback_grids:
                         for grid_candidate, grid_config in self.grids.items():
                             if grid_config.get('grid_name') == fallback_grid:
                                 grid_name = fallback_grid
-                                log.info(f"Using fallback grid {grid_name} for location {latitude}, {longitude}")
+                                log.info(f"{CORE_ICONS['selection']} Using fallback grid {grid_name} for location {latitude:.4f}, {norm_longitude:.4f}")
                                 break
                         if grid_name:
                             break
@@ -819,7 +839,7 @@ class WaveWatchDataCollector:
         except Exception as e:
             log.error(f"Error fetching GFS Wave data: {e}")
             return []
-    
+
     def _download_grib_files(self, grid_name):
         """Download GFS Wave GRIB files with smart cycle selection and validation"""
         
@@ -1237,106 +1257,131 @@ class BathymetryProcessor:
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error processing bathymetry for {spot_name}: {e}")
             return False
-    
+        
     def _find_deep_water_point(self, surf_break_lat, surf_break_lon, beach_facing):
-        """Find valid deep water point with proper search logic"""
-        
-        # Calculate perpendicular bearing (existing logic - keep unchanged)
-        offshore_bearing = (beach_facing + 180) % 360
-        
-        # Search distances - EXTEND the range to continue west when GRIB fails
-        search_distances = list(range(1, 76))  # 1km to 75km
-        validation_log = []
-        
-        for distance_km in search_distances:
-            # Calculate offshore coordinates using existing inline math
-            distance_rad = distance_km * 1000 / 6371000  # Convert km to radians
-            bearing_rad = math.radians(offshore_bearing)
-            
-            surf_break_lat_rad = math.radians(surf_break_lat)
-            surf_break_lon_rad = math.radians(surf_break_lon)
-            
-            offshore_lat_rad = math.asin(
-                math.sin(surf_break_lat_rad) * math.cos(distance_rad) +
-                math.cos(surf_break_lat_rad) * math.sin(distance_rad) * math.cos(bearing_rad)
-            )
-            
-            offshore_lon_rad = surf_break_lon_rad + math.atan2(
-                math.sin(bearing_rad) * math.sin(distance_rad) * math.cos(surf_break_lat_rad),
-                math.cos(distance_rad) - math.sin(surf_break_lat_rad) * math.sin(offshore_lat_rad)
-            )
-            
-            offshore_lat = math.degrees(offshore_lat_rad)
-            offshore_lon = math.degrees(offshore_lon_rad)
-            
-            log.debug(f"{CORE_ICONS['navigation']} Testing point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
-            
-            # Check depth with GEBCO  
-            depth = self._query_gebco_depth(offshore_lat, offshore_lon)
-            
-            if depth is not None:
-                depth_abs = abs(depth)
-                
-                # Enhanced depth criteria (40-200m range)
-                if 40 <= depth_abs <= 200:
-                    log.debug(f"{CORE_ICONS['status']} Valid depth at {distance_km}km: {depth_abs}m")
-                    
-                    # FIXED: GRIB validation using corrected method
-                    if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
-                        log.info(f"{CORE_ICONS['status']} FOUND VALID DEEP WATER POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
-                        log.info(f"{CORE_ICONS['navigation']} Distance: {distance_km}km, Depth: {depth_abs}m, GRIB: VALID")
-                        
-                        # Store results and return immediately
-                        service_config = self.config_dict.get('SurfFishingService', {})
-                        service_config['offshore_latitude'] = offshore_lat
-                        service_config['offshore_longitude'] = offshore_lon  
-                        service_config['bathymetry_calculated'] = True
-                        
-                        return (offshore_lat, offshore_lon)
-                    else:
-                        log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km - continuing west")
-                        validation_log.append({'distance': distance_km, 'status': 'grib_invalid', 'depth': depth_abs})
-                        # CRITICAL: Continue the loop instead of calling parallel coastline search
-                        continue
-                else:
-                    log.debug(f"{CORE_ICONS['warning']} Invalid depth at {distance_km}km: {depth_abs}m (need 40-200m)")
-                    validation_log.append({'distance': distance_km, 'status': 'depth_invalid', 'depth': depth_abs})
-            else:
-                validation_log.append({'distance': distance_km, 'status': 'no_depth', 'depth': None})
-        
-        # Only try parallel coastline search if NO valid depth was found in the entire range
-        depth_valid_count = len([v for v in validation_log if v['status'] == 'grib_invalid'])
-        
-        if depth_valid_count > 0:
-            # We found valid depths but no valid GRIB data - this suggests a different issue
-            # Don't use parallel coastline search, just report the failure
-            log.error(f"{CORE_ICONS['warning']} Found {depth_valid_count} points with valid depth but no valid GRIB data")
-            log.error(f"{CORE_ICONS['warning']} This suggests GRIB validation or data availability issues")
-            return None
-        else:
-            # No valid depths found - try parallel coastline search as fallback
-            log.info(f"{CORE_ICONS['selection']} No valid depths found on perpendicular bearing, trying parallel coastline search")
-            result = self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing, validation_log)
-            return result
-    
-    def _handle_parallel_coastline_search(self, surf_break_lat, surf_break_lon, beach_facing, validation_log):
-        """Handle parallel coastline ONLY when no valid depths found in perpendicular search"""
+        """Find valid deep water coordinates with both depth and GRIB data validation"""
         
         try:
             import math
             
-            log.info(f"{CORE_ICONS['selection']} Starting parallel coastline search - perpendicular search found no valid depths")
+            # FIX 1: Correct bearing calculation - beach_facing IS the offshore direction
+            offshore_bearing = beach_facing  # FIXED: Removed incorrect + 180
             
-            # Use SMALLER bearing adjustments to stay closer to offshore direction
-            bearing_adjustments = [-15, 15, -30, 30, -45, 45]  # Reduced from [-45, 45, -30, 30, -60, 60]
+            validation_log = []
+            
+            log.info(f"{CORE_ICONS['navigation']} Starting deep water point search for coordinates {surf_break_lat:.4f}, {surf_break_lon:.4f}")
+            log.info(f"{CORE_ICONS['selection']} Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
+            
+            # Search along offshore bearing at increasing distances
+            search_distances = list(range(1, 51)) + list(range(52, 76, 2))  # 1-50km then 52,54,56...75km
+            
+            for distance_km in search_distances:
+                # Calculate offshore coordinates using corrected bearing
+                distance_rad = distance_km * 1000 / 6371000  # Convert km to radians
+                bearing_rad = math.radians(offshore_bearing)
+                
+                surf_break_lat_rad = math.radians(surf_break_lat)
+                surf_break_lon_rad = math.radians(surf_break_lon)
+                
+                offshore_lat_rad = math.asin(
+                    math.sin(surf_break_lat_rad) * math.cos(distance_rad) +
+                    math.cos(surf_break_lat_rad) * math.sin(distance_rad) * math.cos(bearing_rad)
+                )
+                
+                offshore_lon_rad = surf_break_lon_rad + math.atan2(
+                    math.sin(bearing_rad) * math.sin(distance_rad) * math.cos(surf_break_lat_rad),
+                    math.cos(distance_rad) - math.sin(surf_break_lat_rad) * math.sin(offshore_lat_rad)
+                )
+                
+                offshore_lat = math.degrees(offshore_lat_rad)
+                offshore_lon = math.degrees(offshore_lon_rad)
+                
+                log.debug(f"{CORE_ICONS['navigation']} Testing point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                
+                # FIX 2: Enhanced depth check with proper land/sea validation  
+                depth = self._query_gebco_depth(offshore_lat, offshore_lon)
+                
+                if depth is None:
+                    log.debug(f"{CORE_ICONS['warning']} Invalid coordinate (likely land) at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                    validation_log.append({'distance': distance_km, 'status': 'land_coordinate', 'depth': None})
+                    continue
+                
+                # FIX 3: Proper depth validation for confirmed water coordinates
+                depth_abs = abs(depth)  # Convert negative elevation to positive depth
+                
+                # Enhanced depth criteria (40-200m range) - now only for confirmed water coordinates
+                if 40 <= depth_abs <= 200:
+                    log.debug(f"{CORE_ICONS['status']} Valid water depth at {distance_km}km: {depth_abs}m")
+                    
+                    # Critical GRIB validation using existing method
+                    if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
+                        log.info(f"{CORE_ICONS['status']} FOUND VALID DEEP WATER POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
+                        log.info(f"{CORE_ICONS['navigation']} Distance: {distance_km}km, Depth: {depth_abs}m, GRIB: VALID")
+                        
+                        validation_log.append({'distance': distance_km, 'status': 'success', 'depth': depth_abs})
+                        
+                        return {
+                            'offshore_latitude': offshore_lat,
+                            'offshore_longitude': offshore_lon,
+                            'offshore_distance_km': distance_km,
+                            'offshore_depth_m': depth_abs
+                        }
+                    else:
+                        log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km")
+                        validation_log.append({'distance': distance_km, 'status': 'grib_invalid', 'depth': depth_abs})
+                else:
+                    log.debug(f"{CORE_ICONS['warning']} Invalid depth at {distance_km}km: {depth_abs}m (need 40-200m)")
+                    validation_log.append({'distance': distance_km, 'status': 'depth_invalid', 'depth': depth_abs})
+            
+            # If no valid point found, try parallel coastline search
+            result = self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing, validation_log)
+            if result:
+                return result
+            
+            # Complete failure logging
+            log.error(f"{CORE_ICONS['warning']} DEEP WATER SEARCH FAILED - No valid point found within 75km")
+            log.error(f"{CORE_ICONS['navigation']} Search Summary:")
+            log.error(f"  Total points tested: {len(validation_log)}")
+            
+            land_coords = len([v for v in validation_log if v['status'] == 'land_coordinate'])
+            grib_invalid = len([v for v in validation_log if v['status'] == 'grib_invalid']) 
+            depth_invalid = len([v for v in validation_log if v['status'] == 'depth_invalid'])
+            
+            log.error(f"  Land coordinates: {land_coords}")
+            log.error(f"  Points with valid depth but invalid GRIB: {grib_invalid}")
+            log.error(f"  Points with invalid depth: {depth_invalid}")
+            
+            return None
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in deep water point search: {e}")
+            return None
+    
+    def _handle_parallel_coastline_search(self, surf_break_lat, surf_break_lon, beach_facing, validation_log):
+        """Handle parallel coastline edge cases with adjusted bearing search"""
+        
+        try:
+            import math
+            
+            log.info(f"{CORE_ICONS['selection']} Starting parallel coastline search with adjusted bearings")
+            
+            # Try adjusted bearings for parallel coastline situations
+            bearing_adjustments = [-45, 45, -30, 30, -60, 60]
             search_distances = [25, 30, 35, 40, 45, 50, 60, 70, 75]
             
+            total_tested = len(validation_log)
+            adjusted_attempts = 0
+            
             for adjustment in bearing_adjustments:
-                adjusted_bearing = (beach_facing + 180 + adjustment) % 360
+                # FIX 1: Apply adjustment to corrected beach_facing (not the broken +180 version)
+                adjusted_bearing = (beach_facing + adjustment) % 360
                 log.info(f"{CORE_ICONS['navigation']} Trying adjusted bearing: {adjusted_bearing}° (adjustment: {adjustment:+d}°)")
+                adjusted_attempts += 1
                 
                 for distance_km in search_distances:
-                    # Calculate coordinates with adjusted bearing (existing math - keep unchanged)
+                    total_tested += 1
+                    
+                    # Calculate coordinates with adjusted bearing
                     distance_rad = distance_km * 1000 / 6371000
                     bearing_rad = math.radians(adjusted_bearing)
                     
@@ -1358,7 +1403,7 @@ class BathymetryProcessor:
                     
                     log.debug(f"{CORE_ICONS['navigation']} Testing adjusted point at {distance_km}km: {offshore_lat:.4f}, {offshore_lon:.4f}")
                     
-                    # Check depth and GRIB validation
+                    # FIX 2 & 3: Enhanced depth and GRIB validation
                     depth = self._query_gebco_depth(offshore_lat, offshore_lon)
                     
                     if depth is not None:
@@ -1369,17 +1414,22 @@ class BathymetryProcessor:
                                 log.info(f"{CORE_ICONS['status']} FOUND VALID ADJUSTED POINT: {offshore_lat:.4f}, {offshore_lon:.4f}")
                                 log.info(f"{CORE_ICONS['navigation']} Adjusted bearing: {adjusted_bearing}°, Distance: {distance_km}km, Depth: {depth_abs}m")
                                 
-                                # Store results
-                                service_config = self.config_dict.get('SurfFishingService', {})
-                                service_config['offshore_latitude'] = offshore_lat
-                                service_config['offshore_longitude'] = offshore_lon  
-                                service_config['bathymetry_calculated'] = True
-                                
-                                return (offshore_lat, offshore_lon)
+                                return {
+                                    'offshore_latitude': offshore_lat,
+                                    'offshore_longitude': offshore_lon,
+                                    'offshore_distance_km': distance_km,
+                                    'offshore_depth_m': depth_abs
+                                }
+                            else:
+                                log.debug(f"{CORE_ICONS['warning']} GRIB validation failed for adjusted point at {distance_km}km")
             
-            # Complete failure
+            # Complete failure analysis
             log.error(f"{CORE_ICONS['warning']} PARALLEL COASTLINE SEARCH FAILED")
-            log.error(f"{CORE_ICONS['warning']} No valid deep water point found within 75km range using any bearing")
+            log.error(f"{CORE_ICONS['navigation']} Adjusted Search Summary:")
+            log.error(f"  Bearing adjustments tried: {adjusted_attempts}")
+            log.error(f"  Total points tested (including original): {total_tested}")
+            log.error(f"  No valid deep water point found within 75km range")
+            
             return None
             
         except Exception as e:
@@ -1684,7 +1734,7 @@ class BathymetryProcessor:
             return False
     
     def _query_gebco_depth(self, lat, lon):
-        """Query GEBCO API for single point depth"""
+        """Query GEBCO API for single point depth with proper land/sea validation"""
         
         try:
             url = f"{self.gebco_base_url}?locations={lat:.6f},{lon:.6f}"
@@ -1698,7 +1748,16 @@ class BathymetryProcessor:
                     
                     if data.get('status') == 'OK' and data.get('results'):
                         elevation = data['results'][0]['elevation']
-                        return elevation  # GEBCO uses negative for water depth
+                        
+                        # FIX 2: Critical land/sea validation
+                        if elevation >= 0:
+                            # Land coordinate - return None to indicate invalid
+                            log.debug(f"{CORE_ICONS['warning']} Land coordinate detected at {lat:.4f}, {lon:.4f} (elevation: {elevation:.1f}m above sea level)")
+                            return None
+                        else:
+                            # Water coordinate - return negative elevation (will be converted to positive depth by caller)
+                            log.debug(f"{CORE_ICONS['status']} Water coordinate confirmed at {lat:.4f}, {lon:.4f} (depth: {abs(elevation):.1f}m)")
+                            return elevation  # GEBCO uses negative for water depth
                     
                 except urllib.error.URLError as e:
                     if attempt == self.retry_attempts - 1:
