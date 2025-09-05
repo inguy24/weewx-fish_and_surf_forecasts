@@ -239,7 +239,7 @@ class GRIBProcessor:
                             if not np.isnan(closest_value):
                                 log.debug(f"✅ Adding data point for {param_name}: {closest_value}")
                                 
-                                # CRITICAL FIX: Actually append the data point to the list
+                                # APPEND VALID DATA POINTS (original bug fix)
                                 data_points.append({
                                     'parameter': param_name,
                                     'value': closest_value,
@@ -249,6 +249,7 @@ class GRIBProcessor:
                                 })
                             else:
                                 log.debug(f"❌ Skipping NaN value for {param_name}")
+                                # Don't append NaN - system continues searching offshore
                             
                         except Exception as e:
                             log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message with pygrib: {e}")
