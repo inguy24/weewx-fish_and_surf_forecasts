@@ -1123,18 +1123,18 @@ class WaveWatchDataCollector:
             
             # Get the target unit system for this station
             if hasattr(weewx.units, 'unit_constants'):
-                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.units.US)
+                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.US)
             else:
                 # Fallback to checking StdConvert configuration
                 convert_config = self.config_dict.get('StdConvert', {})
                 target_unit_nick = convert_config.get('target_unit', 'US')
                 
                 if target_unit_nick.upper() == 'METRIC':
-                    target_unit_system = weewx.units.METRIC
+                    target_unit_system = weewx.METRIC
                 elif target_unit_nick.upper() == 'METRICWX':
-                    target_unit_system = weewx.units.METRICWX
+                    target_unit_system = weewx.METRICWX
                 else:
-                    target_unit_system = weewx.units.US
+                    target_unit_system = weewx.US
             
             return target_unit_system
             
@@ -3244,7 +3244,7 @@ class SurfForecastGenerator:
             
             # Get the target unit system for this station
             if hasattr(weewx.units, 'unit_constants'):
-                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.US)  # ← FIXED: weewx.US not weewx.units.US
+                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.US)  # ← FIXED: weewx.US not weewx.US
             else:
                 # Fallback to checking StdConvert configuration
                 convert_config = self.config_dict.get('StdConvert', {})
@@ -3823,7 +3823,9 @@ class SurfForecastSearchList(SearchList):
                         'latitude': float(spot_config.get('latitude', '0.0')),
                         'longitude': float(spot_config.get('longitude', '0.0')),
                         'bottom_type': spot_config.get('bottom_type', 'sand'),
-                        'exposure': spot_config.get('exposure', 'exposed')
+                        'exposure': spot_config.get('exposure', 'exposed'),
+                        'beach_facing': spot_config.get('beach_facing'),
+                        'type': spot_config.get('type', 'surf')
                     }
                     spots.append(spot)
             
