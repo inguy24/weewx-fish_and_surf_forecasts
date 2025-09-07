@@ -2240,7 +2240,7 @@ class SurfForecastGenerator:
             transformed_forecast = []
             
             # Get spot characteristics from CONF
-            beach_angle = float(spot_config.get('beach_angle', '270'))  # Default west-facing
+            beach_facing = float(spot_config.get('beach_facing', '270'))  # Default west-facing
             bottom_type = spot_config.get('bottom_type', 'sand')
             
             # Get bathymetric data (from GEBCO API or defaults)
@@ -2261,7 +2261,7 @@ class SurfForecastGenerator:
                     Ks = self.calculate_shoaling_coefficient(offshore_depth, effective_breaking_depth, wave_period)
                     
                     # Step 3: Calculate refraction coefficient  
-                    Kr = self.calculate_refraction_coefficient(wave_direction, beach_angle, offshore_depth, effective_breaking_depth)
+                    Kr = self.calculate_refraction_coefficient(wave_direction, beach_facing, offshore_depth, effective_breaking_depth)
                     
                     # Step 4: Apply wave transformation
                     transformed_height = offshore_height * Ks * Kr
@@ -2472,8 +2472,8 @@ class SurfForecastGenerator:
                         log.info("Period skipped - this is not an API retry issue")
                         continue
                         
-                    beach_orientation = spot_config.get('beach_facing')
-                    if beach_orientation is None:
+                    beach_facing = spot_config.get('beach_facing')
+                    if beach_facing is None:
                         failed_periods += 1
                         log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config")
                         log.error("This indicates incomplete spot configuration - check surf spot setup")
@@ -2481,7 +2481,7 @@ class SurfForecastGenerator:
                         continue
                     
                     # Calculate relative wind direction
-                    relative_wind = (wind_direction - beach_orientation) % 360
+                    relative_wind = (wind_direction - beach_facing) % 360
                     
                     # Determine wind direction category relative to beach
                     if 45 <= relative_wind <= 135:
@@ -2668,15 +2668,15 @@ class SurfForecastGenerator:
                         log.info("Will retry next forecast cycle")
                         continue
                     
-                    beach_orientation = spot_config.get('beach_facing')
-                    if beach_orientation is None:
+                    beach_facing = spot_config.get('beach_facing')
+                    if beach_facing is None:
                         failed_periods += 1
                         log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config for wind assessment")
                         log.error("Check spot configuration completeness")
                         log.info("Period skipped - configuration issue, not API data")
                         continue
                     
-                    relative_wind = (wind_direction - beach_orientation) % 360
+                    relative_wind = (wind_direction - beach_facing) % 360
                     
                     if 45 <= relative_wind <= 135:
                         wind_condition = 'side_onshore'
@@ -2810,8 +2810,8 @@ class SurfForecastGenerator:
                 wind_condition = 'calm_glassy'
             else:
                 # Calculate relative wind direction
-                beach_angle = float(spot_config.get('beach_angle', '270'))
-                wind_relative = abs(wind_direction - beach_angle)
+                beach_facing = float(spot_config.get('beach_facing', '270'))
+                wind_relative = abs(wind_direction - beach_facing)
                 if wind_relative > 180:
                     wind_relative = 360 - wind_relative
                 
@@ -2878,7 +2878,7 @@ class SurfForecastGenerator:
             log.error(f"{CORE_ICONS['warning']} Error calculating shoaling coefficient: {e}")
             return 1.0
 
-    def calculate_refraction_coefficient(self, wave_direction, beach_angle, offshore_depth, breaking_depth):
+    def calculate_refraction_coefficient(self, wave_direction, beach_facing, offshore_depth, breaking_depth):
         """
         Calculate refraction coefficient using Snell's Law
         """
@@ -2893,7 +2893,7 @@ class SurfForecastGenerator:
             refraction_factor_max = float(physics_params.get('refraction_factor_max', '1.2'))
             
             # Calculate incident angle relative to beach normal
-            beach_normal = (beach_angle + 90) % 360  # Perpendicular to beach
+            beach_normal = (beach_facing + 90) % 360  # Perpendicular to beach
             incident_angle = abs(wave_direction - beach_normal)
             if incident_angle > 180:
                 incident_angle = 360 - incident_angle
