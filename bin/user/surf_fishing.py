@@ -3221,29 +3221,6 @@ class SurfForecastGenerator:
         
         return surf_fields
 
-    def _convert_forecast_data_using_conf(self, forecast_data, forecast_type):
-        """Convert forecast data using data-driven CONF specifications"""
-        converted_data = forecast_data.copy()
-        
-        # Get conversion fields from CONF
-        service_config = self.config_dict.get('SurfFishingService', {})
-        conversion_fields = service_config.get('conversion_fields', {}).get(forecast_type, [])
-        
-        # Apply conversions to specified fields only
-        for field_name in conversion_fields:
-            if field_name in converted_data and converted_data[field_name] is not None:
-                # Get service reference for unit conversion
-                if hasattr(self, 'service_ref'):
-                    converted_value = self.service_ref._convert_field_to_weewx_units(
-                        field_name, 
-                        converted_data[field_name]
-                    )
-                    converted_data[field_name] = converted_value
-                else:
-                    log.warning(f"No service reference available for converting {field_name}")
-        
-        return converted_data
-
     def _get_target_unit_system(self):
         """Get the target unit system from WeeWX configuration"""
         
@@ -3274,7 +3251,7 @@ class SurfForecastGenerator:
             # EXISTING CODE: Process each forecast period preserved
             for forecast_period in forecast_data:
                 # NEW: Apply data-driven unit conversions
-                converted_data = self._convert_forecast_data_using_conf(forecast_period, 'surf')
+                converted_data = forecast_period
                 
                 # NEW: Build dynamic INSERT using CONF field definitions
                 field_names = list(surf_fields.keys())
