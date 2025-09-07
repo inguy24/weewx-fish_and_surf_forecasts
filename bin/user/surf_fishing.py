@@ -1140,7 +1140,7 @@ class WaveWatchDataCollector:
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error determining target unit system: {e}")
-            return weewx.units.US  # Default to US units if unable to determine
+            return weewx.US  # Default to US units if unable to determine
 
     def _convert_to_weewx_units(self, value, field_name, target_unit_system):
         """Convert raw GRIB values to WeeWX target unit system"""
