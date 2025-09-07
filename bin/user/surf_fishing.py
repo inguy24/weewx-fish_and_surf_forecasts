@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Seal
+# Magic Animal: Scorpion
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -791,8 +791,12 @@ class WaveWatchDataCollector:
                         # Parse bounds string from CONF (format: "lat_min,lat_max,lon_min,lon_max")
                         if isinstance(bounds, str):
                             bounds_list = [float(x.strip()) for x in bounds.split(',')]
-                            if len(bounds_list) == 4:
-                                lat_min, lat_max, lon_min, lon_max = bounds_list
+                        elif isinstance(bounds, list):
+                            bounds_list = [float(x) for x in bounds]
+                        else:
+                            continue
+                            
+                        if len(bounds_list) == 4:
                                 
                                 # Normalize longitude for consistent comparison
                                 normalized_lon = longitude
@@ -1624,7 +1628,12 @@ class BathymetryProcessor:
                         # Parse bounds string from CONF (format: "lat_min,lat_max,lon_min,lon_max")
                         if isinstance(bounds, str):
                             bounds_list = [float(x.strip()) for x in bounds.split(',')]
-                            if len(bounds_list) == 4:
+                        elif isinstance(bounds, list):
+                            bounds_list = [float(x) for x in bounds]
+                        else:
+                            continue
+                            
+                        if len(bounds_list) == 4:
                                 lat_min, lat_max, lon_min, lon_max = bounds_list
                                 if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
                                     grid_name = grid_config.get('grid_name', grid_candidate)
