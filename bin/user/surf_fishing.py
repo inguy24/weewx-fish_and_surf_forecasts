@@ -1475,7 +1475,7 @@ class BathymetryProcessor:
                             'offshore_latitude': offshore_lat,
                             'offshore_longitude': offshore_lon,
                             'offshore_distance_km': distance_km,
-                            'offshore_depth_m': depth_abs
+                            'offshore_depth': depth_abs
                         }
                     else:
                         log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km - continuing search")
@@ -1576,7 +1576,7 @@ class BathymetryProcessor:
                                     'offshore_latitude': offshore_lat,
                                     'offshore_longitude': offshore_lon,
                                     'offshore_distance_km': distance_km,
-                                    'offshore_depth_m': depth_abs
+                                    'offshore_depth': depth_abs
                                 }
                             else:
                                 log.debug(f"{CORE_ICONS['warning']} GRIB validation failed for adjusted point at {distance_km}km")
