@@ -3235,19 +3235,33 @@ class SurfForecastGenerator:
         return converted_data
 
     def _get_target_unit_system(self):
-        """Get WeeWX usUnits value using CONF configuration"""
-        std_convert_config = self.config_dict.get('StdConvert', {})
-        target_unit = std_convert_config.get('target_unit', 'US')
+        """Get the target unit system from WeeWX configuration"""
         
-        # Get unit system mapping from CONF
-        service_config = self.config_dict.get('SurfFishingService', {})
-        unit_system_mapping = service_config.get('unit_system_mapping', {
-            'US': weewx.US,
-            'METRIC': weewx.METRIC,
-            'METRICWX': weewx.METRICWX
-        })
-        
-        return unit_system_mapping.get(target_unit, weewx.US)
+        try:
+            # Get the station's unit system from WeeWX configuration
+            station_config = self.config_dict.get('Station', {})
+            station_type = station_config.get('station_type', 'Simulator')
+            
+            # Get the target unit system for this station
+            if hasattr(weewx.units, 'unit_constants'):
+                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.US)  # ← FIXED: weewx.US not weewx.units.US
+            else:
+                # Fallback to checking StdConvert configuration
+                convert_config = self.config_dict.get('StdConvert', {})
+                target_unit_nick = convert_config.get('target_unit', 'US')
+                
+                if target_unit_nick.upper() == 'METRIC':
+                    target_unit_system = weewx.METRIC      # ← FIXED: weewx.METRIC not weewx.units.METRIC
+                elif target_unit_nick.upper() == 'METRICWX':
+                    target_unit_system = weewx.METRICWX    # ← FIXED: weewx.METRICWX not weewx.units.METRICWX
+                else:
+                    target_unit_system = weewx.US          # ← FIXED: weewx.US not weewx.units.US
+            
+            return target_unit_system
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error determining target unit system: {e}")
+            return weewx.US  # ← FIXED: weewx.US not weewx.units.US
 
     def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
         """Store surf forecasts with data-driven unit conversion"""
