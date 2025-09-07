@@ -1164,10 +1164,10 @@ class WaveWatchDataCollector:
             
             # Create ValueTuple for WeeWX unit conversion
             unit_group_map = {
-                'meter': 'group_distance',
+                'meter': 'group_altitude',
                 'meter_per_second': 'group_speed'
             }
-            unit_group = unit_group_map.get(source_unit, 'group_distance')
+            unit_group = unit_group_map.get(source_unit, 'group_altitude')
             value_tuple = (value, source_unit, unit_group)
             
             # Convert to target unit system using WeeWX
