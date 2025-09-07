@@ -177,90 +177,80 @@ class GRIBProcessor:
             return []
     
     def _process_with_pygrib(self, grib_file_path, target_lat, target_lon):
-            """Process GRIB file using pygrib library and extract data points"""
+        """Process GRIB file using pygrib library and extract data points"""
+        
+        try:
+            import pygrib
+            from datetime import datetime, timedelta
             
-            try:
-                import pygrib
-                from datetime import datetime, timedelta
-                
-                # READ FROM NEW CONF: Field mappings for parameter processing
-                service_config = self.config_dict.get('SurfFishingService', {})
-                gfs_wave_config = service_config.get('noaa_gfs_wave', {})
-                field_mappings = gfs_wave_config.get('field_mappings', {})
-                
-                # Build parameter mapping from CONF with proper type conversion
-                grib_parameters = {}
-                for field_key, field_config in field_mappings.items():
-                    grib_param = field_config.get('grib_parameter', '')
-                    if grib_param:
-                        grib_parameters[grib_param] = {
-                            'database_field': field_config.get('database_field', ''),
-                            'forecast_priority': int(field_config.get('forecast_priority', '3')),
-                            'description': field_config.get('description', '')
-                        }
-                
-                data_points = []
-                
-                with pygrib.open(grib_file_path) as grbs:
-                    for grb in grbs:
-                        try:
-                            # Get parameter info
-                            param_name = grb.shortName
-                            
-                            # DATA-DRIVEN: Only process parameters defined in CONF
-                            if param_name not in grib_parameters:
-                                continue
-                            
-                            log.debug(f"Processing parameter: {param_name}")
-                            log.debug(f"Target coordinates: lat={target_lat}, lon={target_lon}")
-                            log.debug(f"GRIB domain: lat=[{grb.latitudes.min():.2f},{grb.latitudes.max():.2f}], lon=[{grb.longitudes.min():.2f},{grb.longitudes.max():.2f}]")
-                            # Get forecast time info
-                            forecast_time_offset = grb.forecastTime
-                            
-                            # Get base time from GRIB message
-                            valid_date = grb.validDate
-                            forecast_timestamp = valid_date.timestamp()
-                            
-                            # Get the full data grid first to avoid Key/value errors
-                            values, lats, lons = grb.data()
-                            log.debug(f"Data grid shape: values={values.shape}, lats={lats.shape}, lons={lons.shape}")
-
-                            # Normalize longitude using actual grid data
-                            normalized_lon = target_lon + 360 if (target_lon < 0 and lons.min() >= 0) else target_lon
-                            log.debug(f"Normalized longitude: {normalized_lon} (original: {target_lon})")
-
-                            # Find closest point manually (more reliable than grb.nearest)
-                            import numpy as np
-                            distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
-                            min_idx = np.argmin(distances)
-                            closest_value = float(values.flat[min_idx])
-                            log.debug(f"Closest value for {param_name}: {closest_value} (min_distance: {distances.flat[min_idx]:.4f})")
-
-                            if not np.isnan(closest_value):
-                                log.debug(f"✅ Adding data point for {param_name}: {closest_value}")
-                                
-                                # APPEND VALID DATA POINTS (original bug fix)
-                                data_points.append({
-                                    'parameter': param_name,
-                                    'value': closest_value,
-                                    'forecast_time': forecast_timestamp,
-                                    'latitude': target_lat,
-                                    'longitude': target_lon
-                                })
-                            else:
-                                log.debug(f"❌ Skipping NaN value for {param_name}")
-                                # Don't append NaN - system continues searching offshore
-                            
-                        except Exception as e:
-                            log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message with pygrib: {e}")
+            # READ FROM NEW CONF: Field mappings for parameter processing
+            service_config = self.config_dict.get('SurfFishingService', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+            field_mappings = gfs_wave_config.get('field_mappings', {})
+            
+            # Build parameter mapping from CONF with proper type conversion
+            grib_parameters = {}
+            for field_key, field_config in field_mappings.items():
+                grib_param = field_config.get('grib_parameter', '')
+                if grib_param:
+                    grib_parameters[grib_param] = {
+                        'database_field': field_config.get('database_field', ''),
+                        'forecast_priority': int(field_config.get('forecast_priority', '3')),
+                        'description': field_config.get('description', '')
+                    }
+            
+            data_points = []
+            
+            with pygrib.open(grib_file_path) as grbs:
+                for grb in grbs:
+                    try:
+                        # Get parameter info
+                        param_name = grb.shortName
+                        
+                        # DATA-DRIVEN: Only process parameters defined in CONF
+                        if param_name not in grib_parameters:
                             continue
-                
-                log.debug(f"{CORE_ICONS['status']} Extracted {len(data_points)} data points using pygrib with CONF parameter mappings")
-                return data_points
-                
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error processing GRIB file with pygrib: {e}")
-                return []
+                        
+                        log.debug(f"Processing parameter: {param_name}")
+                        log.debug(f"Target coordinates: lat={target_lat}, lon={target_lon}")
+                        log.debug(f"GRIB domain: lat=[{grb.latitudes.min():.2f},{grb.latitudes.max():.2f}], lon=[{grb.longitudes.min():.2f},{grb.longitudes.max():.2f}]")
+                        # Get forecast time info
+                        forecast_time_offset = grb.forecastTime
+                        
+                        # Get base time from GRIB message
+                        valid_date = grb.validDate
+                        forecast_timestamp = valid_date.timestamp()
+                        
+                        # Get the full data grid first to avoid Key/value errors
+                        values, lats, lons = grb.data()
+                        log.debug(f"Data grid shape: values={values.shape}, lats={lats.shape}, lons={lons.shape}")
+
+                        # Normalize longitude using actual grid data
+                        normalized_lon = target_lon + 360 if (target_lon < 0 and lons.min() >= 0) else target_lon
+                        log.debug(f"Normalized longitude: {normalized_lon} (original: {target_lon})")
+
+                        # Find closest point manually (more reliable than grb.nearest)
+                        import numpy as np
+                        distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
+                        min_idx = np.argmin(distances)
+                        closest_value = float(values.flat[min_idx])
+                        log.debug(f"Closest value for {param_name}: {closest_value} (min_distance: {distances.flat[min_idx]:.4f})")
+
+                        if not np.isnan(closest_value):
+                            log.debug(f"✅ Adding data point for {param_name}: {closest_value}")
+                        else:
+                            log.debug(f"❌ Skipping NaN value for {param_name}")
+                        
+                    except Exception as e:
+                        log.warning(f"{CORE_ICONS['warning']} Error processing GRIB message with pygrib: {e}")
+                        continue
+            
+            log.debug(f"{CORE_ICONS['status']} Extracted {len(data_points)} data points using pygrib with CONF parameter mappings")
+            return data_points
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error processing GRIB file with pygrib: {e}")
+            return []
     
     def _find_nearest_grid_point(self, target_lat, target_lon, lats, lons):
         """Find nearest grid point in lat/lon arrays"""
@@ -1678,7 +1668,7 @@ class BathymetryProcessor:
                 if validation_data:
                     # Check if we got valid wave height data
                     for data_point in validation_data:
-                        if 'swh' in data_point.get('parameter', '').lower():
+                        if 'wave_height' in data_point.get('parameter', '').lower():
                             value = data_point.get('value')
                             if value is not None and not math.isnan(float(value)) and float(value) >= 0:
                                 log.debug(f"{CORE_ICONS['status']} GRIB validation passed: {value:.2f}m wave height at {lat:.4f}, {lon:.4f}")
