@@ -1163,10 +1163,15 @@ class WaveWatchDataCollector:
                 return value
             
             # Create ValueTuple for WeeWX unit conversion
-            value_tuple = (value, source_unit, None)
+            unit_group_map = {
+                'meter': 'group_distance',
+                'meter_per_second': 'group_speed'
+            }
+            unit_group = unit_group_map.get(source_unit, 'group_distance')
+            value_tuple = (value, source_unit, unit_group)
             
             # Convert to target unit system using WeeWX
-            converted_tuple = weewx.units.convert(value_tuple, target_unit_system)
+            converted_tuple = weewx.units.convertStd(value_tuple, target_unit_system)
             
             return converted_tuple[0]  # Return just the converted value
             
@@ -3237,31 +3242,17 @@ class SurfForecastGenerator:
     def _get_target_unit_system(self):
         """Get the target unit system from WeeWX configuration"""
         
-        try:
-            # Get the station's unit system from WeeWX configuration
-            station_config = self.config_dict.get('Station', {})
-            station_type = station_config.get('station_type', 'Simulator')
-            
-            # Get the target unit system for this station
-            if hasattr(weewx.units, 'unit_constants'):
-                target_unit_system = weewx.units.unit_constants.get(station_type, weewx.US)  # ← FIXED: weewx.US not weewx.US
-            else:
-                # Fallback to checking StdConvert configuration
-                convert_config = self.config_dict.get('StdConvert', {})
-                target_unit_nick = convert_config.get('target_unit', 'US')
-                
-                if target_unit_nick.upper() == 'METRIC':
-                    target_unit_system = weewx.METRIC      # ← FIXED: weewx.METRIC not weewx.units.METRIC
-                elif target_unit_nick.upper() == 'METRICWX':
-                    target_unit_system = weewx.METRICWX    # ← FIXED: weewx.METRICWX not weewx.units.METRICWX
-                else:
-                    target_unit_system = weewx.US          # ← FIXED: weewx.US not weewx.units.US
-            
-            return target_unit_system
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error determining target unit system: {e}")
-            return weewx.US  # ← FIXED: weewx.US not weewx.units.US
+        # Read the target unit system from StdConvert section
+        convert_config = self.config_dict.get('StdConvert', {})
+        target_unit_nick = convert_config.get('target_unit', 'US')
+        
+        # Map string to WeeWX constant
+        if target_unit_nick.upper() == 'METRIC':
+            return weewx.METRIC
+        elif target_unit_nick.upper() == 'METRICWX':
+            return weewx.METRICWX
+        else:
+            return weewx.US
 
     def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
         """Store surf forecasts with data-driven unit conversion"""
@@ -4983,6 +4974,7 @@ class SurfFishingService(StdService):
                     'exposure': spot_config.get('exposure', 'exposed'),
                     'bathymetric_path': spot_config.get('bathymetric_path', {}),
                     'type': spot_config.get('type', 'surf'),
+                    'beach_facing': spot_config.get('beach_facing'),
                     'needs_bathymetry': not bathymetry_calculated
                 }
                 spots.append(spot)
@@ -5513,6 +5505,7 @@ class SurfFishingService(StdService):
                     'latitude': float(spot_config.get('latitude', '0.0')),
                     'longitude': float(spot_config.get('longitude', '0.0')),
                     'type': spot_config.get('type', spot_type),
+                    'beach_facing': spot_config.get('beach_facing'),
                     'active': spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
                 }
                 
