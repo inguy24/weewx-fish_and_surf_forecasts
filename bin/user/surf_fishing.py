@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Sea Lion
+# Magic Animal: Seal
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -181,6 +181,7 @@ class GRIBProcessor:
         
         try:
             import pygrib
+            import numpy as np
             from datetime import datetime, timedelta
             
             # READ FROM NEW CONF: Field mappings for parameter processing
@@ -214,6 +215,7 @@ class GRIBProcessor:
                         log.debug(f"Processing parameter: {param_name}")
                         log.debug(f"Target coordinates: lat={target_lat}, lon={target_lon}")
                         log.debug(f"GRIB domain: lat=[{grb.latitudes.min():.2f},{grb.latitudes.max():.2f}], lon=[{grb.longitudes.min():.2f},{grb.longitudes.max():.2f}]")
+                        
                         # Get forecast time info
                         forecast_time_offset = grb.forecastTime
                         
@@ -230,13 +232,20 @@ class GRIBProcessor:
                         log.debug(f"Normalized longitude: {normalized_lon} (original: {target_lon})")
 
                         # Find closest point manually (more reliable than grb.nearest)
-                        import numpy as np
                         distances = np.sqrt((lats - target_lat)**2 + (lons - normalized_lon)**2)
                         min_idx = np.argmin(distances)
                         closest_value = float(values.flat[min_idx])
                         log.debug(f"Closest value for {param_name}: {closest_value} (min_distance: {distances.flat[min_idx]:.4f})")
 
+                        # CRITICAL FIX: Only add valid data points to the list
                         if not np.isnan(closest_value):
+                            data_points.append({
+                                'parameter': param_name,
+                                'value': closest_value,
+                                'forecast_time': forecast_timestamp,
+                                'latitude': target_lat,
+                                'longitude': target_lon
+                            })
                             log.debug(f"✅ Adding data point for {param_name}: {closest_value}")
                         else:
                             log.debug(f"❌ Skipping NaN value for {param_name}")
