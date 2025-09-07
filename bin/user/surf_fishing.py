@@ -1668,7 +1668,7 @@ class BathymetryProcessor:
                 if validation_data:
                     # Check if we got valid wave height data
                     for data_point in validation_data:
-                        if 'wave_height' in data_point.get('parameter', '').lower():
+                        if 'ssh' in data_point.get('parameter', '').lower():
                             value = data_point.get('value')
                             if value is not None and not math.isnan(float(value)) and float(value) >= 0:
                                 log.debug(f"{CORE_ICONS['status']} GRIB validation passed: {value:.2f}m wave height at {lat:.4f}, {lon:.4f}")
