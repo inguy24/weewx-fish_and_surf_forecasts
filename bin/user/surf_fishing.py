@@ -2745,6 +2745,11 @@ class SurfForecastGenerator:
         
         try:
             # Calculate wave energy using E = H²T² approximation
+            total_swell_height = float(total_swell_height)
+            total_swell_period = float(total_swell_period)
+            wind_wave_height = float(wind_wave_height)
+            wind_wave_period = float(wind_wave_period)
+
             swell_energy = total_swell_height ** 2 * total_swell_period ** 2
             wind_wave_energy = wind_wave_height ** 2 * wind_wave_period ** 2
             
