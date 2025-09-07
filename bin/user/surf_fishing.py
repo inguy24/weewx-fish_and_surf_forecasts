@@ -5518,7 +5518,8 @@ class SurfFishingService(StdService):
                 if spot_type == 'surf':
                     spot.update({
                         'bottom_type': spot_config.get('bottom_type', 'sand'),
-                        'exposure': spot_config.get('exposure', 'exposed')
+                        'exposure': spot_config.get('exposure', 'exposed'),
+                        'beach_facing': spot_config.get('beach_facing')
                     })
                 elif spot_type == 'fishing':
                     spot.update({
