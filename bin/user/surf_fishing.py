@@ -2472,10 +2472,10 @@ class SurfForecastGenerator:
                         log.info("Period skipped - this is not an API retry issue")
                         continue
                         
-                    beach_orientation = spot_config.get('beach_orientation')
+                    beach_orientation = spot_config.get('beach_facing')
                     if beach_orientation is None:
                         failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_orientation in spot config")
+                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config")
                         log.error("This indicates incomplete spot configuration - check surf spot setup")
                         log.info("Period skipped - configuration issue, not API data")
                         continue
@@ -2668,10 +2668,10 @@ class SurfForecastGenerator:
                         log.info("Will retry next forecast cycle")
                         continue
                     
-                    beach_orientation = spot_config.get('beach_orientation')
+                    beach_orientation = spot_config.get('beach_facing')
                     if beach_orientation is None:
                         failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_orientation in spot config for wind assessment")
+                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config for wind assessment")
                         log.error("Check spot configuration completeness")
                         log.info("Period skipped - configuration issue, not API data")
                         continue
