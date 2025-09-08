@@ -2351,11 +2351,24 @@ class SurfForecastGenerator:
             
             for period in forecast_periods:
                 try:
-                    # Extract wave data - FAIL if critical data missing
+                    # Extract wave data - CRITICAL FIX: Convert all numeric values to float
                     wave_height = period.get('wave_height_max', period.get('wave_height'))
                     wave_period = period.get('wave_period')
                     wind_speed = period.get('wind_speed')
                     wind_direction = period.get('wind_direction')
+                    
+                    # CRITICAL FIX: Convert all numeric values to float to prevent string arithmetic
+                    try:
+                        wave_height = float(wave_height) if wave_height is not None else None
+                        wave_period = float(wave_period) if wave_period is not None else None
+                        wind_speed = float(wind_speed) if wind_speed is not None else None
+                        wind_direction = float(wind_direction) if wind_direction is not None else None
+                    except (ValueError, TypeError) as e:
+                        failed_periods += 1
+                        log.error(f"{CORE_ICONS['warning']} TYPE CONVERSION ERROR: Cannot convert wave data to float: {e}")
+                        log.error(f"Raw values: height={period.get('wave_height')}, period={period.get('wave_period')}, wind_speed={period.get('wind_speed')}, wind_dir={period.get('wind_direction')}")
+                        log.info("This indicates data format issue from GRIB processing - will retry next forecast cycle")
+                        continue
                     
                     if wave_height is None or wave_period is None:
                         failed_periods += 1
@@ -2363,11 +2376,18 @@ class SurfForecastGenerator:
                         log.info("This period will be skipped - next forecast cycle will retry with fresh API data")
                         continue
                     
-                    # Extract swell component data (NEW GFS Wave fields)
-                    total_swell_height = period.get('total_swell_height', 0)
-                    total_swell_period = period.get('total_swell_period', 0)
-                    wind_wave_height = period.get('wind_wave_height', 0)
-                    wind_wave_period = period.get('wind_wave_period', 0)
+                    # Extract swell component data (NEW GFS Wave fields) - CRITICAL FIX: Float conversion
+                    try:
+                        total_swell_height = float(period.get('total_swell_height', 0))
+                        total_swell_period = float(period.get('total_swell_period', 0))
+                        wind_wave_height = float(period.get('wind_wave_height', 0))
+                        wind_wave_period = float(period.get('wind_wave_period', 0))
+                    except (ValueError, TypeError) as e:
+                        failed_periods += 1
+                        log.error(f"{CORE_ICONS['warning']} TYPE CONVERSION ERROR: Cannot convert swell data to float: {e}")
+                        log.error(f"Raw swell values: total_swell_height={period.get('total_swell_height')}, total_swell_period={period.get('total_swell_period')}")
+                        log.info("This indicates data format issue from GRIB processing - will retry next forecast cycle")
+                        continue
                     
                     # INLINE WAVE HEIGHT SCORING - integrated from new code.txt
                     height_scoring = surf_scoring.get('transformed_wave_height_scoring', {})
@@ -2497,7 +2517,7 @@ class SurfForecastGenerator:
                         continue
                     
                     # Calculate relative wind direction
-                    relative_wind = (wind_direction - beach_facing) % 360
+                    relative_wind = (wind_direction - float(beach_facing)) % 360
                     
                     # Determine wind direction category relative to beach
                     if 45 <= relative_wind <= 135:
@@ -2530,12 +2550,16 @@ class SurfForecastGenerator:
                     
                     # INLINE SWELL QUALITY SCORING - integrated from existing _score_swell_quality method
                     if swell_dominance == 'unknown':
+                        failed_periods += 1
                         log.error(f"{CORE_ICONS['warning']} CRITICAL: Swell dominance is unknown - cannot score swell quality")
+                        log.info("This indicates swell calculation issue - will retry next forecast cycle")
                         continue
                     
                     # Use total_swell_period for scoring instead of wave_period
                     if total_swell_period <= 0:
+                        failed_periods += 1
                         log.error(f"{CORE_ICONS['warning']} CRITICAL: Invalid total swell period {total_swell_period} - cannot score")
+                        log.info("This indicates swell data issue - will retry next forecast cycle")
                         continue
                     
                     # Groundswell quality (clean, organized waves)
@@ -2578,130 +2602,15 @@ class SurfForecastGenerator:
                     # Convert to 1-5 star rating
                     stars = max(1, min(5, int(overall_score * 5)))
                     
-                    # INLINE QUALITY DESCRIPTION GENERATION - integrated from new code.txt
-                    description_config = surf_scoring.get('quality_descriptions', {})
-                    period_thresholds = surf_scoring.get('period_thresholds', {})
+                    # Generate quality description  
+                    quality_text = self._generate_quality_description(
+                        stars, swell_dominance, wave_period, wind_speed or 0, wind_direction or 0, spot_config
+                    )
                     
-                    if not description_config:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No quality descriptions configuration found in CONF - cannot generate description")
-                        continue
-                    
-                    # Get star-based descriptions from CONF
-                    star_descriptions = description_config.get('star_ratings', {})
-                    if not star_descriptions:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No star_ratings in quality descriptions - cannot generate description")
-                        continue
-                    
-                    if stars >= 4:
-                        base = star_descriptions.get('excellent')
-                    elif stars >= 3:
-                        base = star_descriptions.get('good')
-                    elif stars >= 2:
-                        base = star_descriptions.get('fair')
-                    else:
-                        base = star_descriptions.get('poor')
-                    
-                    if base is None:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: Missing star description for {stars} stars in CONF")
-                        continue
-                    
-                    # Get period description threshold from CONF
-                    if not period_thresholds:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No period thresholds in CONF - cannot classify period")
-                        continue
-                        
-                    long_period_threshold = period_thresholds.get('long_period_threshold')
-                    if long_period_threshold is None:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No long_period_threshold in CONF")
-                        continue
-                        
-                    period_desc = "long-period" if wave_period >= float(long_period_threshold) else "short-period"
-                    
-                    # Get swell dominance descriptions from CONF
-                    dominance_descriptions = description_config.get('swell_dominance', {})
-                    if not dominance_descriptions:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No swell_dominance descriptions in CONF")
-                        continue
-                        
-                    dominance_text = dominance_descriptions.get(swell_dominance)
-                    if dominance_text is None:
-                        log.error(f"{CORE_ICONS['warning']} CRITICAL: No description for swell dominance '{swell_dominance}' in CONF")
-                        continue
-                    
-                    quality_text = f"{base} {period_desc} {dominance_text} conditions"
-                    
-                    # INLINE CONFIDENCE CALCULATION - integrated from new code.txt
-                    confidence_config = surf_scoring.get('confidence_parameters', {})
-                    
-                    if not confidence_config:
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No confidence parameters in CONF")
-                        log.error("Check surf_scoring.confidence_parameters in configuration")
-                        log.info("Period skipped - configuration issue, not API data")
-                        continue
-                    
-                    base_confidence = confidence_config.get('base_confidence')
-                    wave_height_bonus = confidence_config.get('wave_height_bonus')
-                    wave_height_threshold = confidence_config.get('wave_height_threshold')
-                    period_bonus = confidence_config.get('period_bonus')
-                    wind_bonus = confidence_config.get('wind_bonus')
-                    wind_speed_min = confidence_config.get('wind_speed_min')
-                    wind_speed_max = confidence_config.get('wind_speed_max')
-                    min_confidence = confidence_config.get('min_confidence')
-                    max_confidence = confidence_config.get('max_confidence')
-                    
-                    if any(x is None for x in [base_confidence, wave_height_bonus, wave_height_threshold, 
-                                            period_bonus, wind_bonus, wind_speed_min, wind_speed_max,
-                                            min_confidence, max_confidence]):
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: Incomplete confidence parameters in CONF")
-                        log.error("Check all required parameters in surf_scoring.confidence_parameters")
-                        log.info("Period skipped - configuration issue, not API data")
-                        continue
-                    
-                    confidence = float(base_confidence)
-                    
-                    # Wave height bonus
-                    total_height = total_swell_height + wind_wave_height
-                    if total_height > float(wave_height_threshold):
-                        confidence += float(wave_height_bonus)
-                    
-                    # Period data bonus
-                    if wave_period and wave_period > 0:
-                        confidence += float(period_bonus)
-                    
-                    # Wind data quality bonus  
-                    if wind_speed and float(wind_speed_min) <= wind_speed <= float(wind_speed_max):
-                        confidence += float(wind_bonus)
-                    
-                    # Apply min/max limits from CONF
-                    confidence = max(float(min_confidence), min(float(max_confidence), confidence))
-                    
-                    # INLINE WIND CONDITION ASSESSMENT
-                    if wind_direction is None or not spot_config:
-                        failed_periods += 1
-                        log.warning(f"{CORE_ICONS['warning']} DATA/CONFIG ISSUE: Cannot assess wind condition - missing wind direction or spot config")
-                        log.info("Will retry next forecast cycle")
-                        continue
-                    
-                    beach_facing = spot_config.get('beach_facing')
-                    if beach_facing is None:
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config for wind assessment")
-                        log.error("Check spot configuration completeness")
-                        log.info("Period skipped - configuration issue, not API data")
-                        continue
-                    
-                    relative_wind = (wind_direction - beach_facing) % 360
-                    
-                    if 45 <= relative_wind <= 135:
-                        wind_condition = 'side_onshore'
-                    elif 135 < relative_wind < 225:
-                        wind_condition = 'onshore'
-                    elif 225 <= relative_wind <= 315:
-                        wind_condition = 'side_offshore'
-                    else:
-                        wind_condition = 'offshore'
+                    # Calculate confidence based on data quality
+                    confidence = self._calculate_quality_confidence(
+                        total_swell_height, wind_wave_height, wave_period, wind_speed or 0
+                    )
                     
                     # Enhanced period with all existing fields plus new analysis
                     enhanced_period = period.copy()
@@ -2711,7 +2620,7 @@ class SurfForecastGenerator:
                         'quality_text': quality_text,
                         'conditions_description': f"{wave_height:.1f}ft {swell_dominance} {quality_text}",
                         'confidence': confidence,
-                        'wind_condition': wind_condition,
+                        'wind_condition': self._assess_wind_effect(wind_direction or 0, spot_config),
                         'swell_dominance': swell_dominance,
                         'component_scores': {
                             'size_score': size_score,
