@@ -2507,7 +2507,7 @@ class SurfForecastGenerator:
                         wind_relative = 360 - wind_relative
                     
                     # Determine wind condition using NEW Scripps research-based logic
-                    if wind_speed <= calm_max:
+                    if wind_speed_float <= calm_max:
                         wind_condition = 'calm'
                     elif wind_relative < 45:  # Onshore winds (ocean to land)
                         # Get onshore-specific thresholds
@@ -2515,9 +2515,9 @@ class SurfForecastGenerator:
                         onshore_moderate_max = float(wind_speed_thresholds.get('onshore_moderate_max', '20'))
                         onshore_strong_min = float(wind_speed_thresholds.get('onshore_strong_min', '20.01'))
                         
-                        if wind_speed <= onshore_light_max:
+                        if wind_speed_float <= onshore_light_max:
                             wind_condition = 'onshore_light'
-                        elif wind_speed <= onshore_moderate_max:
+                        elif wind_speed_float <= onshore_moderate_max:
                             wind_condition = 'onshore_moderate'
                         else:  # >= onshore_strong_min
                             wind_condition = 'onshore_strong'
@@ -2528,11 +2528,11 @@ class SurfForecastGenerator:
                         offshore_moderate_max = float(wind_speed_thresholds.get('offshore_moderate_max', '20'))
                         offshore_strong_max = float(wind_speed_thresholds.get('offshore_strong_max', '30'))
                         
-                        if wind_speed <= offshore_light_max:
+                        if wind_speed_float <= offshore_light_max:
                             wind_condition = 'offshore_light'
-                        elif wind_speed <= offshore_moderate_max:
+                        elif wind_speed_float <= offshore_moderate_max:
                             wind_condition = 'offshore_moderate'
-                        elif wind_speed <= offshore_strong_max:
+                        elif wind_speed_float <= offshore_strong_max:
                             wind_condition = 'offshore_strong'
                         else:  # > offshore_strong_max
                             wind_condition = 'offshore_extreme'
@@ -2542,7 +2542,7 @@ class SurfForecastGenerator:
                         crossshore_light_max = float(wind_speed_thresholds.get('crossshore_light_max', '15'))
                         crossshore_strong_min = float(wind_speed_thresholds.get('crossshore_strong_min', '15.01'))
                         
-                        if wind_speed <= crossshore_light_max:
+                        if wind_speed_float <= crossshore_light_max:
                             wind_condition = 'crossshore_light'
                         else:  # >= crossshore_strong_min
                             wind_condition = 'crossshore_strong'
