@@ -797,6 +797,8 @@ class WaveWatchDataCollector:
                             continue
                             
                         if len(bounds_list) == 4:
+                            
+                                lat_min, lat_max, lon_min, lon_max = bounds_list
                                 
                                 # Normalize longitude for consistent comparison
                                 normalized_lon = longitude
