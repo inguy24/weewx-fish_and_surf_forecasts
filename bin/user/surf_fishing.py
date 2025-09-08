@@ -2465,7 +2465,7 @@ class SurfForecastGenerator:
                         log.info("This suggests wave period outside expected ranges - will retry next forecast cycle with fresh API data")
                         continue
                     
-                    # INLINE WIND EFFECT SCORING - integrated from new code.txt
+                    # UPDATED WIND EFFECT SCORING - Uses new Scripps research-based categories
                     wind_quality_scoring = surf_scoring.get('wind_quality_scoring', {})
                     wind_speed_thresholds = surf_scoring.get('wind_speed_thresholds', {})
                     
@@ -2482,23 +2482,8 @@ class SurfForecastGenerator:
                         log.info("This indicates API data issue - will retry next forecast cycle with fresh API data")
                         continue
                     
-                    # Get wind speed thresholds from CONF
+                    # Get wind speed thresholds from CONF - NEW: Direction-specific thresholds
                     calm_max = float(wind_speed_thresholds.get('calm_max', '3'))
-                    light_max = float(wind_speed_thresholds.get('light_max', '8'))
-                    moderate_max = float(wind_speed_thresholds.get('moderate_max', '15'))
-                    strong_max = float(wind_speed_thresholds.get('strong_max', '25'))
-                    
-                    # Determine wind speed category
-                    if wind_speed <= calm_max:
-                        speed_category = 'calm'
-                    elif wind_speed <= light_max:
-                        speed_category = 'light'
-                    elif wind_speed <= moderate_max:
-                        speed_category = 'moderate'
-                    elif wind_speed <= strong_max:
-                        speed_category = 'strong'
-                    else:
-                        speed_category = 'extreme'
                     
                     # Get beach orientation from spot config
                     if not spot_config:
@@ -2517,27 +2502,58 @@ class SurfForecastGenerator:
                         continue
                     
                     # Calculate relative wind direction
-                    relative_wind = (wind_direction - float(beach_facing)) % 360
+                    wind_relative = abs(wind_direction - beach_facing)
+                    if wind_relative > 180:
+                        wind_relative = 360 - wind_relative
                     
-                    # Determine wind direction category relative to beach
-                    if 45 <= relative_wind <= 135:
-                        direction_category = 'side_onshore'
-                    elif 135 < relative_wind < 225:
-                        direction_category = 'onshore'
-                    elif 225 <= relative_wind <= 315:
-                        direction_category = 'side_offshore'
-                    else:  # 315-45 degrees
-                        direction_category = 'offshore'
+                    # Determine wind condition using NEW Scripps research-based logic
+                    if wind_speed <= calm_max:
+                        wind_condition = 'calm'
+                    elif wind_relative < 45:  # Onshore winds (ocean to land)
+                        # Get onshore-specific thresholds
+                        onshore_light_max = float(wind_speed_thresholds.get('onshore_light_max', '10'))
+                        onshore_moderate_max = float(wind_speed_thresholds.get('onshore_moderate_max', '20'))
+                        onshore_strong_min = float(wind_speed_thresholds.get('onshore_strong_min', '20.01'))
+                        
+                        if wind_speed <= onshore_light_max:
+                            wind_condition = 'onshore_light'
+                        elif wind_speed <= onshore_moderate_max:
+                            wind_condition = 'onshore_moderate'
+                        else:  # >= onshore_strong_min
+                            wind_condition = 'onshore_strong'
+                            
+                    elif wind_relative > 135:  # Offshore winds (land to ocean)
+                        # Get offshore-specific thresholds
+                        offshore_light_max = float(wind_speed_thresholds.get('offshore_light_max', '10'))
+                        offshore_moderate_max = float(wind_speed_thresholds.get('offshore_moderate_max', '20'))
+                        offshore_strong_max = float(wind_speed_thresholds.get('offshore_strong_max', '30'))
+                        
+                        if wind_speed <= offshore_light_max:
+                            wind_condition = 'offshore_light'
+                        elif wind_speed <= offshore_moderate_max:
+                            wind_condition = 'offshore_moderate'
+                        elif wind_speed <= offshore_strong_max:
+                            wind_condition = 'offshore_strong'
+                        else:  # > offshore_strong_max
+                            wind_condition = 'offshore_extreme'
+                            
+                    else:  # Cross-shore winds (parallel to shore)
+                        # Get crossshore-specific thresholds
+                        crossshore_light_max = float(wind_speed_thresholds.get('crossshore_light_max', '15'))
+                        crossshore_strong_min = float(wind_speed_thresholds.get('crossshore_strong_min', '15.01'))
+                        
+                        if wind_speed <= crossshore_light_max:
+                            wind_condition = 'crossshore_light'
+                        else:  # >= crossshore_strong_min
+                            wind_condition = 'crossshore_strong'
                     
-                    # Get scoring matrix from CONF
-                    scoring_matrix = wind_quality_scoring.get('scoring_matrix', {})
-                    direction_scores = scoring_matrix.get(direction_category, {})
-                    wind_score = direction_scores.get(speed_category)
+                    # Get wind score from CONF using NEW category names
+                    wind_score = wind_quality_scoring.get(wind_condition)
                     
                     if wind_score is None:
                         failed_periods += 1
-                        log.warning(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No wind score found for {direction_category}/{speed_category} in CONF")
-                        log.error("This indicates incomplete wind scoring matrix in configuration")
+                        log.warning(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No wind score found for '{wind_condition}' in CONF")
+                        log.error("This indicates incomplete wind scoring configuration - check wind_quality_scoring section")
                         log.info("Period skipped - configuration issue, not API data")
                         continue
                         
@@ -2719,56 +2735,6 @@ class SurfForecastGenerator:
             'quality_modifier': quality_modifier,
             'wind_speed': wind_speed
         }
-
-    def _calculate_wind_quality_score(self, wind_speed, wind_direction, spot_config, surf_scoring):
-        """
-        Calculate wind quality score using enhanced CONF parameters
-        """
-        try:
-            # Get wind scoring parameters from CONF
-            wind_quality_scoring = surf_scoring.get('wind_quality_scoring', {})
-            wind_speed_thresholds = surf_scoring.get('wind_speed_thresholds', {})
-            
-            # Data-driven wind speed thresholds from CONF
-            calm_max = float(wind_speed_thresholds.get('calm_max', '3'))
-            light_max = float(wind_speed_thresholds.get('light_max', '8'))
-            moderate_max = float(wind_speed_thresholds.get('moderate_max', '15'))
-            strong_max = float(wind_speed_thresholds.get('strong_max', '25'))
-            
-            # Determine wind condition
-            if wind_speed <= calm_max:
-                wind_condition = 'calm_glassy'
-            else:
-                # Calculate relative wind direction
-                beach_facing = float(spot_config.get('beach_facing', '270'))
-                wind_relative = abs(wind_direction - beach_facing)
-                if wind_relative > 180:
-                    wind_relative = 360 - wind_relative
-                
-                # Classify wind direction relative to beach
-                if wind_relative < 45:  # Onshore
-                    if wind_speed <= light_max:
-                        wind_condition = 'onshore_light'
-                    else:
-                        wind_condition = 'onshore_strong'
-                elif wind_relative > 135:  # Offshore
-                    if wind_speed <= light_max:
-                        wind_condition = 'offshore_light'
-                    elif wind_speed <= moderate_max:
-                        wind_condition = 'offshore_optimal'
-                    else:
-                        wind_condition = 'offshore_strong'
-                else:  # Cross-shore
-                    wind_condition = 'cross_shore'
-            
-            # Get score from CONF
-            wind_score = float(wind_quality_scoring.get(wind_condition, '0.5'))
-            
-            return wind_score
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error calculating wind quality: {e}")
-            return 0.5
 
     def calculate_shoaling_coefficient(self, offshore_depth, breaking_depth, wave_period):
         """
