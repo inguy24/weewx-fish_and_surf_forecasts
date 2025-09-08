@@ -299,21 +299,35 @@ scoring_criteria:
         
     # Wind quality (relative to surf spot orientation)
     wind_quality_scoring:
-      offshore_optimal: 1.0     # Clean offshore winds
-      offshore_light: 0.9       # Light offshore
-      offshore_strong: 0.6      # Strong offshore (blown out)
-      cross_shore: 0.5          # Side winds
-      onshore_light: 0.3        # Light onshore
-      onshore_strong: 0.1       # Strong onshore (junky)
-      calm_glassy: 1.0          # No wind (glassy)
+      # Calm conditions (0-3 mph) - based on Scripps research interpolation
+      calm: 0.92                    # Slightly below light offshore but above moderate
+      
+      # Offshore winds (land to ocean) - SCRIPPS RESEARCH-BASED PATTERN
+      offshore_light: 1.0           # 3-10 mph - PEAK (Quality Factor 1.2 from Scripps)
+      offshore_moderate: 0.83       # 10-20 mph - baseline (Quality Factor 1.0 from Scripps)
+      offshore_strong: 0.67         # 20-30 mph - challenging (Quality Factor 0.8 from Scripps)
+      offshore_extreme: 0.42        # 30+ mph - difficult (Quality Factor 0.5 from Scripps)
+      
+      # Onshore winds (ocean to land) - RESEARCH-BASED DECLINING PATTERN
+      onshore_light: 0.67           # 0-10 mph - slightly degraded (Quality Factor 0.8 from research)
+      onshore_moderate: 0.42        # 10-20 mph - poor conditions (Quality Factor 0.5 from research)
+      onshore_strong: 0.17          # 20+ mph - very poor (Quality Factor 0.2 from research)
+      
+      # Cross-shore winds (parallel to shore) - RESEARCH-BASED DECLINING PATTERN  
+      crossshore_light: 0.58        # 0-15 mph - acceptable (Quality Factor 0.7 from research)
+      crossshore_strong: 0.25       # 15+ mph - poor conditions (Quality Factor 0.3 from research)
       
     # Wind speed thresholds for quality classification
     wind_speed_thresholds:
-      calm_max: 3               # mph
-      light_max: 8              # mph  
-      moderate_max: 15          # mph
-      strong_max: 25            # mph
-      dangerous_min: 30         # mph
+      calm_max: 3                   # mph - 0 to 3 mph
+      offshore_light_max: 10        # mph - 3 to 10 mph (offshore only)
+      offshore_moderate_max: 20     # mph - 10 to 20 mph (offshore only)
+      offshore_strong_max: 30       # mph - 20 to 30 mph (offshore only)
+      onshore_light_max: 10         # mph - 0 to 10 mph (onshore only)
+      onshore_moderate_max: 20      # mph - 10 to 20 mph (onshore only)
+      onshore_strong_min: 20.01     # mph - >20 mph (onshore only)
+      crossshore_light_max: 15      # mph - 0 to 15 mph (crossshore only)
+      crossshore_strong_min: 15.01  # mph - >15 mph (crossshore only)
       
     # Overall rating calculation weights
     scoring_weights:
