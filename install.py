@@ -2181,6 +2181,13 @@ class SurfFishingInstaller(ExtensionInstaller):
             column_sql.append("wind_condition TEXT")
             column_sql.append("tide_height REAL")
             column_sql.append("tide_stage TEXT")
+            column_sql.append("wave_height_min REAL")
+            column_sql.append("wave_height_max REAL")
+            column_sql.append("wave_height_range TEXT")
+            column_sql.append("quality_stars INTEGER")
+            column_sql.append("quality_text TEXT")
+            column_sql.append("conditions_description TEXT")
+            column_sql.append("swell_dominance TEXT"
             
             # Primary key
             primary_key = "PRIMARY KEY (dateTime, spot_id, forecast_time)"
