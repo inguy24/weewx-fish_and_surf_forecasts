@@ -2353,11 +2353,21 @@ class SurfForecastGenerator:
     
     def assess_surf_quality_complete(self, forecast_periods, current_wind=None, spot_config=None):
         """Assess surf quality using enhanced physics-based scoring from CONF"""
-    
+
+        # ADD COMPREHENSIVE DEBUG LOGGING
+        log.error(f"DEBUG: === STARTING assess_surf_quality_complete ===")
+        log.error(f"DEBUG: forecast_periods type: {type(forecast_periods)}")
+        log.error(f"DEBUG: forecast_periods length: {len(forecast_periods) if forecast_periods else 'None'}")
+        log.error(f"DEBUG: current_wind: {current_wind}")
+        log.error(f"DEBUG: spot_config type: {type(spot_config)}")
+        log.error(f"DEBUG: spot_config keys: {list(spot_config.keys()) if spot_config else 'None'}")
+
         try:
             enhanced_forecast = []
             failed_periods = 0
             total_periods = len(forecast_periods)
+            
+            log.error(f"DEBUG: total_periods = {total_periods}")
             
             # Get enhanced scoring criteria from CONF - CRITICAL path validation
             service_config = self.config_dict.get('SurfFishingService', {})
@@ -2387,20 +2397,33 @@ class SurfForecastGenerator:
                 log.error("Check surf_scoring.scoring_weights in CONF - must be numeric values")
                 return []  # Cannot proceed with invalid configuration
             
+            log.error(f"DEBUG: About to enter period loop with {total_periods} periods")
+            
             for period in forecast_periods:
+                log.error(f"DEBUG: Processing period: {period}")
                 try:
                     # Extract wave data - CRITICAL FIX: Convert all numeric values to float
-                    wave_height = period.get('wave_height_max', period.get('wave_height'))
-                    wave_period = period.get('wave_period')
-                    wind_speed = period.get('wind_speed')
-                    wind_direction = period.get('wind_direction')
-                    
-                    # CRITICAL FIX: Convert all numeric values to float to prevent string arithmetic
                     try:
-                        wave_height = float(wave_height) if wave_height is not None else None
-                        wave_period = float(wave_period) if wave_period is not None else None
-                        wind_speed = float(wind_speed) if wind_speed is not None else None
-                        wind_direction = float(wind_direction) if wind_direction is not None else None
+                        total_swell_height = float(period.get('total_swell_height', 0))
+                        total_swell_period = float(period.get('total_swell_period', 0))
+                        wind_wave_height = float(period.get('wind_wave_height', 0))
+                        wind_wave_period = float(period.get('wind_wave_period', 0))
+                        wave_height = float(period.get('wave_height', 0))
+                        wave_period = float(period.get('wave_period', 0))
+                        wind_speed = period.get('wind_speed')
+                        wind_direction = period.get('wind_direction')
+                        
+                        # CRITICAL FIX: Convert wind data to float
+                        if wind_speed is not None:
+                            wind_speed_float = float(wind_speed)
+                        else:
+                            wind_speed_float = None
+                            
+                        if wind_direction is not None:
+                            wind_direction_float = float(wind_direction)
+                        else:
+                            wind_direction_float = None
+                        
                     except (ValueError, TypeError) as e:
                         failed_periods += 1
                         log.error(f"{CORE_ICONS['warning']} TYPE CONVERSION ERROR: Cannot convert wave data to float: {e}")
@@ -2414,20 +2437,118 @@ class SurfForecastGenerator:
                         log.info("This period will be skipped - next forecast cycle will retry with fresh API data")
                         continue
                     
-                    # Extract swell component data (NEW GFS Wave fields) - CRITICAL FIX: Float conversion
-                    try:
-                        total_swell_height = float(period.get('total_swell_height', 0))
-                        total_swell_period = float(period.get('total_swell_period', 0))
-                        wind_wave_height = float(period.get('wind_wave_height', 0))
-                        wind_wave_period = float(period.get('wind_wave_period', 0))
-                    except (ValueError, TypeError) as e:
+                    # Enhanced swell quality assessment with total swell + wind wave approach
+                    log.error(f"DEBUG: About to call _assess_swell_dominance_updated")
+                    swell_dominance = self._assess_swell_dominance_updated(
+                        total_swell_height, total_swell_period, wind_wave_height, wind_wave_period
+                    )
+                    
+                    # Wind quality scoring configuration
+                    wind_quality_scoring = surf_scoring.get('wind_quality_scoring', {})
+                    wind_speed_thresholds = surf_scoring.get('wind_speed_thresholds', {})
+                    
+                    if not wind_quality_scoring or not wind_speed_thresholds:
                         failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} TYPE CONVERSION ERROR: Cannot convert swell data to float: {e}")
-                        log.error(f"Raw swell values: total_swell_height={period.get('total_swell_height')}, total_swell_period={period.get('total_swell_period')}")
-                        log.info("This indicates data format issue from GRIB processing - will retry next forecast cycle")
+                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: Incomplete wind scoring configuration in CONF")
+                        log.error("Check surf_scoring.wind_quality_scoring and surf_scoring.wind_speed_thresholds")
+                        log.info("Period skipped - will retry next forecast cycle (configuration issue, not API data)")
                         continue
                     
-                    # INLINE WAVE HEIGHT SCORING - integrated from new code.txt
+                    if wind_speed_float is None or wind_direction_float is None:
+                        failed_periods += 1
+                        log.warning(f"{CORE_ICONS['warning']} DATA QUALITY ISSUE: Missing wind data (speed={wind_speed_float}, direction={wind_direction_float})")
+                        log.info("This indicates API data issue - will retry next forecast cycle with fresh API data")
+                        continue
+                    
+                    # Get wind speed thresholds from CONF - NEW: Direction-specific thresholds
+                    calm_max = float(wind_speed_thresholds.get('calm_max', '3'))
+                    
+                    # Get beach orientation from spot config
+                    if not spot_config:
+                        failed_periods += 1
+                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No spot config provided for wind scoring")
+                        log.error("This indicates a programming issue - spot_config must be provided")
+                        log.info("Period skipped - this is not an API retry issue")
+                        continue
+                        
+                    beach_facing = spot_config.get('beach_facing')
+                    if beach_facing is None:
+                        failed_periods += 1
+                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config")
+                        log.error("This indicates incomplete spot configuration - check surf spot setup")
+                        log.info("Period skipped - configuration issue, not API data")
+                        continue
+                    
+                    # CRITICAL FIX: Convert beach_facing to float
+                    try:
+                        beach_facing_float = float(beach_facing)
+                    except (ValueError, TypeError):
+                        failed_periods += 1
+                        log.error(f"{CORE_ICONS['warning']} TYPE CONVERSION ERROR: beach_facing is not numeric: {beach_facing}")
+                        log.error("This indicates configuration issue - beach_facing must be numeric degrees")
+                        log.info("Period skipped - configuration issue, not API data")
+                        continue
+                    
+                    # Calculate relative wind direction
+                    log.error(f"DEBUG: About to calculate wind_relative with wind_direction_float={wind_direction_float}, beach_facing_float={beach_facing_float}")
+                    wind_relative = abs(wind_direction_float - beach_facing_float)
+                    if wind_relative > 180:
+                        wind_relative = 360 - wind_relative
+                    
+                    # Determine wind condition using NEW Scripps research-based logic
+                    if wind_speed_float <= calm_max:
+                        wind_condition = 'calm'
+                    elif wind_relative < 45:  # Onshore winds (ocean to land)
+                        # Get onshore-specific thresholds
+                        onshore_light_max = float(wind_speed_thresholds.get('onshore_light_max', '10'))
+                        onshore_moderate_max = float(wind_speed_thresholds.get('onshore_moderate_max', '20'))
+                        onshore_strong_min = float(wind_speed_thresholds.get('onshore_strong_min', '20.01'))
+                        
+                        if wind_speed_float <= onshore_light_max:
+                            wind_condition = 'onshore_light'
+                        elif wind_speed_float <= onshore_moderate_max:
+                            wind_condition = 'onshore_moderate'
+                        else:  # >= onshore_strong_min
+                            wind_condition = 'onshore_strong'
+                            
+                    elif wind_relative > 135:  # Offshore winds (land to ocean)
+                        # Get offshore-specific thresholds
+                        offshore_light_max = float(wind_speed_thresholds.get('offshore_light_max', '10'))
+                        offshore_moderate_max = float(wind_speed_thresholds.get('offshore_moderate_max', '20'))
+                        offshore_strong_max = float(wind_speed_thresholds.get('offshore_strong_max', '30'))
+                        
+                        if wind_speed_float <= offshore_light_max:
+                            wind_condition = 'offshore_light'
+                        elif wind_speed_float <= offshore_moderate_max:
+                            wind_condition = 'offshore_moderate'
+                        elif wind_speed_float <= offshore_strong_max:
+                            wind_condition = 'offshore_strong'
+                        else:  # > offshore_strong_max
+                            wind_condition = 'offshore_extreme'
+                            
+                    else:  # Cross-shore winds (parallel to shore)
+                        # Get crossshore-specific thresholds
+                        crossshore_light_max = float(wind_speed_thresholds.get('crossshore_light_max', '15'))
+                        crossshore_strong_min = float(wind_speed_thresholds.get('crossshore_strong_min', '15.01'))
+                        
+                        if wind_speed_float <= crossshore_light_max:
+                            wind_condition = 'crossshore_light'
+                        else:  # >= crossshore_strong_min
+                            wind_condition = 'crossshore_strong'
+                    
+                    # Get wind score from CONF using NEW category names
+                    wind_score = wind_quality_scoring.get(wind_condition)
+                    
+                    if wind_score is None:
+                        failed_periods += 1
+                        log.warning(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No wind score found for '{wind_condition}' in CONF")
+                        log.error("This indicates incomplete wind scoring configuration - check wind_quality_scoring section")
+                        log.info("Period skipped - configuration issue, not API data")
+                        continue
+                        
+                    wind_score = float(wind_score)
+                    
+                    # INLINE WAVE HEIGHT SCORING - integrated from CONF ranges
                     height_scoring = surf_scoring.get('transformed_wave_height_scoring', {})
                     height_ranges = height_scoring.get('ranges', {})
                     
@@ -2465,7 +2586,7 @@ class SurfForecastGenerator:
                         log.info("This suggests wave height outside expected ranges - will retry next forecast cycle with fresh API data")
                         continue
                     
-                    # INLINE WAVE PERIOD SCORING - integrated from new code.txt  
+                    # INLINE WAVE PERIOD SCORING - integrated from CONF ranges  
                     period_scoring = surf_scoring.get('wave_period_scoring', {})
                     period_ranges = period_scoring.get('ranges', {})
                     
@@ -2502,100 +2623,6 @@ class SurfForecastGenerator:
                         log.warning(f"{CORE_ICONS['warning']} DATA QUALITY ISSUE: No period range matched {wave_period}s in CONF ranges")
                         log.info("This suggests wave period outside expected ranges - will retry next forecast cycle with fresh API data")
                         continue
-                    
-                    # UPDATED WIND EFFECT SCORING - Uses new Scripps research-based categories
-                    wind_quality_scoring = surf_scoring.get('wind_quality_scoring', {})
-                    wind_speed_thresholds = surf_scoring.get('wind_speed_thresholds', {})
-                    
-                    if not wind_quality_scoring or not wind_speed_thresholds:
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: Incomplete wind scoring configuration in CONF")
-                        log.error("Check surf_scoring.wind_quality_scoring and surf_scoring.wind_speed_thresholds")
-                        log.info("Period skipped - will retry next forecast cycle (configuration issue, not API data)")
-                        continue
-                    
-                    if wind_speed is None or wind_direction is None:
-                        failed_periods += 1
-                        log.warning(f"{CORE_ICONS['warning']} DATA QUALITY ISSUE: Missing wind data (speed={wind_speed}, direction={wind_direction})")
-                        log.info("This indicates API data issue - will retry next forecast cycle with fresh API data")
-                        continue
-                    
-                    # Get wind speed thresholds from CONF - NEW: Direction-specific thresholds
-                    calm_max = float(wind_speed_thresholds.get('calm_max', '3'))
-                    
-                    # Get beach orientation from spot config
-                    if not spot_config:
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No spot config provided for wind scoring")
-                        log.error("This indicates a programming issue - spot_config must be provided")
-                        log.info("Period skipped - this is not an API retry issue")
-                        continue
-                        
-                    beach_facing = float(spot_config.get('beach_facing'))
-                    if beach_facing is None:
-                        failed_periods += 1
-                        log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No beach_facing in spot config")
-                        log.error("This indicates incomplete spot configuration - check surf spot setup")
-                        log.info("Period skipped - configuration issue, not API data")
-                        continue
-                    
-                    # Calculate relative wind direction
-                    wind_relative = abs(wind_direction - beach_facing)
-                    if wind_relative > 180:
-                        wind_relative = 360 - wind_relative
-                    
-                    # Determine wind condition using NEW Scripps research-based logic
-                    if wind_speed <= calm_max:
-                        wind_condition = 'calm'
-                    elif wind_relative < 45:  # Onshore winds (ocean to land)
-                        # Get onshore-specific thresholds
-                        onshore_light_max = float(wind_speed_thresholds.get('onshore_light_max', '10'))
-                        onshore_moderate_max = float(wind_speed_thresholds.get('onshore_moderate_max', '20'))
-                        onshore_strong_min = float(wind_speed_thresholds.get('onshore_strong_min', '20.01'))
-                        
-                        if wind_speed <= onshore_light_max:
-                            wind_condition = 'onshore_light'
-                        elif wind_speed <= onshore_moderate_max:
-                            wind_condition = 'onshore_moderate'
-                        else:  # >= onshore_strong_min
-                            wind_condition = 'onshore_strong'
-                            
-                    elif wind_relative > 135:  # Offshore winds (land to ocean)
-                        # Get offshore-specific thresholds
-                        offshore_light_max = float(wind_speed_thresholds.get('offshore_light_max', '10'))
-                        offshore_moderate_max = float(wind_speed_thresholds.get('offshore_moderate_max', '20'))
-                        offshore_strong_max = float(wind_speed_thresholds.get('offshore_strong_max', '30'))
-                        
-                        if wind_speed <= offshore_light_max:
-                            wind_condition = 'offshore_light'
-                        elif wind_speed <= offshore_moderate_max:
-                            wind_condition = 'offshore_moderate'
-                        elif wind_speed <= offshore_strong_max:
-                            wind_condition = 'offshore_strong'
-                        else:  # > offshore_strong_max
-                            wind_condition = 'offshore_extreme'
-                            
-                    else:  # Cross-shore winds (parallel to shore)
-                        # Get crossshore-specific thresholds
-                        crossshore_light_max = float(wind_speed_thresholds.get('crossshore_light_max', '15'))
-                        crossshore_strong_min = float(wind_speed_thresholds.get('crossshore_strong_min', '15.01'))
-                        
-                        if wind_speed <= crossshore_light_max:
-                            wind_condition = 'crossshore_light'
-                        else:  # >= crossshore_strong_min
-                            wind_condition = 'crossshore_strong'
-                    
-                    # Get wind score from CONF using NEW category names
-                    wind_score = wind_quality_scoring.get(wind_condition)
-                    
-                    if wind_score is None:
-                        failed_periods += 1
-                        log.warning(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No wind score found for '{wind_condition}' in CONF")
-                        log.error("This indicates incomplete wind scoring configuration - check wind_quality_scoring section")
-                        log.info("Period skipped - configuration issue, not API data")
-                        continue
-                        
-                    wind_score = float(wind_score)
                     
                     # Enhanced swell quality assessment with total swell + wind wave approach
                     swell_dominance = self._assess_swell_dominance_updated(
@@ -2656,15 +2683,20 @@ class SurfForecastGenerator:
                     # Convert to 1-5 star rating
                     stars = max(1, min(5, int(overall_score * 5)))
                     
-                    # Generate quality description  
-                    quality_text = self._generate_quality_description(
-                        stars, swell_dominance, wave_period, wind_speed or 0, wind_direction or 0, spot_config
-                    )
+                    # Generate quality description using simplified logic since _generate_quality_description doesn't exist
+                    if stars >= 4:
+                        quality_text = f"Excellent {swell_dominance} conditions"
+                    elif stars >= 3:
+                        quality_text = f"Good {swell_dominance} conditions"
+                    elif stars >= 2:
+                        quality_text = f"Fair {swell_dominance} conditions"
+                    else:
+                        quality_text = f"Poor {swell_dominance} conditions"
                     
-                    # Calculate confidence based on data quality
-                    confidence = self._calculate_quality_confidence(
-                        total_swell_height, wind_wave_height, wave_period, wind_speed or 0
-                    )
+                    # Calculate confidence based on data quality using simplified logic since _calculate_quality_confidence doesn't exist
+                    confidence = min(1.0, (size_score + period_score + wind_score + swell_quality_score) / 4.0)
+                    
+                    log.error(f"DEBUG: Successfully processed period - stars: {stars}, quality_text: {quality_text}")
                     
                     # Enhanced period with all existing fields plus new analysis
                     enhanced_period = period.copy()
@@ -2674,7 +2706,7 @@ class SurfForecastGenerator:
                         'quality_text': quality_text,
                         'conditions_description': f"{wave_height:.1f}ft {swell_dominance} {quality_text}",
                         'confidence': confidence,
-                        'wind_condition': self._assess_wind_effect(wind_direction or 0, spot_config),
+                        'wind_condition': wind_condition,
                         'swell_dominance': swell_dominance,
                         'component_scores': {
                             'size_score': size_score,
@@ -2688,6 +2720,10 @@ class SurfForecastGenerator:
                     
                 except Exception as e:
                     failed_periods += 1
+                    log.error(f"DEBUG: EXCEPTION in period processing: {str(e)}")
+                    log.error(f"DEBUG: Exception type: {type(e)}")
+                    import traceback
+                    log.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
                     log.error(f"{CORE_ICONS['warning']} PROCESSING ERROR: Error assessing period quality: {e}")
                     log.info("Period skipped due to processing error - will retry next forecast cycle")
                     continue
@@ -2707,6 +2743,10 @@ class SurfForecastGenerator:
             
         except Exception as e:
             # WeeWX-compliant top-level error handling - NEVER crash the service
+            log.error(f"DEBUG: TOP-LEVEL EXCEPTION: {str(e)}")
+            log.error(f"DEBUG: Exception type: {type(e)}")
+            import traceback
+            log.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
             log.error(f"{CORE_ICONS['warning']} CRITICAL ERROR in surf quality assessment: {e}")
             log.error("This is a serious error that needs investigation")
             log.error("WeeWX service continues normally - surf forecasts disabled until resolved")
