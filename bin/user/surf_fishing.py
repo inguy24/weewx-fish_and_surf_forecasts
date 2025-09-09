@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Clam
+# Magic Animal: Mussel
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -2745,6 +2745,84 @@ class SurfForecastGenerator:
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error assessing swell dominance: {e}")
             return 'unknown'
+
+    def _calculate_quality_confidence(self, total_swell_height, wind_wave_height, wave_period, wind_speed):
+        """
+        Calculate confidence score for surf quality assessment based on data completeness and reliability
+        """
+        try:
+            # CRITICAL FIX: Convert all inputs to float to prevent string arithmetic errors  
+            total_swell_height = float(total_swell_height) if total_swell_height is not None else 0.0
+            wind_wave_height = float(wind_wave_height) if wind_wave_height is not None else 0.0
+            wave_period = float(wave_period) if wave_period is not None else 0.0
+            wind_speed = float(wind_speed) if wind_speed is not None else 0.0
+            
+            # Read confidence parameters from CONF (data-driven approach)
+            service_config = self.config_dict.get('SurfFishingService', {})
+            scoring_criteria = service_config.get('scoring_criteria', {})
+            confidence_params = scoring_criteria.get('confidence_calculation', {
+                'base_confidence': 0.7,
+                'data_completeness_bonus': 0.2,
+                'realistic_values_bonus': 0.1
+            })
+            
+            # Start with base confidence from CONF
+            confidence = float(confidence_params.get('base_confidence', 0.7))
+            data_bonus = float(confidence_params.get('data_completeness_bonus', 0.2))
+            realism_bonus = float(confidence_params.get('realistic_values_bonus', 0.1))
+            
+            # Data completeness assessment
+            data_fields_present = 0
+            total_data_fields = 4
+            
+            if total_swell_height > 0:
+                data_fields_present += 1
+            if wind_wave_height > 0:
+                data_fields_present += 1
+            if wave_period > 0:
+                data_fields_present += 1
+            if wind_speed > 0:
+                data_fields_present += 1
+                
+            # Apply data completeness bonus proportionally
+            completeness_ratio = data_fields_present / total_data_fields
+            confidence += (data_bonus * completeness_ratio)
+            
+            # Realistic value assessment
+            realistic_factors = 0
+            total_realistic_factors = 3
+            
+            # Wave period realism (4-25 seconds is realistic range)
+            if 4 <= wave_period <= 25:
+                realistic_factors += 1
+            elif wave_period > 25:  # Unrealistic long period
+                confidence -= 0.1
+                
+            # Wave height realism (0.5-30 feet is realistic range)
+            total_wave_height = total_swell_height + wind_wave_height
+            if 0.5 <= total_wave_height <= 30:
+                realistic_factors += 1
+            elif total_wave_height > 30:  # Unrealistic height
+                confidence -= 0.15
+                
+            # Wind speed realism (0-100 mph is realistic range)
+            if 0 <= wind_speed <= 100:
+                realistic_factors += 1
+            elif wind_speed > 100:  # Unrealistic wind speed
+                confidence -= 0.1
+                
+            # Apply realism bonus proportionally
+            realism_ratio = realistic_factors / total_realistic_factors
+            confidence += (realism_bonus * realism_ratio)
+            
+            # Ensure confidence stays within valid range [0.0, 1.0]
+            confidence = max(0.0, min(1.0, confidence))
+            
+            return confidence
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error calculating quality confidence: {e}")
+            return 0.5  # Return moderate confidence on error
     
     def _classify_wind_condition(self, wind_direction, wave_direction, wind_speed):
         """Classify wind condition relative to waves"""
