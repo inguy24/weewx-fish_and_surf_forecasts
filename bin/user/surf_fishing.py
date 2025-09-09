@@ -3246,23 +3246,6 @@ class SurfForecastGenerator:
         else:
             return f"{base_quality} - {wave_range}, {wind_desc}"
 
-    def _get_surf_database_fields_from_conf(self):
-        """Get surf database field definitions from CONF"""
-        service_config = self.config_dict.get('SurfFishingService', {})
-        database_schema = service_config.get('database_schema', {})
-        surf_fields = database_schema.get('marine_forecast_surf_data', {})
-        
-        if not surf_fields:
-            log.error("No surf database field definitions found in CONF")
-            # Fallback to minimal required fields
-            return {
-                'dateTime': {'type': 'INTEGER'},
-                'usUnits': {'type': 'INTEGER'}, 
-                'spot_id': {'type': 'TEXT'}
-            }
-        
-        return surf_fields
-
     def _get_target_unit_system(self):
         """Get the target unit system from WeeWX configuration"""
         
@@ -3279,7 +3262,7 @@ class SurfForecastGenerator:
             return weewx.US
 
     def store_surf_forecasts(self, spot_id, forecast_data, db_manager):
-        """Store surf forecasts with data-driven unit conversion"""
+        """Store surf forecasts using field mappings already loaded in __init__"""
         try:
             # EXISTING CODE: Clear existing forecasts - WeeWX 5.1 pattern preserved
             db_manager.connection.execute(
@@ -3287,29 +3270,66 @@ class SurfForecastGenerator:
                 (spot_id,)
             )
             
-            # NEW: Get database field definitions from CONF
-            surf_fields = self._get_surf_database_fields_from_conf()
+            # USE ALREADY LOADED FIELD DATA: Get field mappings from __init__
+            service_config = self.config_dict.get('SurfFishingService', {})
+            gfs_wave_config = service_config.get('noaa_gfs_wave', {})
+            field_mappings = gfs_wave_config.get('field_mappings', {})
+            
+            # BUILD COMPLETE FIELD LIST: API fields + hardcoded service fields + missing fields
+            field_names = []
+            
+            # Add API fields that we successfully loaded in __init__
+            for field_name, field_config in field_mappings.items():
+                database_field = field_config.get('database_field', field_name)
+                field_names.append(database_field)
+            
+            # Add hardcoded service fields that install.py creates in the database
+            service_fields = [
+                'dateTime', 'usUnits', 'spot_id', 'forecast_time', 'generated_time',
+                'quality_rating', 'confidence', 'conditions_text', 'wind_condition',
+                'tide_height', 'tide_stage'
+            ]
+            field_names.extend(service_fields)
+            
+            # Add the 7 missing fields that surf_fishing.py expects (from Final Report)
+            missing_fields = [
+                'wave_height_min', 'wave_height_max', 'wave_height_range',
+                'quality_stars', 'quality_text', 'conditions_description', 'swell_dominance'
+            ]
+            field_names.extend(missing_fields)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_field_names = []
+            for field in field_names:
+                if field not in seen:
+                    unique_field_names.append(field)
+                    seen.add(field)
             
             # EXISTING CODE: Process each forecast period preserved
             for forecast_period in forecast_data:
                 # NEW: Apply data-driven unit conversions
                 converted_data = forecast_period
                 
-                # NEW: Build dynamic INSERT using CONF field definitions
-                field_names = list(surf_fields.keys())
-                placeholders = ', '.join(['?' for _ in field_names])
-                field_list = ', '.join(field_names)
+                # NEW: Build dynamic INSERT using complete field list
+                placeholders = ', '.join(['?' for _ in unique_field_names])
+                field_list = ', '.join(unique_field_names)
                 
-                # NEW: Build values list using CONF field specifications
+                # NEW: Build values list using complete field specifications
                 values = []
-                for field_name in field_names:
+                for field_name in unique_field_names:
                     if field_name == 'dateTime':
                         values.append(int(time.time()))
                     elif field_name == 'usUnits':
                         values.append(self._get_target_unit_system())
                     elif field_name == 'spot_id':
                         values.append(spot_id)
+                    elif field_name == 'forecast_time':
+                        values.append(converted_data.get('forecast_time', int(time.time())))
+                    elif field_name == 'generated_time':
+                        values.append(int(time.time()))
                     else:
+                        # Get value from forecast data or use None for missing fields
                         values.append(converted_data.get(field_name))
                 
                 # EXISTING CODE: Execute database insert (now data-driven)
@@ -3317,6 +3337,9 @@ class SurfForecastGenerator:
                     f"INSERT INTO marine_forecast_surf_data ({field_list}) VALUES ({placeholders})",
                     values
                 )
+            
+            # Commit the transaction
+            db_manager.connection.commit()
             
             # EXISTING CODE: Return value preserved
             return True
