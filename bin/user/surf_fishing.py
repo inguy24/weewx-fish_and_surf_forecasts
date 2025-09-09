@@ -155,6 +155,17 @@ class GRIBProcessor:
                             # Fallback if longitude normalization fails
                             value = eccodes.codes_get_nearest(msg_id, target_lat, target_lon)[0]['value']
                         
+                        # FIX: Convert to float and validate - FAIL if invalid
+                        try:
+                            numeric_value = float(value)
+                            # Check for invalid values
+                            if math.isnan(numeric_value) or math.isinf(numeric_value):
+                                log.warning(f"{CORE_ICONS['warning']} Invalid numeric value (NaN/Inf) for {param_name}")
+                                continue  # Skip this data point
+                        except (ValueError, TypeError) as e:
+                            log.error(f"{CORE_ICONS['warning']} Cannot convert GRIB value to float for {param_name}: {value} - {e}")
+                            continue  # Skip this data point - don't use invalid data
+
                         data_points.append({
                             'parameter': param_name,
                             'value': value,
@@ -1062,6 +1073,28 @@ class WaveWatchDataCollector:
             forecast_periods = {}
             for point in data_points:
                 try:
+                    forecast_time = point['forecast_time']
+                    if forecast_time not in forecast_periods:
+                        forecast_periods[forecast_time] = {}
+                    
+                    # FIX: Validate the value is numeric (should already be from GRIB processor)
+                    value = point.get('value')
+                    if value is None:
+                        log.warning(f"Null value for {point.get('parameter', 'unknown')} at time {forecast_time}")
+                        continue
+                    
+                    # Extra validation - the value should already be float from GRIB processor
+                    try:
+                        numeric_value = float(value)
+                        if math.isnan(numeric_value) or math.isinf(numeric_value):
+                            log.warning(f"Invalid numeric value for {point.get('parameter', 'unknown')}")
+                            continue
+                    except (ValueError, TypeError) as e:
+                        log.error(f"Non-numeric value in data point for {point.get('parameter', 'unknown')}: {value}")
+                        continue  # Skip invalid data
+                    
+                    forecast_periods[forecast_time][point['parameter']] = numeric_value
+        
                     forecast_time = point['forecast_time']
                     if forecast_time not in forecast_periods:
                         forecast_periods[forecast_time] = {}
@@ -2320,7 +2353,7 @@ class SurfForecastGenerator:
     
     def assess_surf_quality_complete(self, forecast_periods, current_wind=None, spot_config=None):
         """Assess surf quality using enhanced physics-based scoring from CONF"""
-        
+    
         try:
             enhanced_forecast = []
             failed_periods = 0
@@ -2343,11 +2376,16 @@ class SurfForecastGenerator:
                 log.error(f"{CORE_ICONS['warning']} CRITICAL CONFIGURATION ERROR: No scoring_weights in CONF")
                 log.error("WeeWX service will continue, but surf forecasts cannot be generated until configuration is fixed")
                 return []
-                
-            wave_height_weight = float(scoring_weights.get('wave_height', '0.35'))
-            wave_period_weight = float(scoring_weights.get('wave_period', '0.35'))
-            wind_quality_weight = float(scoring_weights.get('wind_quality', '0.20'))
-            tide_phase_weight = float(scoring_weights.get('tide_phase', '0.10'))
+            
+            try:
+                wave_height_weight = float(scoring_weights.get('wave_height', '0.35'))
+                wave_period_weight = float(scoring_weights.get('wave_period', '0.35'))
+                wind_quality_weight = float(scoring_weights.get('wind_quality', '0.20'))
+                tide_phase_weight = float(scoring_weights.get('tide_phase', '0.10'))
+            except (ValueError, TypeError) as e:
+                log.error(f"{CORE_ICONS['warning']} Invalid scoring weight configuration: {e}")
+                log.error("Check surf_scoring.scoring_weights in CONF - must be numeric values")
+                return []  # Cannot proceed with invalid configuration
             
             for period in forecast_periods:
                 try:
