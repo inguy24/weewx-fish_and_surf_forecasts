@@ -323,8 +323,8 @@ class MarineStationIntegrationManager:
     
     def calculate_distance(self, location_coords, station_coords):
         """Calculate haversine distance between location and station in miles"""
-        lat1, lon1 = math.radians(location_coords[0]), math.radians(location_coords[1])
-        lat2, lon2 = math.radians(station_coords[0]), math.radians(station_coords[1])
+        lat1, lon1 = math.radians(float(location_coords[0])), math.radians(float(location_coords[1]))
+        lat2, lon2 = math.radians(float(station_coords[0])), math.radians(float(station_coords[1]))
         
         dlat = lat2 - lat1
         dlon = lon2 - lon1
