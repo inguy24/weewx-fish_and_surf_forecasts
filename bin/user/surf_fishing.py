@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Lying Sack of CLANKER Shit
+# Magic Animal: Clam
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
