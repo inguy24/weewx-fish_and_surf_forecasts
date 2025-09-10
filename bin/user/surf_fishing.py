@@ -2092,10 +2092,11 @@ class BathymetryProcessor:
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
     
-    def __init__(self, config_dict, db_manager=None):
+    def __init__(self, config_dict, db_manager=None, engine=None):
         """Initialize surf forecast generator with data-driven configuration"""
         self.config_dict = config_dict
         self.db_manager = db_manager
+        self.engine = engine  # Store engine reference for thread-safe database access
         service_config = config_dict.get('SurfFishingService', {})
         self.surf_rating_factors = service_config.get('surf_rating_factors', {})
         
@@ -3796,160 +3797,203 @@ class SurfForecastGenerator:
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error looking up range score: {e}")
             return 0.5
-   
+
+    def export_surf_forecast_summary(self, spot_id, format='dict'):
+            """Export complete surf forecast summary for templates or external use"""
+            try:
+                # Get current forecasts using existing method
+                current_forecasts = self.get_current_surf_forecast(spot_id, 72, self.db_manager)
+                
+                # Get next good session using existing method
+                next_good_session = self.find_next_good_session(spot_id, self.db_manager, 3)
+                
+                # Get today's summary - CONSOLIDATED INLINE with thread-safe access
+                today_summary = {'max_rating': 0, 'best_period': 'No data', 'avg_rating': 0, 'period_count': 0}
+                
+                # THREAD SAFE: Get fresh database manager for this thread if no engine available
+                if self.db_manager:
+                    db_manager = self.db_manager
+                    try:
+                        current_time = int(time.time())
+                        today_start = current_time - (current_time % 86400)
+                        today_end = today_start + 86400
+                        
+                        result = db_manager.connection.execute("""
+                            SELECT quality_rating, conditions_description, wave_height_range
+                            FROM marine_forecast_surf_data 
+                            WHERE spot_id = ? AND forecast_time BETWEEN ? AND ?
+                            ORDER BY quality_rating DESC
+                        """, (spot_id, today_start, today_end))
+                        
+                        rows = result.fetchall()
+                        
+                        if rows:
+                            ratings = [row[0] for row in rows]
+                            max_rating = max(ratings)
+                            avg_rating = sum(ratings) / len(ratings)
+                            best_period = next((row[2] for row in rows if row[0] == max_rating), 'Unknown')
+                            
+                            today_summary = {
+                                'max_rating': max_rating,
+                                'best_period': best_period,
+                                'avg_rating': round(avg_rating, 1),
+                                'period_count': len(rows)
+                            }
+                    except Exception as e:
+                        log.error(f"{CORE_ICONS['warning']} Error getting today's surf summary: {e}")
+                
+                # Get spot information from CONF
+                service_config = self.config_dict.get('SurfFishingService', {})
+                surf_spots = service_config.get('surf_spots', {})
+                
+                spot_info = None
+                for spot_key, spot_config in surf_spots.items():
+                    if spot_key == spot_id or spot_config.get('name') == spot_id:
+                        spot_info = {
+                            'id': spot_key,
+                            'name': spot_config.get('name', spot_key),
+                            'latitude': float(spot_config.get('latitude', '0.0')),
+                            'longitude': float(spot_config.get('longitude', '0.0')),
+                            'bottom_type': spot_config.get('bottom_type', 'sand'),
+                            'exposure': spot_config.get('exposure', 'exposed'),
+                            'type': spot_config.get('type', 'surf')
+                        }
+                        break
+                
+                if not spot_info:
+                    return {'error': 'Surf spot not found'}
+                
+                # Compile complete summary
+                summary = {
+                    'spot_info': spot_info,
+                    'generated_time': datetime.now().isoformat(),
+                    'forecasts': current_forecasts,
+                    'next_good_session': next_good_session,
+                    'today_summary': today_summary,
+                    'forecast_count': len(current_forecasts)
+                }
+                
+                if format == 'json':
+                    return json.dumps(summary, indent=2)
+                else:
+                    return summary
+                    
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error exporting surf forecast summary: {e}")
+                return {'error': f'Export failed: {str(e)}'}  
+
 
 class SurfForecastSearchList(SearchList):
     """
-    Provides surf forecast data to WeeWX templates
+    Provides surf forecast data to WeeWX templates using WeeWX 5.1 patterns
     """
     
     def __init__(self, generator):
         super(SurfForecastSearchList, self).__init__(generator)
         
     def get_extension_list(self, timespan, db_lookup):
-        """
-        Return search list with surf forecast data for templates
-        """
-        
+        """Return search list with surf forecast data for templates"""
         try:
             # Get database manager
             db_manager = db_lookup()
             
-            # Get all active surf spots
-            surf_spots = self._get_active_surf_spots(db_manager)
+            # Get service configuration from generator
+            config_dict = self.generator.config_dict
+            service_config = config_dict.get('SurfFishingService', {})
+            
+            # Get all active surf spots from CONF
+            surf_spots = service_config.get('surf_spots', {})
+            
+            if not surf_spots:
+                return [{'surf_forecasts': {}, 'surf_summary': {'status': 'No surf spots configured'}}]
+            
+            # Initialize surf generator with engine reference (following fishing pattern)
+            surf_generator = SurfForecastGenerator(config_dict, db_manager)
             
             # Build forecast data for each spot
             surf_forecasts = {}
-            for spot in surf_spots:
-                spot_data = self._get_spot_forecast_data(spot, db_manager)
-                if spot_data:
-                    surf_forecasts[spot['name']] = spot_data
+            for spot_id, spot_config in surf_spots.items():
+                # Check if spot is active (same logic as fishing)
+                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
+                
+                if is_active:
+                    spot_data = surf_generator.export_surf_forecast_summary(spot_id, 'dict')
+                    if spot_data and 'error' not in spot_data:
+                        surf_forecasts[spot_config.get('name', spot_id)] = spot_data
             
-            # Get overall summary
-            summary_data = self._get_overall_summary(surf_forecasts)
+            # Get overall summary - CONSOLIDATED INLINE (matching fishing pattern)
+            if not surf_forecasts:
+                summary_data = {'status': 'No surf spots configured'}
+            else:
+                best_rating = 0
+                best_spot = None
+                
+                for spot_name, spot_data in surf_forecasts.items():
+                    today_summary = spot_data.get('today_summary', {})
+                    max_rating = today_summary.get('max_rating', 0)
+                    
+                    if max_rating > best_rating:
+                        best_rating = max_rating
+                        best_spot = spot_name
+                
+                if best_rating >= 4:
+                    status = f'Epic surf at {best_spot}'
+                elif best_rating >= 3:
+                    status = f'Good surf at {best_spot}'
+                elif best_rating >= 2:
+                    status = f'Fair surf available'
+                else:
+                    status = 'Poor surf conditions'
+                
+                summary_data = {
+                    'status': status,
+                    'best_rating': best_rating,
+                    'best_spot': best_spot,
+                    'total_spots': len(surf_forecasts)
+                }
+            
+            # Get last update time - CONSOLIDATED INLINE with thread-safe access (matching fishing pattern)
+            last_update = 'Never'
+            try:
+                # THREAD SAFE: Get fresh database manager for this thread
+                with weewx.manager.open_manager_with_config(config_dict, 'wx_binding') as db_manager:
+                    result = db_manager.connection.execute(
+                        "SELECT MAX(generated_time) FROM marine_forecast_surf_data"
+                    )
+                    
+                    row = result.fetchone()
+                    
+                    if row and row[0]:
+                        last_update = datetime.fromtimestamp(row[0]).strftime('%m/%d %I:%M %p')
+                        
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error getting last surf update time: {e}")
             
             return [{
                 'surf_forecasts': surf_forecasts,
                 'surf_summary': summary_data,
                 'surf_spots_count': len(surf_spots),
-                'last_surf_update': self._get_last_update_time(db_manager)
+                'surf_last_update': last_update
             }]
             
         except Exception as e:
-            log.error(f"Error in SurfForecastSearchList: {e}")
-            return [{}]
-    
-    def _get_active_surf_spots(self, db_manager):
-        """Get all active surf spots from CONF configuration for SearchList"""
-        
-        spots = []
-        
+            log.error(f"{CORE_ICONS['warning']} Error in SurfForecastSearchList: {e}")
+            return [{'surf_forecasts': {}, 'surf_summary': {'status': 'Error loading surf data'}}]
+
+    def configure_search_lists(self):
+        """Register SearchList extensions for template integration"""
         try:
-            # Access config through generator
-            config_dict = self.generator.config_dict
-            service_config = config_dict.get('SurfFishingService', {})
-            surf_spots_config = service_config.get('surf_spots', {})
-            
-            for spot_id, spot_config in surf_spots_config.items():
-                # Check if spot is active
-                is_active = spot_config.get('active', 'true').lower() in ['true', '1', 'yes']
-                
-                if is_active:
-                    spot = {
-                        'id': spot_id,
-                        'name': spot_config.get('name', spot_id),
-                        'latitude': float(spot_config.get('latitude', '0.0')),
-                        'longitude': float(spot_config.get('longitude', '0.0')),
-                        'bottom_type': spot_config.get('bottom_type', 'sand'),
-                        'exposure': spot_config.get('exposure', 'exposed'),
-                        'beach_facing': spot_config.get('beach_facing'),
-                        'type': spot_config.get('type', 'surf')
-                    }
-                    spots.append(spot)
-            
-            log.debug(f"SearchList loaded {len(spots)} surf spots from CONF")
-            
+            # This should be handled by the installer, but verify it's working
+            import weewx.cheetahgenerator
+            if hasattr(weewx.cheetahgenerator.SearchList, 'extensible'):
+                if 'user.surf_fishing.SurfForecastSearchList' not in weewx.cheetahgenerator.SearchList.extensible:
+                    weewx.cheetahgenerator.SearchList.extensible.append(
+                        'user.surf_fishing.SurfForecastSearchList'
+                    )
+            log.info(f"{CORE_ICONS['status']} Surf SearchList extensions registered")
         except Exception as e:
-            log.error(f"SearchList error getting surf spots from CONF: {e}")
-        
-        return spots
-    
-    def _get_spot_forecast_data(self, spot, db_manager):
-        """Get complete forecast data for a specific spot"""
-        
-        try:
-            # Create SurfForecastGenerator instance to use its methods
-            generator = SurfForecastGenerator(self.generator.config_dict)
+            log.warning(f"{CORE_ICONS['warning']} Surf SearchList registration issue: {e}")
             
-            return {
-                'spot_info': spot,
-                'current_forecast': generator.get_current_surf_forecast(spot['id'], db_manager, 24),
-                'next_good_session': generator.find_next_good_session(spot['id'], db_manager),
-                'today_summary': generator.get_today_surf_summary(spot['id'], db_manager)
-            }
-            
-        except Exception as e:
-            log.error(f"Error getting forecast data for {spot['name']}: {e}")
-            return None
-    
-    def _get_overall_summary(self, surf_forecasts):
-        """Generate overall surf summary across all spots"""
-        
-        if not surf_forecasts:
-            return {'status': 'No surf spots configured'}
-        
-        best_rating = 0
-        best_spot = None
-        
-        for spot_name, spot_data in surf_forecasts.items():
-            today_summary = spot_data.get('today_summary', {})
-            max_rating = today_summary.get('max_rating', 0)
-            
-            if max_rating > best_rating:
-                best_rating = max_rating
-                best_spot = spot_name
-        
-        if best_rating >= 4:
-            status = f'Excellent surf at {best_spot}'
-        elif best_rating >= 3:
-            status = f'Good surf at {best_spot}'
-        elif best_rating >= 2:
-            status = f'Fair surf available'
-        else:
-            status = 'Poor surf conditions'
-        
-        return {
-            'status': status,
-            'best_rating': best_rating,
-            'best_spot': best_spot,
-            'total_spots': len(surf_forecasts)
-        }
-    
-    def _get_last_update_time(self, db_manager):
-        """
-        Get timestamp of last surf forecast update
-        
-        SURGICAL FIX: Removes manual cursor pattern, uses WeeWX 5.1 direct execute
-        RETAINS: All functionality, method name, parameters, return values
-        """
-        try:
-            # WeeWX 5.1 pattern - direct execute (no manual cursor)
-            result = db_manager.connection.execute(
-                "SELECT MAX(generated_time) FROM marine_forecast_surf_data"
-            )
-            
-            # WeeWX 5.1 pattern - fetchone() on result object
-            row = result.fetchone()
-            
-            if row and row[0]:
-                return datetime.fromtimestamp(row[0]).strftime('%m/%d %I:%M %p')
-            
-            return 'Never'
-            
-        except Exception as e:
-            log.error(f"Error getting last surf update time: {e}")
-            return 'Never'
-        
 
 class FishingForecastGenerator:
     """Generate fishing condition forecasts with single-decision data fusion architecture"""
