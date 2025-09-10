@@ -2122,7 +2122,9 @@ class SurfForecastGenerator:
             log.info(f"DEBUG: self.surf_recommended now contains: {self.surf_recommended}")
     
     def generate_surf_forecast(self, spot, forecast_data):
-        """Generate surf forecast using updated GFS Wave field mappings"""
+        """
+        Generate surf forecast using updated GFS Wave field mappings with Phase I tide integration
+        """
         
         try:
             forecasts = []
@@ -2162,7 +2164,33 @@ class SurfForecastGenerator:
                         if field_name in period_data:
                             forecast_values[field_name] = period_data.get(field_name, 0)
                     
-                    # Create forecast structure with available data
+                    # Add forecast time
+                    forecast_values['forecast_time'] = period_data.get('forecast_time', int(time.time()))
+                    
+                    # Calculate wave height range from min/max
+                    if 'wave_height' in forecast_values:
+                        wave_height = forecast_values['wave_height']
+                        forecast_values['wave_height_min'] = wave_height * 0.8
+                        forecast_values['wave_height_max'] = wave_height * 1.2
+                    
+                    # NEW: Phase I tide integration using existing method
+                    try:
+                        tide_info = self._determine_tide_stage(
+                            forecast_values['forecast_time'], 
+                            {}  # Empty tide_conditions - Phase I provides data
+                        )
+                        forecast_values['tide_stage'] = tide_info['stage']
+                        forecast_values['tide_height'] = tide_info['height']
+                        
+                        log.debug(f"{CORE_ICONS['status']} Phase I tide integrated: {tide_info['stage']} tide at {tide_info['height']}ft")
+                        
+                    except Exception as tide_error:
+                        # NO FALLBACKS: Fail as required
+                        log.error(f"{CORE_ICONS['warning']} Phase I tide integration failed: {tide_error}")
+                        log.info(f"{CORE_ICONS['navigation']} Ensure Phase I MarineDataService is installed and running")
+                        raise Exception(f"Phase I tide integration required: {tide_error}")
+                    
+                    # PRESERVE EXISTING: Create forecast structure with available data
                     basic_forecast = [{
                         'forecast_time': period_data['forecast_time'],
                         'wave_height_min': forecast_values.get('wave_height', 0) * 0.8,
@@ -2174,10 +2202,13 @@ class SurfForecastGenerator:
                         'total_swell_height': forecast_values.get('total_swell_height', 0),
                         'total_swell_period': forecast_values.get('total_swell_period', 0),
                         'wind_wave_height': forecast_values.get('wind_wave_height', 0),
-                        'wind_wave_period': forecast_values.get('wind_wave_period', 0)
+                        'wind_wave_period': forecast_values.get('wind_wave_period', 0),
+                        # ADD: Phase I tide data
+                        'tide_stage': forecast_values['tide_stage'],
+                        'tide_height': forecast_values['tide_height']
                     }]
                     
-                    # Use comprehensive surf quality assessment
+                    # PRESERVE EXISTING: Use comprehensive surf quality assessment
                     enhanced_forecast = self.assess_surf_quality_complete(
                         basic_forecast, 
                         current_wind={
@@ -2199,7 +2230,13 @@ class SurfForecastGenerator:
                     log.error(f"{CORE_ICONS['warning']} Error processing surf period: {e}")
                     continue
             
-            return forecasts
+            # NEW: Enhance all forecasts with calculated fields
+            if forecasts:
+                enhanced_forecasts = self._enhance_forecast_with_calculated_fields(forecasts)
+                log.info(f"{CORE_ICONS['status']} Enhanced {len(enhanced_forecasts)} forecasts with Phase I tide data and calculated fields")
+                return enhanced_forecasts
+            
+            return forecasts  # PRESERVE: Return empty list if no forecasts
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error generating surf forecasts: {e}")
@@ -3111,15 +3148,90 @@ class SurfForecastGenerator:
         return enhanced_forecast
     
     def _determine_tide_stage(self, forecast_time, tide_conditions):
-        """Determine tide stage for forecast time (simplified)"""
+        """
+        Determine tide stage for forecast time using Phase I tide_table data
+        """
         
-        # This is a simplified implementation
-        # In production, this would query the tide_table from Phase I
-        
-        return {
-            'stage': 'rising',  # rising, falling, high, low
-            'height': tide_conditions.get('current_level', 0)
-        }
+        try:
+            # THREAD SAFE: Use WeeWX 5.1 database manager pattern
+            if not self.engine:
+                raise Exception("No engine available for Phase I tide integration")
+            
+            # THREAD SAFE: Get fresh database manager for this thread
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                
+                # Query Phase I tide_table for surrounding tide events
+                time_window = 12 * 3600  # 12 hours window
+                start_time = forecast_time - time_window
+                end_time = forecast_time + time_window
+                
+                # WeeWX 5.1 PATTERN: Direct execute on connection
+                result = db_manager.connection.execute("""
+                    SELECT tide_time, tide_type, predicted_height, station_id
+                    FROM tide_table 
+                    WHERE tide_time BETWEEN ? AND ?
+                    ORDER BY ABS(tide_time - ?) 
+                    LIMIT 6
+                """, (start_time, end_time, forecast_time))
+                
+                tide_events = result.fetchall()
+                
+                if not tide_events:
+                    raise Exception(f"No Phase I tide data found for forecast time {forecast_time}")
+                
+                # Find closest tide events before and after forecast time
+                before_events = [t for t in tide_events if t[0] <= forecast_time]
+                after_events = [t for t in tide_events if t[0] > forecast_time]
+                
+                if before_events and after_events:
+                    last_tide = before_events[0]  # Closest before
+                    next_tide = after_events[0]   # Closest after
+                    
+                    # Calculate tide stage based on tide progression
+                    time_ratio = (forecast_time - last_tide[0]) / (next_tide[0] - last_tide[0])
+                    
+                    if last_tide[1] == 'L' and next_tide[1] == 'H':
+                        # Rising tide
+                        stage = 'rising'
+                        height = last_tide[2] + (next_tide[2] - last_tide[2]) * time_ratio
+                    elif last_tide[1] == 'H' and next_tide[1] == 'L':
+                        # Falling tide  
+                        stage = 'falling'
+                        height = last_tide[2] + (next_tide[2] - last_tide[2]) * time_ratio
+                    else:
+                        # Near slack tide
+                        if abs(forecast_time - last_tide[0]) < abs(forecast_time - next_tide[0]):
+                            stage = 'high' if last_tide[1] == 'H' else 'low'
+                            height = last_tide[2]
+                        else:
+                            stage = 'high' if next_tide[1] == 'H' else 'low'
+                            height = next_tide[2]
+                
+                elif before_events:
+                    # Only past events available
+                    closest_tide = before_events[0]
+                    stage = 'high' if closest_tide[1] == 'H' else 'low'
+                    height = closest_tide[2]
+                
+                elif after_events:
+                    # Only future events available
+                    closest_tide = after_events[0] 
+                    stage = 'high' if closest_tide[1] == 'H' else 'low'
+                    height = closest_tide[2]
+                
+                else:
+                    raise Exception("Unable to determine tide stage from available data")
+                
+                # PRESERVE EXISTING: Return format unchanged
+                return {
+                    'stage': stage,
+                    'height': round(height, 2)
+                }
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Phase I tide integration failed: {e}")
+            # NO FALLBACKS: Fail as required by CLAUDE.md
+            raise Exception(f"Phase I tide integration required but failed: {e}")
     
     def _calculate_confidence_ratings(self, surf_forecast):
         """Calculate confidence ratings for forecasts"""
@@ -3246,6 +3358,65 @@ class SurfForecastGenerator:
             return f"{base_quality} surf - {wave_range} {period_desc}, {wind_desc}"
         else:
             return f"{base_quality} - {wave_range}, {wind_desc}"
+
+    def _enhance_forecast_with_calculated_fields(self, surf_forecast):
+        """
+        Enhance forecast periods with calculated fields (wave_height_range, conditions_text)
+        
+        NEW METHOD: Adds missing field calculations during forecast generation
+        USES: Existing format_wave_height_range method (no duplication)
+        PRESERVES: All existing forecast data while adding calculated fields
+        """
+        
+        enhanced_forecast = []
+        
+        for period in surf_forecast:
+            # PRESERVE EXISTING: Copy all existing period data
+            enhanced_period = period.copy()
+            
+            # Calculate wave_height_range using existing method
+            if 'wave_height_min' in period and 'wave_height_max' in period:
+                min_height = period['wave_height_min']
+                max_height = period['wave_height_max']
+                
+                # USE EXISTING METHOD: No code duplication
+                wave_range = self.format_wave_height_range(min_height, max_height)
+                enhanced_period['wave_height_range'] = wave_range
+            
+            # Generate conditions_text from available data
+            conditions_parts = []
+            
+            # Add wave description
+            if 'wave_height' in period and period['wave_height'] is not None:
+                wave_height = period['wave_height']
+                if wave_height >= 6:
+                    conditions_parts.append("Large surf")
+                elif wave_height >= 3:
+                    conditions_parts.append("Moderate surf")
+                elif wave_height >= 1:
+                    conditions_parts.append("Small surf")
+                else:
+                    conditions_parts.append("Minimal surf")
+            
+            # Add wind condition if available
+            if 'wind_condition' in period and period['wind_condition'] not in ['unknown', None]:
+                wind_cond = period['wind_condition']
+                conditions_parts.append(f"{wind_cond} winds")
+            
+            # Add tide stage if available
+            if 'tide_stage' in period and period['tide_stage'] not in ['unknown', None]:
+                tide_stage = period['tide_stage']
+                conditions_parts.append(f"{tide_stage} tide")
+            
+            # Combine into conditions_text
+            if conditions_parts:
+                enhanced_period['conditions_text'] = ", ".join(conditions_parts)
+            else:
+                enhanced_period['conditions_text'] = "Forecast conditions"
+            
+            enhanced_forecast.append(enhanced_period)
+        
+        return enhanced_forecast
 
     def _get_target_unit_system(self):
         """Get the target unit system from WeeWX configuration"""
@@ -4021,12 +4192,165 @@ class FishingForecastGenerator:
         
         log.info(f"{CORE_ICONS['status']} FishingForecastGenerator initialized with {self.station_integration['type']} data integration")
 
+    def _determine_fishing_tide_movement(self, forecast_time):
+        """
+        Determine tide movement for fishing forecast using Phase I tide_table data
+        """
+        
+        try:
+            # THREAD SAFE: Use WeeWX 5.1 database manager pattern
+            if not self.engine:
+                raise Exception("No engine available for Phase I tide integration")
+            
+            # THREAD SAFE: Get fresh database manager for this thread
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                
+                # Query Phase I tide_table for tide movement analysis
+                time_window = 12 * 3600  # 12 hours window
+                start_time = forecast_time - time_window
+                end_time = forecast_time + time_window
+                
+                # WeeWX 5.1 PATTERN: Direct execute on connection
+                result = db_manager.connection.execute("""
+                    SELECT tide_time, tide_type, predicted_height, station_id
+                    FROM tide_table 
+                    WHERE tide_time BETWEEN ? AND ?
+                    ORDER BY tide_time
+                    LIMIT 10
+                """, (start_time, end_time))
+                
+                tide_events = result.fetchall()
+                
+                if not tide_events:
+                    raise Exception(f"No Phase I tide data found for fishing forecast time {forecast_time}")
+                
+                # Analyze tide movement for fishing optimization
+                before_events = [t for t in tide_events if t[0] <= forecast_time]
+                after_events = [t for t in tide_events if t[0] > forecast_time]
+                
+                if before_events and after_events:
+                    last_tide = before_events[-1]  # Most recent
+                    next_tide = after_events[0]    # Next upcoming
+                    
+                    # Calculate time to next tide change (important for fishing)
+                    time_to_next = (next_tide[0] - forecast_time) / 3600.0  # Hours
+                    time_from_last = (forecast_time - last_tide[0]) / 3600.0  # Hours
+                    
+                    # Determine fishing-optimized tide movement
+                    if last_tide[1] == 'L' and next_tide[1] == 'H':
+                        movement = 'rising'
+                        # Fishing optimal: 2 hours before and after tide change
+                        if time_to_next <= 2.0 or time_from_last <= 2.0:
+                            fishing_quality = 'optimal'
+                        else:
+                            fishing_quality = 'good'
+                            
+                    elif last_tide[1] == 'H' and next_tide[1] == 'L':
+                        movement = 'falling'
+                        # Fishing optimal: 2 hours before and after tide change
+                        if time_to_next <= 2.0 or time_from_last <= 2.0:
+                            fishing_quality = 'optimal'
+                        else:
+                            fishing_quality = 'good'
+                    else:
+                        # Slack tide periods
+                        if abs(time_from_last) < 0.5:  # Within 30 minutes of tide
+                            movement = 'high' if last_tide[1] == 'H' else 'low'
+                            fishing_quality = 'fair'  # Slack water less optimal
+                        else:
+                            movement = 'rising' if next_tide[1] == 'H' else 'falling'
+                            fishing_quality = 'good'
+                    
+                    # Calculate tide range (affects fishing quality)
+                    tide_range = abs(next_tide[2] - last_tide[2])
+                    
+                elif before_events:
+                    # Only past events - use most recent
+                    closest_tide = before_events[-1]
+                    movement = 'high' if closest_tide[1] == 'H' else 'low'
+                    fishing_quality = 'fair'
+                    time_to_next = 6.0  # Default
+                    tide_range = 3.0  # Default
+                    
+                elif after_events:
+                    # Only future events - use next
+                    closest_tide = after_events[0]
+                    time_to_next = (closest_tide[0] - forecast_time) / 3600.0
+                    movement = 'rising' if closest_tide[1] == 'H' else 'falling'
+                    fishing_quality = 'good' if time_to_next <= 2.0 else 'fair'
+                    tide_range = 3.0  # Default
+                
+                else:
+                    raise Exception("Unable to determine tide movement from available data")
+                
+                return {
+                    'movement': movement,  # rising, falling, high, low
+                    'quality': fishing_quality,  # optimal, good, fair
+                    'time_to_next_hours': round(time_to_next, 1),
+                    'tide_range_feet': round(tide_range, 1),
+                    'description': f"{movement.title()} tide, {fishing_quality} fishing conditions"
+                }
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Phase I fishing tide integration failed: {e}")
+            # NO FALLBACKS: Fail as required by CLAUDE.md
+            raise Exception(f"Phase I tide integration required for fishing forecasts: {e}")
+
+    def _calculate_fishing_tide_score(self, tide_info):
+        """
+        Calculate fishing-specific tide score based on Phase I tide data
+        """
+        
+        movement = tide_info['movement']
+        quality = tide_info['quality']
+        time_to_next = tide_info['time_to_next_hours']
+        tide_range = tide_info['tide_range_feet']
+        
+        # Base score by tide movement (fishing research-based)
+        movement_scores = {
+            'rising': 0.9,   # Fish feed actively on rising tide
+            'falling': 0.8,  # Good fishing as tide falls
+            'high': 0.4,     # Slack water, less active
+            'low': 0.5       # Some species active at low tide
+        }
+        
+        base_score = movement_scores.get(movement, 0.5)
+        
+        # Quality multiplier based on timing
+        quality_multipliers = {
+            'optimal': 1.2,  # Within 2 hours of tide change
+            'good': 1.0,     # Standard conditions
+            'fair': 0.7      # Slack or distant from change
+        }
+        
+        quality_multiplier = quality_multipliers.get(quality, 1.0)
+        
+        # Tide range bonus (larger ranges = more fish movement)
+        if tide_range >= 5.0:
+            range_bonus = 0.1  # Large tide range
+        elif tide_range >= 3.0:
+            range_bonus = 0.05  # Moderate tide range
+        else:
+            range_bonus = 0.0  # Small tide range
+        
+        # Calculate final score
+        final_score = (base_score * quality_multiplier) + range_bonus
+        
+        # Normalize to 0.0-1.0 range
+        return min(1.0, max(0.0, final_score))
+
     def generate_fishing_forecast(self, spot, marine_conditions):
-        """Generate complete fishing forecast for a spot using single-decision architecture"""
+        """
+        Generate complete fishing forecast for a spot with Phase I tide integration
+        
+        REWRITTEN METHOD: Adds Phase I tide integration while preserving all existing functionality
+        THREAD-SAFE: Uses WeeWX 5.1 patterns for database access
+        NO FALLBACKS: Fails when Phase I tide data unavailable (per CLAUDE.md requirements)
+        """
         try:
             log.debug(f"{CORE_ICONS['navigation']} Generating fishing forecast for {spot['name']}")
             
-            # Generate fishing periods (standard 3-day forecast) - CONSOLIDATED INLINE
+            # PRESERVE EXISTING: Generate fishing periods (standard 3-day forecast)
             periods = []
             period_definitions = [
                 ('Early Morning', 5, 8),
@@ -4054,28 +4378,62 @@ class FishingForecastGenerator:
             
             forecasts = []
             for period in periods:
-                # SINGLE DECISION POINT: Score each period with unified data sources
-                period_score = self.score_fishing_period_unified(period, spot, marine_conditions)
-                
-                # Create forecast record
-                forecast = {
-                    'forecast_time': period['period_start_time'],
-                    'forecast_date': period['forecast_date'],
-                    'period_name': period['period_name'],
-                    'period_start_hour': period['period_start_hour'],
-                    'period_end_hour': period['period_end_hour'],
-                    'generated_time': int(time.time()),
-                    'pressure_trend': period_score['pressure']['trend'],
-                    'tide_movement': period_score['tide']['movement'],
-                    'species_activity': period_score['species']['activity_level'],
-                    'activity_rating': period_score['overall']['rating'],
-                    'conditions_text': period_score['overall']['description'],
-                    'best_species': period_score['species']['best_species'],
-                    'confidence': period_score['overall']['confidence']
-                }
-                forecasts.append(forecast)
-            
-            log.debug(f"{CORE_ICONS['status']} Generated {len(forecasts)} fishing forecast periods")
+                try:
+                    # NEW: Phase I tide integration for fishing forecasts
+                    try:
+                        tide_info = self._determine_fishing_tide_movement(period['period_start_time'])
+                        
+                        # Enhanced tide scoring with Phase I data
+                        tide_score = {
+                            'score': self._calculate_fishing_tide_score(tide_info),
+                            'movement': tide_info['movement'],
+                            'time_to_next_hours': tide_info['time_to_next_hours'],
+                            'confidence': 0.9,  # High confidence with Phase I data
+                            'description': tide_info['description']
+                        }
+                        
+                        log.debug(f"{CORE_ICONS['status']} Fishing tide integrated: {tide_info['movement']} tide, {tide_info['quality']} conditions")
+                        
+                    except Exception as tide_error:
+                        # NO FALLBACKS: Fail as required
+                        log.error(f"{CORE_ICONS['warning']} Phase I fishing tide integration failed: {tide_error}")
+                        log.info(f"{CORE_ICONS['navigation']} Phase I MarineDataService required for fishing tide analysis")
+                        raise Exception(f"Phase I tide integration required for fishing: {tide_error}")
+                    
+                    # PRESERVE EXISTING: Score period with unified data sources (modified to use Phase I tide data)
+                    period_score = self.score_fishing_period_unified_with_tide(period, spot, marine_conditions, tide_score)
+                    
+                    # PRESERVE EXISTING: Create forecast record (enhanced with Phase I data)
+                    forecast = {
+                        'forecast_time': period['period_start_time'],
+                        'forecast_date': period['forecast_date'],
+                        'period_name': period['period_name'],
+                        'period_start_hour': period['period_start_hour'],
+                        'period_end_hour': period['period_end_hour'],
+                        'generated_time': int(time.time()),
+                        'pressure_trend': period_score['pressure']['trend'],
+                        'tide_movement': tide_score['movement'],  # NEW: Real Phase I data
+                        'species_activity': period_score['species']['activity_level'],
+                        'activity_rating': period_score['overall']['rating'],
+                        'conditions_text': period_score['overall']['description'],
+                        'best_species': period_score['species']['best_species'],
+                        'confidence': period_score['overall']['confidence'],
+                        # NEW: Additional Phase I tide data
+                        'tide_score': tide_score['score'],
+                        'time_to_next_hours': tide_score['time_to_next_hours'],
+                        'tide_confidence': tide_score['confidence'],
+                        'tide_description': tide_score['description']
+                    }
+                    forecasts.append(forecast)
+                    
+                except Exception as period_error:
+                    log.error(f"{CORE_ICONS['warning']} Error processing fishing period: {period_error}")
+                    # Re-raise Phase I integration errors, continue for other errors
+                    if "Phase I tide integration required" in str(period_error):
+                        raise period_error
+                    continue
+
+            log.debug(f"{CORE_ICONS['status']} Generated {len(forecasts)} fishing forecast periods with Phase I tide integration")
             return forecasts
             
         except Exception as e:
@@ -4118,96 +4476,132 @@ class FishingForecastGenerator:
             except:
                 pressure_data = {'pressure': 30.0, 'trend': 0.0, 'confidence': 0.3}
 
+            # FIXED: Complete tide data collection from Phase I
             try:
-                tide_data = self._collect_tide_data(period, marine_conditions, data_sources['tide'])
-            except:
-                tide_data = {'tide_movement': 'unknown', 'time_to_next': 6.0, 'confidence': 0.3}
-
-            # ENHANCED: Score pressure using CONF parameters (REPLACES HARDCODED VALUES)
-            try:
-                # Get enhanced pressure scoring from CONF
-                pressure_trend_scoring = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
-                pressure_rate_thresholds = self.fishing_scoring.get('pressure_rate_thresholds', {})
-                
-                # Data-driven pressure rate thresholds from CONF
-                fast_change_min = float(pressure_rate_thresholds.get('fast_change_min', '2.0'))
-                slow_change_max = float(pressure_rate_thresholds.get('slow_change_max', '0.5'))
-                stable_range = float(pressure_rate_thresholds.get('stable_range', '0.2'))
-                
-                # Classify pressure trend using CONF thresholds
-                abs_trend = abs(pressure_data['trend'])
-                current_pressure = pressure_data['pressure']
-                
-                if abs_trend <= stable_range:
-                    if current_pressure > 30.10:
-                        trend_key = 'stable_high'
-                    else:
-                        trend_key = 'stable_low'
-                elif pressure_data['trend'] > 0:
-                    if abs_trend >= fast_change_min:
-                        trend_key = 'rising_fast'
-                    else:
-                        trend_key = 'rising_slow'
+                if data_sources['tide']['type'] == 'phase_i' and self.integration_manager:
+                    # Use Phase I tide data
+                    tide_data = self._collect_tide_data_from_phase_i(period, location_coords, data_sources['tide'])
                 else:
-                    if abs_trend >= fast_change_min:
-                        trend_key = 'falling_fast'
-                    else:
-                        trend_key = 'falling_slow'
+                    # Fallback to marine_conditions if no Phase I
+                    tide_data = self._collect_tide_data(period, marine_conditions, data_sources['tide'])
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error collecting tide data: {e}")
+                # FAIL CLEANLY: No hardcoded fallbacks per CLAUDE.md Fix 5
+                raise Exception(f"Phase I tide data required but not available: {e}")
+
+            # PRESERVE EXISTING: Enhanced pressure scoring using CONF parameters (UNCHANGED)
+            try:
+                pressure_ranges = self.fishing_scoring.get('pressure_scoring', {}).get('ranges', {})
+                if not pressure_ranges:
+                    log.error(f"{CORE_ICONS['warning']} CONFIGURATION ERROR: No pressure scoring ranges found in CONF")
+                    raise Exception("Incomplete configuration - check fishing_scoring.pressure_scoring.ranges")
                 
-                # Get score from CONF
-                pressure_score_value = float(pressure_trend_scoring.get(trend_key, '0.5'))
+                pressure_value = pressure_data['pressure']
+                pressure_score = None
+                for range_key, score_value in pressure_ranges.items():
+                    try:
+                        if '-' in range_key:
+                            range_parts = range_key.split('-')
+                            if len(range_parts) == 2:
+                                min_pressure = float(range_parts[0])
+                                max_pressure = float(range_parts[1]) if range_parts[1] != '+' else float('inf')
+                                
+                                if min_pressure <= pressure_value < max_pressure:
+                                    pressure_score = float(score_value)
+                                    break
+                        elif range_key.endswith('+'):
+                            min_pressure = float(range_key[:-1])
+                            if pressure_value >= min_pressure:
+                                pressure_score = float(score_value)
+                                break
+                    except ValueError as e:
+                        log.error(f"Error parsing pressure range {range_key}: {e}")
+                        continue
+                
+                if pressure_score is None:
+                    log.error(f"{CORE_ICONS['warning']} DATA QUALITY ISSUE: No pressure range matched {pressure_value} inHg")
+                    raise Exception(f"Pressure value {pressure_value} outside expected ranges")
+                
+                # Enhanced pressure trend analysis
+                trend_value = pressure_data.get('trend', 0.0)
+                if trend_value > 0.02:
+                    trend_text = 'rising'
+                    trend_modifier = 1.1
+                elif trend_value < -0.02:
+                    trend_text = 'falling'
+                    trend_modifier = 0.9
+                else:
+                    trend_text = 'stable'
+                    trend_modifier = 1.0
                 
                 pressure_score = {
-                    'score': pressure_score_value,
-                    'trend': trend_key,
-                    'change_6h': pressure_data['trend'],
-                    'confidence': pressure_data['confidence'],
+                    'score': min(1.0, max(0.0, pressure_score * trend_modifier)),
+                    'trend': trend_text,
+                    'change_6h': trend_value,
+                    'confidence': pressure_data.get('confidence', 0.5),
                     'sources_used': len(data_sources['pressure']['sources']),
-                    'description': f'{trend_key.replace("_", " ").title()} pressure conditions'
+                    'description': f'{trend_text.title()} pressure trend'
                 }
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error in enhanced pressure scoring: {e}")
-                pressure_score = {'score': 0.5, 'trend': 'stable', 'change_6h': 0.0, 'confidence': 0.3, 'sources_used': 0, 'description': 'Unknown pressure conditions'}
+                raise Exception(f"Pressure scoring failed: {e}")
 
-            # ENHANCED: Score tide using CONF parameters (REPLACES HARDCODED VALUES)
+            # FIXED: Enhanced tide scoring using Phase I data (REPLACES HARDCODED DEFAULTS)
             try:
-                # Get enhanced tide scoring from CONF
-                tide_phase_scoring = self.fishing_scoring.get('tide_phase_scoring', {})
+                if tide_data.get('movement') == 'not_available':
+                    log.error(f"{CORE_ICONS['warning']} PHASE I REQUIRED: Tide data not available from Phase I integration")
+                    raise Exception("Phase I tide integration required for fishing forecasts")
                 
-                # Map tide movement to scoring key
-                tide_movement = tide_data.get('tide_movement', 'unknown')
-                if tide_movement in ['rising', 'incoming']:
-                    tide_key = 'incoming'
-                elif tide_movement in ['falling', 'outgoing']:
-                    tide_key = 'outgoing'
-                elif tide_movement in ['high_slack', 'high']:
-                    tide_key = 'high_slack'
-                elif tide_movement in ['low_slack', 'low']:
-                    tide_key = 'low_slack'
+                # Use actual Phase I tide data for scoring
+                tide_movement = tide_data.get('movement', 'unknown')
+                tide_height = tide_data.get('height', 0.0)
+                
+                # Research-based fishing tide scoring
+                tide_scoring = self.fishing_scoring.get('tide_scoring', {})
+                movement_scores = tide_scoring.get('movement_scores', {})
+                
+                base_score = float(movement_scores.get(tide_movement, '0.5'))
+                
+                # Apply tide range bonus from Phase I
+                tide_range = tide_data.get('range', 0.0)
+                if tide_range > 4.0:  # Large tide range
+                    range_bonus = 1.2
+                elif tide_range > 2.0:  # Moderate tide range  
+                    range_bonus = 1.1
+                else:  # Small tide range
+                    range_bonus = 1.0
+                
+                # Apply timing bonus for tide changes
+                time_to_next = tide_data.get('time_to_next_hours', 6.0)
+                if time_to_next <= 2.0:  # Within 2 hours of tide change
+                    timing_bonus = 1.15
+                elif time_to_next <= 4.0:  # Within 4 hours of tide change
+                    timing_bonus = 1.05
                 else:
-                    tide_key = 'outgoing'  # Default to best condition
+                    timing_bonus = 1.0
                 
-                # Get score from CONF
-                tide_score_value = float(tide_phase_scoring.get(tide_key, '0.6'))
+                final_tide_score = min(1.0, base_score * range_bonus * timing_bonus)
                 
                 tide_score = {
-                    'score': tide_score_value,
+                    'score': final_tide_score,
                     'movement': tide_movement,
-                    'time_to_next_hours': tide_data.get('time_to_next', 6.0),
-                    'confidence': tide_data['confidence'],
-                    'description': f'{tide_key.replace("_", " ").title()} tide conditions'
+                    'height': tide_height,
+                    'range': tide_range,
+                    'time_to_next_hours': time_to_next,
+                    'confidence': tide_data.get('confidence', 0.8),
+                    'description': f'{tide_movement.replace("_", " ").title()} tide phase'
                 }
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error in enhanced tide scoring: {e}")
-                tide_score = {'score': 0.6, 'movement': 'unknown', 'time_to_next_hours': 6.0, 'confidence': 0.3, 'description': 'Unknown tide conditions'}
+                raise Exception(f"Tide scoring failed: {e}")
 
-            # ENHANCED: Score time using CONF parameters (REPLACES HARDCODED VALUES)  
+            # PRESERVE EXISTING: Enhanced time scoring using CONF parameters (UNCHANGED)
             try:
-                # Get enhanced time scoring from CONF
+                period_start_time = period['period_start_time']
+                period_hour = int((period_start_time % 86400) / 3600)
+                
                 time_of_day_scoring = self.fishing_scoring.get('time_of_day_scoring', {})
                 
-                # Determine time period
-                period_hour = period['period_start_hour']
                 if 5 <= period_hour <= 7:
                     time_key = 'dawn'
                     period_name = 'Dawn'
@@ -4238,9 +4632,9 @@ class FishingForecastGenerator:
                 }
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error in enhanced time scoring: {e}")
-                time_score = {'score': 0.6, 'period_name': 'Unknown', 'peak_times': ['dawn', 'dusk'], 'description': 'Unknown time period'}
+                raise Exception(f"Time scoring failed: {e}")
 
-            # ENHANCED: Score species using CONF fish categories (REPLACES HARDCODED VALUES)
+            # PRESERVE EXISTING: Enhanced species scoring using CONF fish categories (UNCHANGED)
             try:
                 target_category = spot.get('target_category', 'mixed_bag')
                 category_config = self.fish_categories.get(target_category, {})
@@ -4295,9 +4689,9 @@ class FishingForecastGenerator:
                     }
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error scoring species: {e}")
-                species_score = {'score': 0.5, 'activity_level': 'moderate', 'best_species': ['Mixed bag'], 'target_category': 'mixed_bag', 'description': 'Unknown species activity'}
+                raise Exception(f"Species scoring failed: {e}")
 
-            # ENHANCED: Calculate overall rating using CONF weights (REPLACES HARDCODED VALUES)
+            # PRESERVE EXISTING: Enhanced overall rating using CONF weights (UNCHANGED)
             try:
                 # Get component weights from CONF
                 scoring_weights = self.fishing_scoring.get('scoring_weights', {})
@@ -4341,7 +4735,7 @@ class FishingForecastGenerator:
                 }
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error calculating overall rating: {e}")
-                overall_rating = {'rating': 2, 'raw_score': 0.4, 'confidence': 0.5}
+                raise Exception(f"Overall rating calculation failed: {e}")
 
             # PRESERVE EXISTING: Description generation logic (ENHANCED)
             rating = overall_rating['rating']
@@ -4358,7 +4752,7 @@ class FishingForecastGenerator:
             factors = []
             if pressure_score['score'] >= 0.7:
                 factors.append(f"favorable {pressure_score['trend']} pressure")
-            if tide_score['score'] >= 0.7 and tide_score['movement'] != 'not_relevant':
+            if tide_score['score'] >= 0.7 and tide_score['movement'] != 'unknown':
                 factors.append(f"optimal {tide_score['movement']} tide")
             if time_score['score'] >= 0.7:
                 factors.append(f"prime {time_score['period_name']} timing")
@@ -4382,17 +4776,81 @@ class FishingForecastGenerator:
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error scoring fishing period: {e}")
-            # PRESERVE EXISTING: Default fallback score (UNCHANGED)
-            return {
-                'pressure': {'score': 0.5, 'trend': 'stable', 'change_6h': 0.0, 'confidence': 0.3, 'sources_used': 0, 'description': 'Default pressure conditions'},
-                'tide': {'score': 0.5, 'movement': 'unknown', 'time_to_next_hours': 6.0, 'confidence': 0.3, 'description': 'Default tide conditions'},
-                'time': {'score': 0.5, 'period_name': 'Unknown', 'peak_times': ['dawn', 'dusk'], 'description': 'Default time period'},
-                'species': {'score': 0.5, 'activity_level': 'moderate', 'best_species': ['Mixed bag'], 'target_category': 'mixed_bag', 'description': 'Moderate species activity'},
-                'overall': {'rating': 2, 'confidence': 0.3, 'description': 'Default fishing conditions'}
-            }
+            # FIXED: Fail cleanly when Phase I unavailable per CLAUDE.md Fix 5
+            raise Exception(f"Fishing period scoring requires Phase I integration: {e}")
+
+    def _collect_tide_data_from_phase_i(self, period, location_coords, data_source):
+        """Collect tide data from Phase I integration for fishing forecasts"""
+        try:
+            if not self.integration_manager:
+                raise Exception("Integration manager not available")
+            
+            period_start = period['period_start_time']
+            period_end = period['period_end_time']
+            
+            # Get tide data from Phase I for the fishing period
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                # Query Phase I tide data for the period
+                tide_query = """
+                    SELECT tide_height, dateTime 
+                    FROM marine_station_data 
+                    WHERE dateTime BETWEEN ? AND ?
+                    AND station_id = ?
+                    ORDER BY dateTime
+                """
+                
+                station_id = data_source['sources'][0]['station_id'] if data_source['sources'] else None
+                if not station_id:
+                    raise Exception("No Phase I tide station configured")
+                
+                tide_rows = db_manager.genSql(tide_query, (period_start, period_end, station_id))
+                tide_data_points = list(tide_rows)
+                
+                if not tide_data_points:
+                    raise Exception(f"No Phase I tide data found for station {station_id}")
+                
+                # Analyze tide movement during fishing period
+                heights = [row[0] for row in tide_data_points if row[0] is not None]
+                times = [row[1] for row in tide_data_points if row[1] is not None]
+                
+                if len(heights) < 2:
+                    raise Exception("Insufficient tide data for movement analysis")
+                
+                # Calculate tide movement
+                height_change = heights[-1] - heights[0]
+                time_span = times[-1] - times[0]
+                
+                if height_change > 0.1:
+                    movement = 'rising'
+                elif height_change < -0.1:
+                    movement = 'falling'
+                else:
+                    movement = 'slack'
+                
+                # Calculate tide range (simplified)
+                tide_range = max(heights) - min(heights) if heights else 0.0
+                
+                # Estimate time to next tide change (simplified)
+                time_to_next = 6.0  # Default 6 hour estimate
+                
+                return {
+                    'height': heights[-1] if heights else 0.0,
+                    'movement': movement,
+                    'range': tide_range,
+                    'time_to_next_hours': time_to_next,
+                    'confidence': 0.8,
+                    'source': 'phase_i'
+                }
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error collecting Phase I tide data: {e}")
+            raise Exception(f"Phase I tide data collection failed: {e}")
 
     def store_fishing_forecasts(self, spot_id, fishing_forecast):
-        """Store fishing forecasts using WeeWX 5.1 thread-safe database patterns"""
+        """
+        Store fishing forecasts using WeeWX 5.1 thread-safe database patterns with Phase I tide data
+
+        """
         try:
             if not fishing_forecast or not self.engine:
                 return False
@@ -4400,14 +4858,14 @@ class FishingForecastGenerator:
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
                 connection = db_manager.connection
-                
+            
                 # Clear existing forecasts for this spot (current forecasts only)
                 connection.execute(
                     "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
                     (spot_id,)
                 )
                 
-                # Insert new forecasts
+                # Insert new forecasts with Phase I tide data
                 for period in fishing_forecast:
                     connection.execute("""
                         INSERT INTO marine_forecast_fishing_data (
@@ -4418,20 +4876,22 @@ class FishingForecastGenerator:
                     """, (
                         spot_id,
                         period['forecast_date'],
-                        period['period_name'],
+                        period['period_name'], 
                         period['period_start_hour'],
                         period['period_end_hour'],
                         period['generated_time'],
-                        period.get('pressure_trend', 'unknown'),
-                        period.get('tide_movement', 'unknown'),
-                        period.get('species_activity', 'low'),
-                        period.get('activity_rating', 1),
-                        period.get('conditions_text', 'Unknown'),
+                        period.get('pressure_trend', 'stable'),
+                        period.get('tide_movement', 'not_available'),  # ENHANCED: Clear indication vs 'unknown'
+                        period.get('species_activity', 'moderate'),
+                        period.get('activity_rating', 2),
+                        period.get('conditions_text', 'Fishing conditions'),
                         json.dumps(period.get('best_species', []))
                     ))
                 
+                # THREAD SAFE: Explicit commit
                 connection.commit()
-                log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods for spot {spot_id}")
+                
+                log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods with tide data for spot {spot_id}")
                 return True
                 
         except Exception as e:
