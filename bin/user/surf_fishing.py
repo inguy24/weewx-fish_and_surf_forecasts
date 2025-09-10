@@ -3811,8 +3811,7 @@ class SurfForecastGenerator:
                 today_summary = {'max_rating': 0, 'best_period': 'No data', 'avg_rating': 0, 'period_count': 0}
                 
                 # THREAD SAFE: Get fresh database manager for this thread if no engine available
-                if self.db_manager:
-                    db_manager = self.db_manager
+                with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
                     try:
                         current_time = int(time.time())
                         today_start = current_time - (current_time % 86400)
@@ -4401,40 +4400,40 @@ class FishingForecastGenerator:
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
                 connection = db_manager.connection
-            
-            # Clear existing forecasts for this spot (current forecasts only)
-            connection.execute(
-                "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
-                (spot_id,)
-            )
-            
-            # Insert new forecasts
-            for period in fishing_forecast:
-                connection.execute("""
-                    INSERT INTO marine_forecast_fishing_data (
-                        spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
-                        generated_time, pressure_trend, tide_movement, species_activity, 
-                        activity_rating, conditions_text, best_species
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    spot_id,
-                    period['forecast_date'],
-                    period['period_name'],
-                    period['period_start_hour'],
-                    period['period_end_hour'],
-                    period['generated_time'],
-                    period.get('pressure_trend', 'unknown'),
-                    period.get('tide_movement', 'unknown'),
-                    period.get('species_activity', 'low'),
-                    period.get('activity_rating', 1),
-                    period.get('conditions_text', 'Unknown'),
-                    json.dumps(period.get('best_species', []))
-                ))
-            
-            connection.commit()
-            log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods for spot {spot_id}")
-            return True
-            
+                
+                # Clear existing forecasts for this spot (current forecasts only)
+                connection.execute(
+                    "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
+                    (spot_id,)
+                )
+                
+                # Insert new forecasts
+                for period in fishing_forecast:
+                    connection.execute("""
+                        INSERT INTO marine_forecast_fishing_data (
+                            spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
+                            generated_time, pressure_trend, tide_movement, species_activity, 
+                            activity_rating, conditions_text, best_species
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        spot_id,
+                        period['forecast_date'],
+                        period['period_name'],
+                        period['period_start_hour'],
+                        period['period_end_hour'],
+                        period['generated_time'],
+                        period.get('pressure_trend', 'unknown'),
+                        period.get('tide_movement', 'unknown'),
+                        period.get('species_activity', 'low'),
+                        period.get('activity_rating', 1),
+                        period.get('conditions_text', 'Unknown'),
+                        json.dumps(period.get('best_species', []))
+                    ))
+                
+                connection.commit()
+                log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods for spot {spot_id}")
+                return True
+                
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error storing fishing forecasts for spot {spot_id}: {e}")
             return False
@@ -5255,89 +5254,6 @@ class SurfFishingService(StdService):
             log.error(f"Error getting Phase I marine conditions: {e}")
             return self._get_default_marine_conditions()
     
-    def _store_surf_forecast(self, spot_id, surf_forecast):
-        """Store surf forecast in database"""
-        
-        try:
-            with self.db_manager.connection as connection:
-                # Clear old forecasts for this spot
-                connection.execute("""
-                    DELETE FROM marine_forecast_surf_data 
-                    WHERE spot_id = ? AND forecast_time < ?
-                """, (spot_id, int(time.time())))
-                
-                # Insert new forecast data
-                for period in surf_forecast:
-                    connection.execute("""
-                        INSERT OR REPLACE INTO marine_forecast_surf_data
-                        (spot_id, forecast_time, generated_time, wave_height_min, wave_height_max,
-                         wave_period, wave_direction, wind_speed, wind_direction, wind_condition,
-                         tide_height, tide_stage, quality_rating, confidence, conditions_text)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        spot_id,
-                        period['forecast_time'],
-                        int(time.time()),
-                        period.get('wave_height_min', 0),
-                        period.get('wave_height_max', 0),
-                        period.get('wave_period', 0),
-                        period.get('wave_direction', 0),
-                        period.get('wind_speed', 0),
-                        period.get('wind_direction', 0),
-                        period.get('wind_condition', 'unknown'),
-                        period.get('tide_height', 0),
-                        period.get('tide_stage', 'unknown'),
-                        period.get('quality_rating', 1),
-                        period.get('confidence', 0.5),
-                        period.get('conditions_text', 'Unknown')
-                    ))
-                
-                connection.commit()
-                log.debug(f"Stored {len(surf_forecast)} surf forecast periods for spot {spot_id}")
-        
-        except Exception as e:
-            log.error(f"Error storing surf forecast for spot {spot_id}: {e}")
-    
-    def _store_fishing_forecast(self, spot_id, fishing_forecast):
-        """Store fishing forecast in database"""
-        
-        try:
-            with self.db_manager.connection as connection:
-                # Clear old forecasts for this spot
-                connection.execute("""
-                    DELETE FROM marine_forecast_fishing_data 
-                    WHERE spot_id = ? AND forecast_date < ?
-                """, (spot_id, int(time.time()) - 86400))  # Keep today's data
-                
-                # Insert new forecast data
-                for period in fishing_forecast:
-                    connection.execute("""
-                        INSERT OR REPLACE INTO marine_forecast_fishing_data
-                        (spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
-                         generated_time, pressure_trend, tide_movement, species_activity,
-                         activity_rating, conditions_text, best_species)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        spot_id,
-                        period['forecast_date'],
-                        period['period_name'],
-                        period['period_start_hour'],
-                        period['period_end_hour'],
-                        period['generated_time'],
-                        period.get('pressure_trend', 'unknown'),
-                        period.get('tide_movement', 'unknown'),
-                        period.get('species_activity', 'low'),
-                        period.get('activity_rating', 1),
-                        period.get('conditions_text', 'Unknown'),
-                        json.dumps(period.get('best_species', []))
-                    ))
-                
-                connection.commit()
-                log.debug(f"Stored {len(fishing_forecast)} fishing forecast periods for spot {spot_id}")
-        
-        except Exception as e:
-            log.error(f"Error storing fishing forecast for spot {spot_id}: {e}")
-
     def initialize_station_integration(self):
         """Initialize Phase I metadata integration during service startup"""
         try:
@@ -5567,7 +5483,7 @@ class SurfFishingService(StdService):
         )
         
         # Store forecast in database
-        self._store_fishing_forecast(spot['id'], fishing_forecast)
+        self.fishing_generator.store_fishing_forecasts(spot['id'], fishing_forecast)
 
     def _get_spot_by_id(self, spot_id, spot_type='surf'):
         """
