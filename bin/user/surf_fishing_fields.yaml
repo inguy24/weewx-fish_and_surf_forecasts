@@ -430,3 +430,47 @@ bathymetry_data:
     validate_fishing_spots: true
     validate_surf_spots: true
     auto_adjust_coordinates: false
+
+  # NEW ADDITION: Adaptive spacing algorithm configuration
+  adaptive_spacing:
+    enable_adaptive_algorithm: true
+    description: "Gradient-based adaptive refinement of bathymetric sampling points"
+    
+    # Core algorithm parameters
+    refinement_gradient_threshold: 0.02      # 1:50 slope ratio triggers refinement
+    coarsening_gradient_threshold: 0.002     # 1:500 slope ratio allows coarsening
+    max_total_points: 75                     # Maximum points for single surf path
+    min_total_points: 16                     # Minimum points to maintain coverage
+    max_refinement_iterations: 3             # Prevent infinite refinement loops
+    min_segment_distance_m: 200              # Minimum distance between points
+    
+    # Depth-based zone classification
+    critical_depth_min: 5.0                  # Critical zone lower bound (meters)
+    critical_depth_max: 50.0                 # Critical zone upper bound (meters)  
+    deep_water_threshold: 50.0               # Deep water classification threshold
+    
+    # Algorithm safety and validation
+    validation_enabled: true                 # Enforce scientific validation
+    cliff_face_gradient_limit: 0.5           # 50% grade = cliff face detection
+    cliff_face_distance_limit: 500           # Distance threshold for cliff detection
+    max_reasonable_gradient: 2.0             # Maximum allowed gradient (100% grade)
+    
+    # Statistical anomaly detection (IQR method)
+    anomaly_detection_enabled: true          # Enable IQR-based outlier detection
+    iqr_multiplier: 1.5                     # Standard IQR outlier threshold
+    min_points_for_statistics: 4            # Minimum points needed for IQR analysis
+    
+    # Performance and API efficiency  
+    batch_api_calls: true                   # Use batch GEBCO API requests
+    rate_limit_compliance: true             # Respect 1 call/second limit
+    api_timeout_seconds: 30                 # Timeout for GEBCO API calls
+    
+  # PRESERVE: All existing path_analysis configuration
+  path_analysis:
+    path_resolution_points: 15              # Used when adaptive algorithm disabled
+    offshore_distance_meters: 20000         # Standard offshore distance
+    interpolation: "bilinear"               # GEBCO interpolation method
+    
+    # Fallback parameters for non-adaptive mode
+    default_wave_period: 12.0               # Default wave period for zone calculations
+    enable_validation: true                 # Enable bathymetric profile validation
