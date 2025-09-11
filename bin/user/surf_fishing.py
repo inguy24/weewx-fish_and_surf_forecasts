@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Mussel
+# Magic Animal: Hermit Crab
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -3161,12 +3161,13 @@ class SurfForecastGenerator:
     def _determine_tide_stage(self, forecast_time, tide_conditions):
         """Determine tide stage for surf forecast using Phase I tide_table"""
         try:
-            if not self.engine:
+            if not hasattr(self, 'engine') or not self.engine:
                 log.warning(f"{CORE_ICONS['warning']} No engine available for Phase I tide integration")
                 return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
             
             # Query Phase I tide_table for tides around forecast time
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+            db_manager = self.engine.db_binder.get_manager('wx_binding')
+            try:
                 # Get tides within 12 hours of forecast time
                 start_time = forecast_time - 43200  # 12 hours before
                 end_time = forecast_time + 43200    # 12 hours after
@@ -3239,6 +3240,9 @@ class SurfForecastGenerator:
                         'height': next_tide[2],
                         'confidence': 0.6
                     }
+                    
+            finally:
+                db_manager.close()
                     
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error determining tide stage for surf: {e}")
@@ -4793,14 +4797,15 @@ class FishingForecastGenerator:
     def _collect_tide_data_from_phase_i(self, period, location_coords, data_source):
         """Collect tide data from Phase I tide_table for fishing forecasts"""
         try:
-            if not self.engine:
+            if not hasattr(self, 'engine') or not self.engine:
                 raise Exception("No engine available for Phase I tide integration")
             
             period_start = period['period_start_time']
             period_end = period['period_end_time']
             
             # Get tide data from Phase I tide_table using correct field names
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+            db_manager = self.engine.db_binder.get_manager('wx_binding')
+            try:
                 # Query Phase I tide_table for tide events during the fishing period
                 tide_query = """
                     SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
@@ -4868,6 +4873,8 @@ class FishingForecastGenerator:
                     'confidence': 0.8,
                     'source': 'phase_i'
                 }
+            finally:
+                db_manager.close()
                 
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error collecting Phase I tide data: {e}")
