@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Hermit Crab
+# Magic Animal: Eel
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
