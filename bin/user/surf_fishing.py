@@ -1747,19 +1747,36 @@ class BathymetryProcessor:
             return False
     
     def _create_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
-        """Create straight-line surf path and collect bathymetry profile"""
+        """Create surf path between deep water point and surf break with optional adaptive refinement"""
+        # NEW: Load adaptive configuration from CONF
+        adaptive_config = self.bathymetry_config.get('adaptive_spacing', {})
+        enable_adaptive = adaptive_config.get('enable_adaptive_algorithm', True)  # Default enabled for alpha
         
+        if enable_adaptive:
+            try:
+                # Attempt adaptive refinement
+                return self._create_adaptive_surf_path_and_collect_bathymetry(deep_water_result, surf_break_lat, surf_break_lon)
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Adaptive bathymetry failed: {e}")
+                # FAIL FAST: Re-raise exception to maintain scientific integrity
+                raise ValueError(f"Adaptive bathymetry algorithm failed: {e}")
+        else:
+            # Use original method when adaptive disabled
+            return self._create_original_surf_path_and_collect_bathymetry(deep_water_result, surf_break_lat, surf_break_lon)
+
+    def _create_original_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
+        """Create surf path using original 16-point linear interpolation algorithm"""
         try:
-            offshore_lat = deep_water_result['offshore_latitude']
-            offshore_lon = deep_water_result['offshore_longitude']
+            offshore_lat = deep_water_result['latitude']
+            offshore_lon = deep_water_result['longitude']
+            offshore_distance_km = deep_water_result['offshore_distance_km']
             
-            # Create path points from deep water to surf break
+            # Create path points using existing linear interpolation logic
             path_points = []
-            
-            for i in range(self.path_resolution_points + 1):  # +1 to include both endpoints
-                fraction = i / self.path_resolution_points
+            for i in range(self.path_resolution_points):  # Default 15 points from CONF
+                fraction = i / (self.path_resolution_points - 1)  # 0.0 to 1.0
                 
-                # Linear interpolation between deep water and surf break
+                # Linear interpolation between offshore and surf break
                 path_lat = offshore_lat + fraction * (surf_break_lat - offshore_lat)
                 path_lon = offshore_lon + fraction * (surf_break_lon - offshore_lon)
                 
@@ -1782,312 +1799,637 @@ class BathymetryProcessor:
             return {
                 'surf_path_bathymetry': bathymetry_profile,
                 'path_points_total': len(bathymetry_profile),
-                'path_distance_km': deep_water_result['offshore_distance_km']
+                'path_distance_km': offshore_distance_km
             }
             
         except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error creating surf path: {e}")
+            log.error(f"{CORE_ICONS['warning']} Error creating original surf path: {e}")
             return None
-    
-    def _batch_query_gebco_depths(self, path_points):
-        """Query GEBCO API for multiple points in batch for efficiency"""
+
+    def _create_adaptive_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
+        """Create surf path using gradient-based adaptive refinement of initial bathymetric profile"""
+        # Step 1: Get established baseline using existing proven method
+        initial_result = self._create_original_surf_path_and_collect_bathymetry(deep_water_result, surf_break_lat, surf_break_lon)
         
+        if not initial_result:
+            raise ValueError("Failed to create initial bathymetric profile using existing method")
+        
+        initial_profile = initial_result['surf_path_bathymetry']
+        
+        # Step 2: Initialize adaptive algorithm parameters from CONF
+        self._initialize_adaptive_parameters()
+        
+        # Step 3: Apply gradient-based refinement to existing data
+        refined_profile = self._apply_gradient_based_refinement(initial_profile)
+        
+        # Step 4: Validate results for scientific accuracy
+        if not self._validate_adaptive_bathymetry_profile(refined_profile):
+            raise ValueError("Adaptive bathymetry failed scientific validation")
+        
+        # Step 5: Return in same format as original method
+        log.info(f"{CORE_ICONS['navigation']} Adaptive path refinement: {initial_result['path_points_total']} → {len(refined_profile)} points")
+        
+        return {
+            'surf_path_bathymetry': refined_profile,
+            'path_points_total': len(refined_profile),
+            'path_distance_km': initial_result['path_distance_km'],
+            'adaptive_method': 'gradient_based_refinement'
+        }
+
+    def _initialize_adaptive_parameters(self):
+        """Load and set adaptive algorithm parameters from CONF configuration"""
+        adaptive_config = self.bathymetry_config.get('adaptive_spacing', {})
+        
+        # Load configuration with sensible defaults
+        self.refinement_threshold = float(adaptive_config.get('refinement_gradient_threshold', '0.02'))  # 1:50 slope
+        self.coarsening_threshold = float(adaptive_config.get('coarsening_gradient_threshold', '0.002'))  # 1:500 slope
+        self.max_points = int(adaptive_config.get('max_total_points', '75'))
+        self.min_points = int(adaptive_config.get('min_total_points', '16'))
+        self.critical_depth_min = float(adaptive_config.get('critical_depth_min', '5'))
+        self.critical_depth_max = float(adaptive_config.get('critical_depth_max', '50'))
+        self.deep_water_threshold = float(adaptive_config.get('deep_water_threshold', '50'))
+        self.max_iterations = int(adaptive_config.get('max_refinement_iterations', '3'))
+        self.min_segment_distance = float(adaptive_config.get('min_segment_distance_m', '200'))
+        
+        log.debug(f"{CORE_ICONS['status']} Adaptive parameters: threshold={self.refinement_threshold:.3f}, max_points={self.max_points}")
+
+    def _apply_gradient_based_refinement(self, initial_bathymetry):
+        """Apply iterative gradient-based refinement to bathymetric profile with loop protection"""
+        current_profile = initial_bathymetry.copy()
+        iteration = 0
+        
+        while iteration < self.max_iterations:
+            iteration += 1
+            refined_profile = []
+            points_added = 0
+            
+            for i in range(len(current_profile) - 1):
+                current_point = current_profile[i]
+                next_point = current_profile[i + 1]
+                
+                # Always add current point
+                refined_profile.append(current_point)
+                
+                # Calculate segment characteristics
+                gradient, segment_distance = self._calculate_segment_metrics(current_point, next_point)
+                
+                # Check if segment needs refinement with loop protection
+                if self._requires_refinement(current_point, next_point, gradient, segment_distance):
+                    if len(refined_profile) + points_added < self.max_points - 1:  # Reserve space for endpoint
+                        # Create and add midpoint
+                        midpoint = self._create_interpolated_midpoint(current_point, next_point)
+                        if midpoint:  # Only add if valid
+                            refined_profile.append(midpoint)
+                            points_added += 1
+            
+            # Always add final point
+            refined_profile.append(current_profile[-1])
+            
+            # Check convergence - if no points added, we're done
+            if points_added == 0:
+                log.debug(f"{CORE_ICONS['status']} Adaptive refinement converged after {iteration} iterations")
+                break
+            
+            # Prepare for next iteration
+            current_profile = refined_profile.copy()
+            log.debug(f"{CORE_ICONS['navigation']} Iteration {iteration}: {len(current_profile)} points")
+        
+        # Apply statistical anomaly detection and smoothing
+        final_profile = self._detect_and_smooth_bathymetric_anomalies(current_profile)
+        
+        return final_profile
+
+    def _calculate_segment_metrics(self, point1, point2):
+        """Calculate gradient and horizontal distance between two bathymetric points"""
         try:
-            # Build location string for batch API call
-            locations = []
-            for point in path_points:
-                locations.append(f"{point['latitude']:.6f},{point['longitude']:.6f}")
+            # Calculate depth change
+            depth_change = abs(point1['depth'] - point2['depth'])
             
-            locations_str = '|'.join(locations)
+            # Calculate horizontal distance using existing distance calculation method
+            # Use existing great circle distance calculation if available, else simple approximation
+            if 'distance_from_break_km' in point1 and 'distance_from_break_km' in point2:
+                distance_km = abs(point1['distance_from_break_km'] - point2['distance_from_break_km'])
+            else:
+                # Fallback to coordinate-based distance calculation
+                distance_km = self._calculate_great_circle_distance(
+                    point1['latitude'], point1['longitude'],
+                    point2['latitude'], point2['longitude']
+                )
             
-            # Make batch GEBCO API call
-            depths = self._query_gebco_batch(locations_str)
+            # Calculate gradient (rise/run)
+            if distance_km > 0:
+                gradient = depth_change / (distance_km * 1000)  # depth change per meter
+            else:
+                gradient = 0.0
             
-            if not depths or len(depths) != len(path_points):
-                log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed or returned wrong number of results")
-                return None
-            
-            # Combine path points with depths
-            bathymetry_profile = []
-            
-            for i, point in enumerate(path_points):
-                depth = depths[i]
-                if depth is not None:
-                    # Calculate distance from surf break
-                    distance_from_break = point['fraction_to_shore'] * self.offshore_distance_km
-                    
-                    bathymetry_profile.append({
-                        'latitude': point['latitude'],
-                        'longitude': point['longitude'],
-                        'depth': abs(depth),  # Always positive depth
-                        'distance_from_break_km': distance_from_break,
-                        'fraction_to_shore': point['fraction_to_shore']
-                    })
-            
-            return bathymetry_profile
+            return gradient, distance_km * 1000  # Return distance in meters
             
         except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
-            return None
-    
-    def _validate_bathymetry_profile(self, bathymetry_profile):
-        """Validate bathymetry profile shows logical shoaling progression"""
+            log.warning(f"{CORE_ICONS['warning']} Error calculating segment metrics: {e}")
+            return 0.0, 1000.0  # Safe defaults
+
+    def _requires_refinement(self, point1, point2, gradient, segment_distance):
+        """Determine if bathymetric segment requires additional point refinement"""
+        # Minimum distance enforcement (prevent point clustering)
+        if segment_distance < self.min_segment_distance:  # 200m minimum
+            return False
         
+        # Refinement count limit (prevent infinite refinement)
+        if hasattr(point1, 'refinement_count') and point1.refinement_count >= 3:
+            return False
+        
+        # Cliff face detection (prevent mapping vertical features)
+        if gradient > 0.5 and segment_distance < 500:  # 50% grade over <500m = cliff face
+            log.debug(f"Cliff face detected - skipping refinement: {gradient:.3f} gradient over {segment_distance:.0f}m")
+            return False
+        
+        # Zone-based refinement logic
+        avg_depth = (point1['depth'] + point2['depth']) / 2
+        
+        # Deep water zone - very conservative refinement
+        if avg_depth > self.deep_water_threshold:  # >50m
+            return gradient > (self.refinement_threshold * 5)  # 0.02 * 5 = 0.1
+        
+        # Critical zone - aggressive refinement
+        elif self.critical_depth_min <= avg_depth <= self.critical_depth_max:  # 5-50m
+            return gradient > self.refinement_threshold  # 0.02
+        
+        # Transition zone - moderate refinement
+        else:
+            return gradient > (self.refinement_threshold * 2)  # 0.02 * 2 = 0.04
+
+    def _create_interpolated_midpoint(self, point1, point2):
+        """Create interpolated midpoint between two bathymetric points with GEBCO depth query"""
         try:
-            if len(bathymetry_profile) < 3:
+            # Calculate midpoint coordinates
+            mid_lat = (point1['latitude'] + point2['latitude']) / 2
+            mid_lon = (point1['longitude'] + point2['longitude']) / 2
+            
+            # Query GEBCO for actual depth at midpoint
+            depths = self._query_gebco_batch(f"{mid_lat:.6f},{mid_lon:.6f}")
+            
+            if not depths or len(depths) == 0:
+                log.warning(f"{CORE_ICONS['warning']} Failed to get GEBCO depth for midpoint")
+                return None
+            
+            depth = abs(depths[0])  # Always positive depth
+            
+            # Calculate interpolated distance and fraction
+            if 'distance_from_break_km' in point1:
+                mid_distance = (point1['distance_from_break_km'] + point2['distance_from_break_km']) / 2
+            else:
+                mid_distance = 0.0
+                
+            if 'fraction_to_shore' in point1:
+                mid_fraction = (point1['fraction_to_shore'] + point2['fraction_to_shore']) / 2
+            else:
+                mid_fraction = 0.5
+            
+            # Mark refinement count for loop protection
+            midpoint = {
+                'latitude': mid_lat,
+                'longitude': mid_lon,
+                'depth': depth,
+                'distance_from_break_km': mid_distance,
+                'fraction_to_shore': mid_fraction,
+                'refinement_count': getattr(point1, 'refinement_count', 0) + 1
+            }
+            
+            return midpoint
+            
+        except Exception as e:
+            log.warning(f"{CORE_ICONS['warning']} Error creating interpolated midpoint: {e}")
+            return None
+
+    def _detect_and_smooth_bathymetric_anomalies(self, bathymetry_profile):
+        """Detect and smooth bathymetric anomalies using IQR statistical method"""
+        try:
+            if len(bathymetry_profile) < 4:  # Need minimum points for statistics
+                return bathymetry_profile
+            
+            # Calculate gradients between all adjacent points
+            gradients = []
+            for i in range(len(bathymetry_profile) - 1):
+                gradient, _ = self._calculate_segment_metrics(bathymetry_profile[i], bathymetry_profile[i+1])
+                gradients.append(gradient)
+            
+            if len(gradients) < 3:  # Need minimum gradients for IQR
+                return bathymetry_profile
+            
+            # Calculate IQR for outlier detection
+            sorted_gradients = sorted(gradients)
+            n = len(sorted_gradients)
+            
+            q1_idx = n // 4
+            q3_idx = (3 * n) // 4
+            q1 = sorted_gradients[q1_idx]
+            q3 = sorted_gradients[q3_idx]
+            iqr = q3 - q1
+            
+            # Define outlier thresholds (1.5 * IQR is standard)
+            lower_bound = q1 - (1.5 * iqr)
+            upper_bound = q3 + (1.5 * iqr)
+            
+            # Identify anomalous segments
+            anomalous_segments = []
+            for i, gradient in enumerate(gradients):
+                if gradient < lower_bound or gradient > upper_bound:
+                    anomalous_segments.append(i)
+            
+            # Smooth anomalies by interpolating depths
+            smoothed_profile = bathymetry_profile.copy()
+            
+            for segment_idx in anomalous_segments:
+                if segment_idx + 1 < len(smoothed_profile):
+                    # Get surrounding good points
+                    prev_point = smoothed_profile[segment_idx]
+                    next_point = smoothed_profile[segment_idx + 1]
+                    
+                    # Find next non-anomalous point for better interpolation
+                    target_idx = segment_idx + 1
+                    for j in range(segment_idx + 2, len(smoothed_profile)):
+                        if j - 1 not in anomalous_segments:
+                            next_point = smoothed_profile[j]
+                            target_idx = j
+                            break
+                    
+                    # Interpolate depth for anomalous point
+                    original_depth = smoothed_profile[segment_idx + 1]['depth']
+                    interpolated_depth = (prev_point['depth'] + next_point['depth']) / 2
+                    
+                    smoothed_profile[segment_idx + 1]['depth'] = interpolated_depth
+                    
+                    log.warning(f"{CORE_ICONS['warning']} Smoothed bathymetric anomaly: {original_depth:.1f}m → {interpolated_depth:.1f}m")
+            
+            return smoothed_profile
+            
+        except Exception as e:
+            log.warning(f"{CORE_ICONS['warning']} Error in anomaly detection: {e}")
+            return bathymetry_profile  # Return original on error
+
+    def _validate_adaptive_bathymetry_profile(self, bathymetry_profile):
+        """Validate bathymetric profile for scientific data integrity and reasonable constraints"""
+        try:
+            # Point Count Validation
+            if len(bathymetry_profile) < self.min_points:
+                log.error(f"{CORE_ICONS['warning']} Insufficient points: {len(bathymetry_profile)} < {self.min_points}")
+                return False
+            elif len(bathymetry_profile) > self.max_points:
+                log.error(f"{CORE_ICONS['warning']} Excessive points: {len(bathymetry_profile)} > {self.max_points}")
                 return False
             
-            # Check for monotonic depth decrease (deep water to shallow)
-            depths = [point['depth'] for point in bathymetry_profile]
+            # Depth Progression Validation
+            for i, point in enumerate(bathymetry_profile):
+                depth = point.get('depth', 0)
+                
+                # Basic depth sanity checks
+                if depth < 0:
+                    log.error(f"{CORE_ICONS['warning']} Invalid negative depth: {depth}m at point {i}")
+                    return False
+                if depth > 12000:  # Deeper than Mariana Trench
+                    log.error(f"{CORE_ICONS['warning']} Impossibly deep: {depth}m at point {i}")
+                    return False
             
-            # Allow some variation but look for general trend
-            violations = 0
-            for i in range(1, len(depths)):
-                if depths[i] > depths[i-1] + 20:  # Sudden depth increase > 20m
-                    violations += 1
+            # Gradient Validation
+            for i in range(len(bathymetry_profile) - 1):
+                gradient, distance = self._calculate_segment_metrics(bathymetry_profile[i], bathymetry_profile[i+1])
+                
+                # Check for impossible underwater cliffs
+                if gradient > 2.0:  # Vertical cliff
+                    log.error(f"{CORE_ICONS['warning']} Vertical cliff detected: {gradient:.2f} gradient")
+                    return False
             
-            # Allow up to 20% violations for real-world bathymetry variations
-            violation_rate = violations / (len(depths) - 1)
+            # Distance Validation
+            if len(bathymetry_profile) >= 2:
+                total_distance = abs(bathymetry_profile[0].get('distance_from_break_km', 0) - 
+                                bathymetry_profile[-1].get('distance_from_break_km', 0))
+                if total_distance < 5 or total_distance > 50:  # 5-50km reasonable range
+                    log.warning(f"{CORE_ICONS['warning']} Unusual total path distance: {total_distance:.1f}km")
             
-            if violation_rate > 0.2:
-                log.warning(f"{CORE_ICONS['warning']} Bathymetry profile has {violation_rate:.1%} depth violations")
-                return False
-            
-            # Check minimum gradient
-            depth_change = depths[0] - depths[-1]
-            if depth_change < 10:
-                log.warning(f"{CORE_ICONS['warning']} Insufficient depth change for shoaling calculations: {depth_change:.1f}m")
-                return False
-            
+            log.debug(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed: {len(bathymetry_profile)} points")
             return True
             
         except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error validating bathymetry profile: {e}")
+            log.error(f"{CORE_ICONS['warning']} Error during bathymetry validation: {e}")
             return False
-    
-    def _query_gebco_depth(self, lat, lon):
-        """Query GEBCO API for single point depth with proper land/sea validation"""
-        
-        try:
-            url = f"{self.gebco_base_url}?locations={lat:.6f},{lon:.6f}"
-            
-            for attempt in range(self.retry_attempts):
-                try:
-                    request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
-                    
-                    with urllib.request.urlopen(request, timeout=self.api_timeout) as response:
-                        data = json.loads(response.read().decode('utf-8'))
-                    
-                    if data.get('status') == 'OK' and data.get('results'):
-                        elevation = data['results'][0]['elevation']
-                        
-                        # FIX 2: Critical land/sea validation
-                        if elevation >= 0:
-                            # Land coordinate - return None to indicate invalid
-                            log.debug(f"{CORE_ICONS['warning']} Land coordinate detected at {lat:.4f}, {lon:.4f} (elevation: {elevation:.1f}m above sea level)")
-                            return None
-                        else:
-                            # Water coordinate - return negative elevation (will be converted to positive depth by caller)
-                            log.debug(f"{CORE_ICONS['status']} Water coordinate confirmed at {lat:.4f}, {lon:.4f} (depth: {abs(elevation):.1f}m)")
-                            return elevation  # GEBCO uses negative for water depth
-                    
-                except urllib.error.URLError as e:
-                    if attempt == self.retry_attempts - 1:
-                        log.error(f"{CORE_ICONS['warning']} GEBCO API failed after {self.retry_attempts} attempts: {e}")
-                        return None
-                    else:
-                        time.sleep(1)  # Brief delay before retry
-            
-            return None
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error querying GEBCO: {e}")
-            return None
-    
-    def _query_gebco_batch(self, locations_str):
-        """Query GEBCO API for multiple points in batch"""
-        
-        try:
-            url = f"{self.gebco_base_url}?locations={locations_str}"
-            
-            for attempt in range(self.retry_attempts):
-                try:
-                    request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
-                    
-                    with urllib.request.urlopen(request, timeout=self.api_timeout * 2) as response:  # Longer timeout for batch
-                        data = json.loads(response.read().decode('utf-8'))
-                    
-                    if data.get('status') == 'OK' and data.get('results'):
-                        return [result['elevation'] for result in data['results']]
-                    
-                except urllib.error.URLError as e:
-                    if attempt == self.retry_attempts - 1:
-                        log.error(f"{CORE_ICONS['warning']} GEBCO batch API failed after {self.retry_attempts} attempts: {e}")
-                        return None
-                    else:
-                        time.sleep(2)  # Longer delay for batch retries
-            
-            return None
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
-            return None
-    
-    def _calculate_point_at_bearing_distance(self, lat, lon, bearing, distance_km):
-        """Calculate new coordinates at given bearing and distance using great circle math"""
-        
-        try:
-            # Convert to radians
-            lat1 = math.radians(lat)
-            lon1 = math.radians(lon)
-            bearing_rad = math.radians(bearing)
-            
-            # Earth radius in km
-            R = 6371.0
-            
-            # Angular distance
-            d = distance_km / R
-            
-            # Calculate new latitude
-            lat2 = math.asin(math.sin(lat1) * math.cos(d) + 
-                           math.cos(lat1) * math.sin(d) * math.cos(bearing_rad))
-            
-            # Calculate new longitude
-            lon2 = lon1 + math.atan2(math.sin(bearing_rad) * math.sin(d) * math.cos(lat1),
-                                   math.cos(d) - math.sin(lat1) * math.sin(lat2))
-            
-            # Convert back to degrees
-            return math.degrees(lat2), math.degrees(lon2)
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error calculating point coordinates: {e}")
-            return None, None
-    
-    def _get_spot_config_from_conf(self, spot_id):
-        """Get spot configuration data from CONF"""
-        
-        try:
-            service_config = self.config_dict.get('SurfFishingService', {})
-            surf_spots_config = service_config.get('surf_spots', {})
-            return surf_spots_config.get(spot_id, {})
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error getting spot config from CONF: {e}")
-            return {}
 
-    def persist_bathymetry_to_weewx_conf(self, spot_id, bathymetry_data):
-        """Properly persist bathymetry data to weewx.conf using WeeWX methods"""
+    def _calculate_great_circle_distance(self, lat1, lon1, lat2, lon2):
+        """Calculate great circle distance between two geographic coordinates in kilometers"""
+        import math
         
-        try:
-            # Get the path to weewx.conf
-            # Use engine's config path if available, otherwise default location
-            if hasattr(self.engine, 'config_path'):
-                config_path = self.engine.config_path
-            elif hasattr(self.engine, 'config_dict') and 'WEEWX_ROOT' in self.engine.config_dict:
-                config_path = os.path.join(self.engine.config_dict['WEEWX_ROOT'], 'weewx.conf')
-            else:
-                # Fallback to common weewx.conf locations
-                possible_paths = [
-                    '/etc/weewx/weewx.conf',
-                    '/home/weewx/weewx.conf', 
-                    '/opt/weewx/weewx.conf'
-                ]
-                config_path = None
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        config_path = path
-                        break
-                
-                if not config_path:
-                    log.error(f"{CORE_ICONS['warning']} Could not locate weewx.conf file")
-                    return False
+        # Convert latitude and longitude from degrees to radians
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        
+        # Haversine formula
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        # Radius of earth in kilometers
+        r = 6371
+        
+        return c * r
+        
+        def _batch_query_gebco_depths(self, path_points):
+            """Query GEBCO API for multiple points in batch for efficiency"""
             
-            log.debug(f"{CORE_ICONS['navigation']} Using weewx.conf path: {config_path}")
-            
-            # Read current weewx.conf
-            config = configobj.ConfigObj(config_path, interpolation=False)
-            
-            # Navigate to the surf spots section, creating if necessary
-            if 'SurfFishingService' not in config:
-                config['SurfFishingService'] = {}
-            if 'surf_spots' not in config['SurfFishingService']:
-                config['SurfFishingService']['surf_spots'] = {}
-            if spot_id not in config['SurfFishingService']['surf_spots']:
-                log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in weewx.conf")
-                return False
-            
-            spot_section = config['SurfFishingService']['surf_spots'][spot_id]
-            
-            # Update with bathymetry data
-            spot_section['offshore_latitude'] = str(bathymetry_data['offshore_latitude'])
-            spot_section['offshore_longitude'] = str(bathymetry_data['offshore_longitude']) 
-            spot_section['offshore_depth'] = str(bathymetry_data['offshore_depth'])
-            spot_section['offshore_distance_km'] = str(bathymetry_data['offshore_distance_km'])
-            spot_section['bathymetry_calculated'] = 'true'
-            spot_section['bathymetry_calculation_timestamp'] = str(bathymetry_data['calculation_timestamp'])
-            
-            # Store additional fields if present
-            if 'search_bearing' in bathymetry_data:
-                spot_section['search_bearing'] = str(bathymetry_data['search_bearing'])
-            if 'adjusted_search' in bathymetry_data:
-                spot_section['adjusted_search'] = str(bathymetry_data['adjusted_search'])
-            
-            # Store bathymetry profile
-            bathymetry_profile = bathymetry_data.get('surf_path_bathymetry', [])
-            if bathymetry_profile:
-                if 'bathymetric_path' not in spot_section:
-                    spot_section['bathymetric_path'] = {}
-                
-                path_section = spot_section['bathymetric_path']
-                path_section['path_points_total'] = str(len(bathymetry_profile))
-                path_section['path_distance_km'] = str(bathymetry_data.get('path_distance_km', '0.0'))
-                
-                # Store each bathymetry point
-                for i, point in enumerate(bathymetry_profile):
-                    path_section[f'point_{i}_latitude'] = str(point.get('latitude', '0.0'))
-                    path_section[f'point_{i}_longitude'] = str(point.get('longitude', '0.0'))
-                    path_section[f'point_{i}_depth'] = str(point['depth'])
-                    path_section[f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
-                    if 'fraction_to_shore' in point:
-                        path_section[f'point_{i}_fraction'] = str(point['fraction_to_shore'])
-            
-            # Write changes back to file with error handling
             try:
-                # Create backup of original file
-                backup_path = config_path + '.bak'
-                if os.path.exists(config_path):
-                    shutil.copy2(config_path, backup_path)
+                # Build location string for batch API call
+                locations = []
+                for point in path_points:
+                    locations.append(f"{point['latitude']:.6f},{point['longitude']:.6f}")
                 
-                # Write the updated configuration
-                config.encoding = 'utf-8'
-                config.write()
+                locations_str = '|'.join(locations)
                 
-                # Update in-memory configuration to reflect changes
-                self.config_dict.update(dict(config))
+                # Make batch GEBCO API call
+                depths = self._query_gebco_batch(locations_str)
                 
-                log.info(f"{CORE_ICONS['status']} Successfully persisted bathymetry data to weewx.conf for spot {spot_id}")
+                if not depths or len(depths) != len(path_points):
+                    log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed or returned wrong number of results")
+                    return None
+                
+                # Combine path points with depths
+                bathymetry_profile = []
+                
+                for i, point in enumerate(path_points):
+                    depth = depths[i]
+                    if depth is not None:
+                        # Calculate distance from surf break
+                        distance_from_break = point['fraction_to_shore'] * self.offshore_distance_km
+                        
+                        bathymetry_profile.append({
+                            'latitude': point['latitude'],
+                            'longitude': point['longitude'],
+                            'depth': abs(depth),  # Always positive depth
+                            'distance_from_break_km': distance_from_break,
+                            'fraction_to_shore': point['fraction_to_shore']
+                        })
+                
+                return bathymetry_profile
+                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
+                return None
+        
+        def _validate_bathymetry_profile(self, bathymetry_profile):
+            """Validate bathymetry profile shows logical shoaling progression"""
+            
+            try:
+                if len(bathymetry_profile) < 3:
+                    return False
+                
+                # Check for monotonic depth decrease (deep water to shallow)
+                depths = [point['depth'] for point in bathymetry_profile]
+                
+                # Allow some variation but look for general trend
+                violations = 0
+                for i in range(1, len(depths)):
+                    if depths[i] > depths[i-1] + 20:  # Sudden depth increase > 20m
+                        violations += 1
+                
+                # Allow up to 20% violations for real-world bathymetry variations
+                violation_rate = violations / (len(depths) - 1)
+                
+                if violation_rate > 0.2:
+                    log.warning(f"{CORE_ICONS['warning']} Bathymetry profile has {violation_rate:.1%} depth violations")
+                    return False
+                
+                # Check minimum gradient
+                depth_change = depths[0] - depths[-1]
+                if depth_change < 10:
+                    log.warning(f"{CORE_ICONS['warning']} Insufficient depth change for shoaling calculations: {depth_change:.1f}m")
+                    return False
+                
                 return True
                 
-            except Exception as write_error:
-                log.error(f"{CORE_ICONS['warning']} Error writing to weewx.conf: {write_error}")
-                
-                # Attempt to restore backup if write failed
-                if os.path.exists(backup_path):
-                    try:
-                        shutil.copy2(backup_path, config_path)
-                        log.info(f"{CORE_ICONS['status']} Restored weewx.conf from backup")
-                    except Exception as restore_error:
-                        log.error(f"{CORE_ICONS['warning']} Could not restore backup: {restore_error}")
-                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error validating bathymetry profile: {e}")
                 return False
+        
+        def _query_gebco_depth(self, lat, lon):
+            """Query GEBCO API for single point depth with proper land/sea validation"""
             
-        except ImportError:
-            log.error(f"{CORE_ICONS['warning']} configobj not available - cannot persist to weewx.conf")
-            return False
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error persisting bathymetry to weewx.conf: {e}")
-            return False
-      
+            try:
+                url = f"{self.gebco_base_url}?locations={lat:.6f},{lon:.6f}"
+                
+                for attempt in range(self.retry_attempts):
+                    try:
+                        request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
+                        
+                        with urllib.request.urlopen(request, timeout=self.api_timeout) as response:
+                            data = json.loads(response.read().decode('utf-8'))
+                        
+                        if data.get('status') == 'OK' and data.get('results'):
+                            elevation = data['results'][0]['elevation']
+                            
+                            # FIX 2: Critical land/sea validation
+                            if elevation >= 0:
+                                # Land coordinate - return None to indicate invalid
+                                log.debug(f"{CORE_ICONS['warning']} Land coordinate detected at {lat:.4f}, {lon:.4f} (elevation: {elevation:.1f}m above sea level)")
+                                return None
+                            else:
+                                # Water coordinate - return negative elevation (will be converted to positive depth by caller)
+                                log.debug(f"{CORE_ICONS['status']} Water coordinate confirmed at {lat:.4f}, {lon:.4f} (depth: {abs(elevation):.1f}m)")
+                                return elevation  # GEBCO uses negative for water depth
+                        
+                    except urllib.error.URLError as e:
+                        if attempt == self.retry_attempts - 1:
+                            log.error(f"{CORE_ICONS['warning']} GEBCO API failed after {self.retry_attempts} attempts: {e}")
+                            return None
+                        else:
+                            time.sleep(1)  # Brief delay before retry
+                
+                return None
+                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error querying GEBCO: {e}")
+                return None
+        
+        def _query_gebco_batch(self, locations_str):
+            """Query GEBCO API for multiple points in batch"""
+            
+            try:
+                url = f"{self.gebco_base_url}?locations={locations_str}"
+                
+                for attempt in range(self.retry_attempts):
+                    try:
+                        request = urllib.request.Request(url, headers={'User-Agent': 'WeeWX-SurfFishing/1.0'})
+                        
+                        with urllib.request.urlopen(request, timeout=self.api_timeout * 2) as response:  # Longer timeout for batch
+                            data = json.loads(response.read().decode('utf-8'))
+                        
+                        if data.get('status') == 'OK' and data.get('results'):
+                            return [result['elevation'] for result in data['results']]
+                        
+                    except urllib.error.URLError as e:
+                        if attempt == self.retry_attempts - 1:
+                            log.error(f"{CORE_ICONS['warning']} GEBCO batch API failed after {self.retry_attempts} attempts: {e}")
+                            return None
+                        else:
+                            time.sleep(2)  # Longer delay for batch retries
+                
+                return None
+                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error in batch GEBCO query: {e}")
+                return None
+        
+        def _calculate_point_at_bearing_distance(self, lat, lon, bearing, distance_km):
+            """Calculate new coordinates at given bearing and distance using great circle math"""
+            
+            try:
+                # Convert to radians
+                lat1 = math.radians(lat)
+                lon1 = math.radians(lon)
+                bearing_rad = math.radians(bearing)
+                
+                # Earth radius in km
+                R = 6371.0
+                
+                # Angular distance
+                d = distance_km / R
+                
+                # Calculate new latitude
+                lat2 = math.asin(math.sin(lat1) * math.cos(d) + 
+                            math.cos(lat1) * math.sin(d) * math.cos(bearing_rad))
+                
+                # Calculate new longitude
+                lon2 = lon1 + math.atan2(math.sin(bearing_rad) * math.sin(d) * math.cos(lat1),
+                                    math.cos(d) - math.sin(lat1) * math.sin(lat2))
+                
+                # Convert back to degrees
+                return math.degrees(lat2), math.degrees(lon2)
+                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error calculating point coordinates: {e}")
+                return None, None
+        
+        def _get_spot_config_from_conf(self, spot_id):
+            """Get spot configuration data from CONF"""
+            
+            try:
+                service_config = self.config_dict.get('SurfFishingService', {})
+                surf_spots_config = service_config.get('surf_spots', {})
+                return surf_spots_config.get(spot_id, {})
+                
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error getting spot config from CONF: {e}")
+                return {}
+
+        def persist_bathymetry_to_weewx_conf(self, spot_id, bathymetry_data):
+            """Properly persist bathymetry data to weewx.conf using WeeWX methods"""
+            
+            try:
+                # Get the path to weewx.conf
+                # Use engine's config path if available, otherwise default location
+                if hasattr(self.engine, 'config_path'):
+                    config_path = self.engine.config_path
+                elif hasattr(self.engine, 'config_dict') and 'WEEWX_ROOT' in self.engine.config_dict:
+                    config_path = os.path.join(self.engine.config_dict['WEEWX_ROOT'], 'weewx.conf')
+                else:
+                    # Fallback to common weewx.conf locations
+                    possible_paths = [
+                        '/etc/weewx/weewx.conf',
+                        '/home/weewx/weewx.conf', 
+                        '/opt/weewx/weewx.conf'
+                    ]
+                    config_path = None
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            config_path = path
+                            break
+                    
+                    if not config_path:
+                        log.error(f"{CORE_ICONS['warning']} Could not locate weewx.conf file")
+                        return False
+                
+                log.debug(f"{CORE_ICONS['navigation']} Using weewx.conf path: {config_path}")
+                
+                # Read current weewx.conf
+                config = configobj.ConfigObj(config_path, interpolation=False)
+                
+                # Navigate to the surf spots section, creating if necessary
+                if 'SurfFishingService' not in config:
+                    config['SurfFishingService'] = {}
+                if 'surf_spots' not in config['SurfFishingService']:
+                    config['SurfFishingService']['surf_spots'] = {}
+                if spot_id not in config['SurfFishingService']['surf_spots']:
+                    log.error(f"{CORE_ICONS['warning']} Spot {spot_id} not found in weewx.conf")
+                    return False
+                
+                spot_section = config['SurfFishingService']['surf_spots'][spot_id]
+                
+                # Update with bathymetry data
+                spot_section['offshore_latitude'] = str(bathymetry_data['offshore_latitude'])
+                spot_section['offshore_longitude'] = str(bathymetry_data['offshore_longitude']) 
+                spot_section['offshore_depth'] = str(bathymetry_data['offshore_depth'])
+                spot_section['offshore_distance_km'] = str(bathymetry_data['offshore_distance_km'])
+                spot_section['bathymetry_calculated'] = 'true'
+                spot_section['bathymetry_calculation_timestamp'] = str(bathymetry_data['calculation_timestamp'])
+                
+                # Store additional fields if present
+                if 'search_bearing' in bathymetry_data:
+                    spot_section['search_bearing'] = str(bathymetry_data['search_bearing'])
+                if 'adjusted_search' in bathymetry_data:
+                    spot_section['adjusted_search'] = str(bathymetry_data['adjusted_search'])
+                
+                # Store bathymetry profile
+                bathymetry_profile = bathymetry_data.get('surf_path_bathymetry', [])
+                if bathymetry_profile:
+                    if 'bathymetric_path' not in spot_section:
+                        spot_section['bathymetric_path'] = {}
+                    
+                    path_section = spot_section['bathymetric_path']
+                    path_section['path_points_total'] = str(len(bathymetry_profile))
+                    path_section['path_distance_km'] = str(bathymetry_data.get('path_distance_km', '0.0'))
+                    
+                    # Store each bathymetry point
+                    for i, point in enumerate(bathymetry_profile):
+                        path_section[f'point_{i}_latitude'] = str(point.get('latitude', '0.0'))
+                        path_section[f'point_{i}_longitude'] = str(point.get('longitude', '0.0'))
+                        path_section[f'point_{i}_depth'] = str(point['depth'])
+                        path_section[f'point_{i}_distance_km'] = str(point['distance_from_break_km'])
+                        if 'fraction_to_shore' in point:
+                            path_section[f'point_{i}_fraction'] = str(point['fraction_to_shore'])
+                
+                # Write changes back to file with error handling
+                try:
+                    # Create backup of original file
+                    backup_path = config_path + '.bak'
+                    if os.path.exists(config_path):
+                        shutil.copy2(config_path, backup_path)
+                    
+                    # Write the updated configuration
+                    config.encoding = 'utf-8'
+                    config.write()
+                    
+                    # Update in-memory configuration to reflect changes
+                    self.config_dict.update(dict(config))
+                    
+                    log.info(f"{CORE_ICONS['status']} Successfully persisted bathymetry data to weewx.conf for spot {spot_id}")
+                    return True
+                    
+                except Exception as write_error:
+                    log.error(f"{CORE_ICONS['warning']} Error writing to weewx.conf: {write_error}")
+                    
+                    # Attempt to restore backup if write failed
+                    if os.path.exists(backup_path):
+                        try:
+                            shutil.copy2(backup_path, config_path)
+                            log.info(f"{CORE_ICONS['status']} Restored weewx.conf from backup")
+                        except Exception as restore_error:
+                            log.error(f"{CORE_ICONS['warning']} Could not restore backup: {restore_error}")
+                    
+                    return False
+                
+            except ImportError:
+                log.error(f"{CORE_ICONS['warning']} configobj not available - cannot persist to weewx.conf")
+                return False
+            except Exception as e:
+                log.error(f"{CORE_ICONS['warning']} Error persisting bathymetry to weewx.conf: {e}")
+                return False
+    
         
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
