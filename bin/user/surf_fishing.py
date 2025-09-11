@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Sea Turtle
+# Magic Animal: Barnacle
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1371,27 +1371,50 @@ class BathymetryProcessor:
     """Handle deep water point determination and bathymetry profile calculations for surf spots"""
     
     def __init__(self, config_dict, grib_processor, engine):
-        """Initialize bathymetry processor with access to CONF data and GRIB processing"""
+        """Initialize bathymetry processor with CONF configuration, GRIB processing, and adaptive algorithm parameters"""
+        # PRESERVE: All existing initialization patterns unchanged
         self.config_dict = config_dict
         self.grib_processor = grib_processor
         self.engine = engine  # Store engine reference for weewx.conf access
         
-        # Get bathymetry configuration from CONF
+        # PRESERVE: Get bathymetry configuration from CONF using existing WeeWX 5.1 patterns
         service_config = config_dict.get('SurfFishingService', {})
         self.bathymetry_config = service_config.get('bathymetry_data', {})
         
-        # GEBCO API configuration from CONF
+        # PRESERVE: GEBCO API configuration from CONF (unchanged)
         api_config = self.bathymetry_config.get('api_configuration', {})
         self.gebco_base_url = api_config.get('base_url', 'https://api.opentopodata.org/v1/gebco2020')
         self.api_timeout = int(api_config.get('timeout_seconds', '30'))
         self.retry_attempts = int(api_config.get('retry_attempts', '3'))
         
-        # Path analysis configuration
+        # PRESERVE: Path analysis configuration (unchanged)
         path_config = self.bathymetry_config.get('path_analysis', {})
         self.path_resolution_points = int(path_config.get('path_resolution_points', '15'))
         self.offshore_distance_km = float(path_config.get('offshore_distance_meters', '20000')) / 1000.0  # Convert to km
         
+        # NEW: Adaptive algorithm configuration from CONF (Phase 3 enhancement)
+        adaptive_config = self.bathymetry_config.get('adaptive_spacing', {})
+        self.enable_adaptive = adaptive_config.get('enable_adaptive_algorithm', True)  # Default enabled for alpha
+        self.refinement_threshold = float(adaptive_config.get('refinement_gradient_threshold', '0.02'))
+        self.coarsening_threshold = float(adaptive_config.get('coarsening_gradient_threshold', '0.002'))
+        self.max_points = int(adaptive_config.get('max_total_points', '75'))
+        self.min_points = int(adaptive_config.get('min_total_points', '16'))
+        self.critical_depth_min = float(adaptive_config.get('critical_depth_min', '5'))
+        self.critical_depth_max = float(adaptive_config.get('critical_depth_max', '50'))
+        self.deep_water_threshold = float(adaptive_config.get('deep_water_threshold', '50'))
+        self.max_iterations = int(adaptive_config.get('max_refinement_iterations', '3'))
+        self.min_segment_distance = float(adaptive_config.get('min_segment_distance_m', '200'))
+        self.validation_enabled = adaptive_config.get('validation_enabled', True)
+        
+        # NEW: Initialize performance optimization cache for gradient calculations
+        self._gradient_cache = {}
+        
+        # PRESERVE: Existing log message with enhancement indicator
         log.info(f"{CORE_ICONS['status']} BathymetryProcessor initialized from CONF")
+        if self.enable_adaptive:
+            log.info(f"{CORE_ICONS['status']} Adaptive algorithm: enabled (threshold: {self.refinement_threshold:.3f}, max points: {self.max_points})")
+        else:
+            log.info(f"{CORE_ICONS['status']} Adaptive algorithm: disabled (using original 16-point method)")
     
     def process_surf_spot_bathymetry(self, spot):
         """Main entry point - check flag and process if needed"""
@@ -2680,6 +2703,182 @@ class BathymetryProcessor:
             log.warning(f"{CORE_ICONS['warning']} Error calculating distance between points: {e}")
             return 1000.0  # Safe fallback
 
+    def get_full_bathymetric_path_from_conf(self, spot_config):
+        """Enhanced bathymetric data access for adaptive algorithm usage"""
+        bathymetric_path = spot_config.get('bathymetric_path', {})
+        
+        if not bathymetric_path:
+            raise ValueError("No bathymetric path data found in CONF - cannot proceed with scientific calculations")
+        
+        try:
+            path_points = []
+            total_points = int(bathymetric_path.get('path_points_total', '0'))
+            
+            if total_points == 0:
+                raise ValueError("Invalid path_points_total in CONF bathymetric data")
+            
+            # Read adaptive point count with proper WeeWX 5.1 CONF access patterns
+            for i in range(total_points):
+                # Require all essential point data - fail if missing
+                depth_key = f'point_{i}_depth'
+                distance_key = f'point_{i}_distance_km'
+                fraction_key = f'point_{i}_fraction'
+                
+                if depth_key not in bathymetric_path:
+                    raise ValueError(f"Missing required depth data for point {i}")
+                if distance_key not in bathymetric_path:
+                    raise ValueError(f"Missing required distance data for point {i}")
+                if fraction_key not in bathymetric_path:
+                    raise ValueError(f"Missing required fraction data for point {i}")
+                
+                point_data = {
+                    'depth': float(bathymetric_path[depth_key]),
+                    'distance_km': float(bathymetric_path[distance_key]),
+                    'fraction': float(bathymetric_path[fraction_key])
+                }
+                
+                # Include coordinates if available (optional for scientific calculations)
+                lat_key = f'point_{i}_latitude'
+                lon_key = f'point_{i}_longitude'
+                if lat_key in bathymetric_path and lon_key in bathymetric_path:
+                    point_data['latitude'] = float(bathymetric_path[lat_key])
+                    point_data['longitude'] = float(bathymetric_path[lon_key])
+                
+                path_points.append(point_data)
+            
+            log.debug(f"{CORE_ICONS['status']} Using adaptive bathymetric path: {total_points} points")
+            return path_points
+            
+        except (ValueError, TypeError, KeyError) as e:
+            raise ValueError(f"Invalid bathymetric path data in CONF: {e}")
+
+    def _validate_bathymetric_path_data(self, bathymetric_path):
+        """Validate bathymetric path data from CONF storage for scientific integrity"""
+        validation_errors = []
+        
+        if not bathymetric_path:
+            validation_errors.append("No bathymetric path data found")
+            return validation_errors
+        
+        try:
+            total_points = int(bathymetric_path.get('path_points_total', '0'))
+            
+            if total_points < self.min_points:
+                validation_errors.append(f"Insufficient points: {total_points} < {self.min_points}")
+            elif total_points > self.max_points:
+                validation_errors.append(f"Excessive points: {total_points} > {self.max_points}")
+            
+            # Validate point data consistency using WeeWX 5.1 CONF access patterns
+            depths = []
+            distances = []
+            
+            for i in range(total_points):
+                depth_key = f'point_{i}_depth'
+                distance_key = f'point_{i}_distance_km'
+                fraction_key = f'point_{i}_fraction'
+                
+                # Check for required data
+                missing_keys = []
+                if depth_key not in bathymetric_path:
+                    missing_keys.append(depth_key)
+                if distance_key not in bathymetric_path:
+                    missing_keys.append(distance_key)
+                if fraction_key not in bathymetric_path:
+                    missing_keys.append(fraction_key)
+                
+                if missing_keys:
+                    validation_errors.append(f"Missing required keys for point {i}: {missing_keys}")
+                    continue
+                
+                try:
+                    depth = float(bathymetric_path[depth_key])
+                    distance = float(bathymetric_path[distance_key])
+                    fraction = float(bathymetric_path[fraction_key])
+                    
+                    # Validate scientific ranges
+                    if depth < 0:
+                        validation_errors.append(f"Invalid negative depth at point {i}: {depth}m")
+                    if distance < 0:
+                        validation_errors.append(f"Invalid negative distance at point {i}: {distance}km")
+                    if not (0.0 <= fraction <= 1.0):
+                        validation_errors.append(f"Invalid fraction at point {i}: {fraction} (must be 0.0-1.0)")
+                    
+                    depths.append(depth)
+                    distances.append(distance)
+                    
+                except (ValueError, TypeError) as e:
+                    validation_errors.append(f"Invalid numeric data at point {i}: {e}")
+            
+            # Validate scientific progression
+            if len(depths) >= 2:
+                if depths[0] <= depths[-1]:
+                    validation_errors.append("Invalid depth progression: offshore should be deeper than breaking")
+            
+            if len(distances) >= 2:
+                if distances[0] <= distances[-1]:
+                    validation_errors.append("Invalid distance progression: should decrease toward shore")
+            
+            # Check for reasonable depth ranges
+            if depths:
+                min_depth = min(depths)
+                max_depth = max(depths)
+                if max_depth > 200:
+                    validation_errors.append(f"Unrealistic maximum depth: {max_depth}m")
+                if min_depth > 100:
+                    validation_errors.append(f"Breaking depth too deep: {min_depth}m")
+            
+        except Exception as e:
+            validation_errors.append(f"CONF data structure error: {e}")
+        
+        return validation_errors
+
+    def _validate_adaptive_bathymetry_profile(self, bathymetry_profile):
+        """Comprehensive validation for adaptive bathymetric profile scientific data integrity"""
+        if not bathymetry_profile:
+            log.error(f"{CORE_ICONS['warning']} Adaptive bathymetry validation failed: empty profile")
+            return False
+        
+        validation_errors = []
+        
+        # Point count validation
+        if len(bathymetry_profile) < self.min_points:
+            validation_errors.append(f"Insufficient points: {len(bathymetry_profile)} < {self.min_points}")
+        elif len(bathymetry_profile) > self.max_points:
+            validation_errors.append(f"Excessive points: {len(bathymetry_profile)} > {self.max_points}")
+        
+        # Depth progression validation
+        depths = [point['depth'] for point in bathymetry_profile if 'depth' in point]
+        if len(depths) != len(bathymetry_profile):
+            validation_errors.append("Missing depth data in bathymetric profile")
+        elif len(depths) >= 2:
+            if depths[0] <= depths[-1]:
+                validation_errors.append("Invalid depth progression: must shoal toward shore")
+            
+            # Check for reasonable gradients
+            for i in range(len(depths) - 1):
+                if depths[i] < depths[i + 1]:
+                    validation_errors.append(f"Depth inversion at point {i}: {depths[i]:.1f}m > {depths[i+1]:.1f}m")
+        
+        # Distance validation if available
+        distances = [point.get('distance_km', 0) for point in bathymetry_profile]
+        if any(d > 0 for d in distances) and len(distances) >= 2:
+            if distances[0] <= distances[-1]:
+                validation_errors.append("Invalid distance progression: should decrease toward shore")
+        
+        # Critical zone coverage validation
+        if depths:
+            critical_zone_points = [d for d in depths if self.critical_depth_min <= d <= self.critical_depth_max]
+            if len(critical_zone_points) < 3:
+                validation_errors.append(f"Insufficient critical zone coverage: {len(critical_zone_points)} points in {self.critical_depth_min}-{self.critical_depth_max}m range")
+        
+        if validation_errors:
+            log.error(f"{CORE_ICONS['warning']} Adaptive bathymetry validation failed:")
+            for error in validation_errors:
+                log.error(f"  - {error}")
+            return False
+        
+        log.debug(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed: {len(bathymetry_profile)} points")
+        return True
           
         
 class SurfForecastGenerator:
