@@ -3162,7 +3162,7 @@ class SurfForecastGenerator:
         """Determine tide stage for surf forecast using Phase I tide_table"""
         try:
             # Use WeeWX 5.1 StdService database access pattern
-            db_manager = self.engine.db_binder.get_manager('wx_binding')
+            db_manager = self._get_db_manager()
             
             # Get tides within 12 hours of forecast time
             start_time = forecast_time - 43200  # 12 hours before
