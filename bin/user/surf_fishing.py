@@ -3158,11 +3158,14 @@ class SurfForecastGenerator:
         
         return enhanced_forecast
         
-    def _determine_tide_stage(self, forecast_time, tide_conditions):
+    def _determine_tide_stage(self, forecast_time, tide_conditions, db_manager=None):
         """Determine tide stage for surf forecast using Phase I tide_table"""
         try:
             # Use WeeWX 5.1 StdService database access pattern
-            db_manager = self._get_db_manager()
+            if db_manager is None:
+                db_manager = self.db_manager
+                if db_manager is None:
+                    raise Exception("No database manager available")
             
             # Get tides within 12 hours of forecast time
             start_time = forecast_time - 43200  # 12 hours before
