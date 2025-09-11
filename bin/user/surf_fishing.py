@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Barnacle
+# Magic Animal: 
 """
 WeeWX Surf & Fishing Forecast Service
 Phase II: Local Surf & Fishing Forecast System
@@ -1422,6 +1422,20 @@ class BathymetryProcessor:
         spot_id = spot['id']
         spot_name = spot.get('name', spot_id)
         
+        # Check if bathymetry already calculated
+        spot_config = self._get_spot_config_from_conf(spot_id)
+        if not spot_config:
+            log.error(f"{CORE_ICONS['warning']} No CONF data found for spot {spot_id}")
+            return False
+        
+        # CHECK BOOLEAN FLAG - "SET AND FORGET" SYSTEM
+        if spot_config.get('bathymetry_calculated', False) == 'true':
+            log.debug(f"{CORE_ICONS['status']} Bathymetry already calculated for {spot_name} - skipping")
+            return True
+        
+        # ONLY THEN: Run expensive algorithm for uncalculated spots
+        log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
+        
         try:
             log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
             
@@ -2091,91 +2105,102 @@ class BathymetryProcessor:
             return bathymetry_profile  # Return original on error
 
     def _validate_adaptive_bathymetry_profile(self, bathymetry_profile):
-            """Validate bathymetric profile for scientific data integrity and reasonable constraints"""
-            try:
-                # Point Count Validation
-                if len(bathymetry_profile) < self.min_points:
-                    log.error(f"{CORE_ICONS['warning']} Insufficient points: {len(bathymetry_profile)} < {self.min_points}")
-                    return False
-                elif len(bathymetry_profile) > self.max_points:
-                    log.error(f"{CORE_ICONS['warning']} Excessive points: {len(bathymetry_profile)} > {self.max_points}")
-                    return False
-                
-                # Depth Progression Validation
-                for i, point in enumerate(bathymetry_profile):
-                    depth = point.get('depth', 0)
-                    
-                    # Basic depth sanity checks
-                    if depth < 0:
-                        log.error(f"{CORE_ICONS['warning']} Invalid negative depth: {depth}m at point {i}")
-                        return False
-                    if depth > 12000:  # Deeper than Mariana Trench
-                        log.error(f"{CORE_ICONS['warning']} Impossibly deep: {depth}m at point {i}")
-                        return False
-                
-                # Gradient Validation
-                for i in range(len(bathymetry_profile) - 1):
-                    gradient, distance = self._calculate_segment_metrics(bathymetry_profile[i], bathymetry_profile[i+1])
-                    
-                    # Check for impossible underwater cliffs
-                    if gradient > 2.0:  # Vertical cliff
-                        log.error(f"{CORE_ICONS['warning']} Vertical cliff detected: {gradient:.2f} gradient")
-                        return False
-                
-                # Distance and spacing validation
-                if len(bathymetry_profile) >= 2:
-                    # Total distance validation
-                    total_distance = abs(bathymetry_profile[0].get('distance_from_break_km', 0) - 
-                                    bathymetry_profile[-1].get('distance_from_break_km', 0))
-                    if total_distance < 5 or total_distance > 50:  # 5-50km reasonable range
-                        log.error(f"{CORE_ICONS['warning']} Unrealistic total distance: {total_distance:.1f}km")
-                        return False
-                    
-                    # Point spacing validation using helper method
-                    spacings = self._calculate_point_spacings(bathymetry_profile)
-                    if spacings:
-                        min_spacing = min(spacings)
-                        max_spacing = max(spacings)
-                        avg_spacing = sum(spacings) / len(spacings)
-                        
-                        # Check for reasonable spacing distribution
-                        if min_spacing < 50:  # Less than 50m between points
-                            log.warning(f"{CORE_ICONS['warning']} Very close point spacing detected: {min_spacing:.0f}m")
-                        if max_spacing > 10000:  # More than 10km between points
-                            log.warning(f"{CORE_ICONS['warning']} Large point spacing detected: {max_spacing:.0f}m")
-                        
-                        # Check for extreme spacing variation
-                        spacing_ratio = max_spacing / min_spacing if min_spacing > 0 else 1.0
-                        if spacing_ratio > 20:  # Extreme spacing variation
-                            log.warning(f"{CORE_ICONS['warning']} Extreme spacing variation: {spacing_ratio:.1f}:1 ratio")
-                        
-                        log.debug(f"{CORE_ICONS['status']} Point spacing: avg={avg_spacing:.0f}m, "
-                                f"min={min_spacing:.0f}m, max={max_spacing:.0f}m")
-                
-                # Depth progression validation using helper method
-                depths = [point['depth'] for point in bathymetry_profile]
-                if not self._validate_depth_progression(depths):
-                    log.error(f"{CORE_ICONS['warning']} Depth progression validation failed")
-                    return False
-                
-                # Critical zone coverage validation
-                critical_zone_points = [p for p in bathymetry_profile 
-                                    if self.critical_depth_min <= p['depth'] <= self.critical_depth_max]
-                if len(critical_zone_points) < 3:
-                    log.warning(f"{CORE_ICONS['warning']} Limited critical zone coverage: {len(critical_zone_points)} points")
-                    # Don't fail - this is a warning, not a fatal error
-                
-                # Success logging
-                log.info(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed:")
-                log.info(f"  - Total points: {len(bathymetry_profile)}")
-                log.info(f"  - Depth range: {max(depths):.1f}m → {min(depths):.1f}m")
-                log.info(f"  - Critical zone coverage: {len(critical_zone_points)} points")
-                
-                return True
-                
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error in bathymetry validation: {e}")
+        """Validate bathymetric profile for scientific data integrity and reasonable constraints"""
+        try:
+            # PRESERVE EXISTING: Point Count Validation
+            if len(bathymetry_profile) < self.min_points:
+                log.error(f"{CORE_ICONS['warning']} Insufficient points: {len(bathymetry_profile)} < {self.min_points}")
                 return False
+            elif len(bathymetry_profile) > self.max_points:
+                log.error(f"{CORE_ICONS['warning']} Excessive points: {len(bathymetry_profile)} > {self.max_points}")
+                return False
+            
+            # PRESERVE EXISTING: Depth Progression Validation - individual point checks
+            for i, point in enumerate(bathymetry_profile):
+                depth = point.get('depth', 0)
+                
+                # Basic depth sanity checks
+                if depth < 0:
+                    log.error(f"{CORE_ICONS['warning']} Invalid negative depth: {depth}m at point {i}")
+                    return False
+                if depth > 12000:  # Deeper than Mariana Trench
+                    log.error(f"{CORE_ICONS['warning']} Impossibly deep: {depth}m at point {i}")
+                    return False
+            
+            # PRESERVE EXISTING: Gradient Validation
+            for i in range(len(bathymetry_profile) - 1):
+                gradient, distance = self._calculate_segment_metrics(bathymetry_profile[i], bathymetry_profile[i+1])
+                
+                # Check for impossible underwater cliffs
+                if gradient > 2.0:  # Vertical cliff
+                    log.error(f"{CORE_ICONS['warning']} Vertical cliff detected: {gradient:.2f} gradient")
+                    return False
+            
+            # PRESERVE EXISTING: Distance and spacing validation
+            if len(bathymetry_profile) >= 2:
+                # Total distance validation
+                total_distance = abs(bathymetry_profile[0].get('distance_from_break_km', 0) - 
+                                bathymetry_profile[-1].get('distance_from_break_km', 0))
+                if total_distance < 5 or total_distance > 50:  # 5-50km reasonable range
+                    log.error(f"{CORE_ICONS['warning']} Unrealistic total distance: {total_distance:.1f}km")
+                    return False
+                
+                # PRESERVE EXISTING: Point spacing validation using helper method
+                spacings = self._calculate_point_spacings(bathymetry_profile)
+                if spacings:
+                    min_spacing = min(spacings)
+                    max_spacing = max(spacings)
+                    avg_spacing = sum(spacings) / len(spacings)
+                    
+                    # Check for reasonable spacing distribution
+                    if min_spacing < 50:  # Less than 50m between points
+                        log.warning(f"{CORE_ICONS['warning']} Very close point spacing detected: {min_spacing:.0f}m")
+                    if max_spacing > 10000:  # More than 10km between points
+                        log.warning(f"{CORE_ICONS['warning']} Large point spacing detected: {max_spacing:.0f}m")
+                    
+                    # Check for extreme spacing variation
+                    spacing_ratio = max_spacing / min_spacing if min_spacing > 0 else 1.0
+                    if spacing_ratio > 20:  # Extreme spacing variation
+                        log.warning(f"{CORE_ICONS['warning']} Extreme spacing variation: {spacing_ratio:.1f}:1 ratio")
+                    
+                    log.debug(f"{CORE_ICONS['status']} Point spacing: avg={avg_spacing:.0f}m, "
+                            f"min={min_spacing:.0f}m, max={max_spacing:.0f}m")
+            
+            # PRESERVE EXISTING: Depth progression validation using helper method
+            depths = [point['depth'] for point in bathymetry_profile]
+            if not self._validate_depth_progression(depths):
+                log.error(f"{CORE_ICONS['warning']} Depth progression validation failed")
+                return False
+            
+            # PRESERVE EXISTING: Critical zone coverage validation
+            critical_zone_points = [p for p in bathymetry_profile 
+                                if self.critical_depth_min <= p['depth'] <= self.critical_depth_max]
+            if len(critical_zone_points) < 3:
+                log.warning(f"{CORE_ICONS['warning']} Limited critical zone coverage: {len(critical_zone_points)} points")
+                # Don't fail - this is a warning, not a fatal error
+            
+            # NEW ENHANCEMENT: Coordinate progression validation (if coordinates present)
+            if all('latitude' in p and 'longitude' in p for p in bathymetry_profile):
+                if not self._validate_coordinate_progression(bathymetry_profile):
+                    log.error(f"{CORE_ICONS['warning']} Invalid coordinate progression detected")
+                    return False
+            
+            # NEW ENHANCEMENT: Distance field progression validation
+            if not self._validate_distance_progression(bathymetry_profile):
+                log.error(f"{CORE_ICONS['warning']} Invalid distance progression detected")
+                return False
+            
+            # PRESERVE EXISTING: Success logging
+            log.info(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed:")
+            log.info(f"  - Total points: {len(bathymetry_profile)}")
+            log.info(f"  - Depth range: {max(depths):.1f}m → {min(depths):.1f}m")
+            log.info(f"  - Critical zone coverage: {len(critical_zone_points)} points")
+            
+            return True
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in bathymetry validation: {e}")
+            return False
         
     def _batch_query_gebco_depths(self, path_points):
         """Query GEBCO API for multiple points in batch for efficiency"""
@@ -2551,10 +2576,7 @@ class BathymetryProcessor:
             return refined_points  # Return original on error
 
     def _calculate_point_spacings(self, bathymetry_profile):
-        """
-        Calculate spacing between consecutive points for validation
-        Returns list of spacings in meters
-        """
+        """Calculate spacing between consecutive points for validation"""
         try:
             spacings = []
             
@@ -2573,7 +2595,7 @@ class BathymetryProcessor:
                 else:
                     # Fallback to distance_km difference if coordinates unavailable
                     distance_diff_km = abs(current.get('distance_from_break_km', 0) - 
-                                         next_point.get('distance_from_break_km', 0))
+                                        next_point.get('distance_from_break_km', 0))
                     spacing_m = distance_diff_km * 1000  # Convert to meters
                 
                 spacings.append(spacing_m)
@@ -2617,15 +2639,12 @@ class BathymetryProcessor:
             return 1000.0  # Safe fallback distance
 
     def _validate_depth_progression(self, depths):
-        """
-        Validate that depth progression is reasonable for a surf break bathymetric profile
-        Returns True if progression is valid, False otherwise
-        """
+        """Validate that depth progression is reasonable for a surf break bathymetric profile"""
         try:
             if len(depths) < 2:
                 return True  # Can't validate with insufficient data
             
-            # Check for reasonable depth values
+            # PRESERVE EXISTING: Check for reasonable depth values
             for i, depth in enumerate(depths):
                 if depth < 0:
                     log.error(f"{CORE_ICONS['warning']} Invalid negative depth: {depth}m at point {i}")
@@ -2634,7 +2653,7 @@ class BathymetryProcessor:
                     log.error(f"{CORE_ICONS['warning']} Impossibly deep: {depth}m at point {i}")
                     return False
             
-            # Check general shoaling progression (should generally get shallower toward shore)
+            # PRESERVE EXISTING: Check general shoaling progression (should generally get shallower toward shore)
             # Allow for some irregularity but flag major inconsistencies
             deep_water_depths = [d for d in depths[:len(depths)//3]]  # First third (offshore)
             shallow_water_depths = [d for d in depths[2*len(depths)//3:]]  # Last third (nearshore)
@@ -2646,10 +2665,10 @@ class BathymetryProcessor:
                 # Deep water should generally be deeper than shallow water
                 if avg_shallow > avg_deep:
                     log.warning(f"{CORE_ICONS['warning']} Unusual depth progression: "
-                               f"nearshore avg {avg_shallow:.1f}m > offshore avg {avg_deep:.1f}m")
+                            f"nearshore avg {avg_shallow:.1f}m > offshore avg {avg_deep:.1f}m")
                     # Don't fail - this can occur with unusual bathymetry
             
-            # Check for excessive depth variation (potential data errors)
+            # PRESERVE EXISTING: Check for excessive depth variation (potential data errors)
             max_depth = max(depths)
             min_depth = min(depths)
             depth_range = max_depth - min_depth
@@ -2657,16 +2676,16 @@ class BathymetryProcessor:
             # Flag unrealistic depth ranges for typical surf breaks
             if depth_range > 500:  # More than 500m variation unusual for 20km path
                 log.warning(f"{CORE_ICONS['warning']} Large depth range detected: "
-                           f"{depth_range:.1f}m from {min_depth:.1f}m to {max_depth:.1f}m")
+                        f"{depth_range:.1f}m from {min_depth:.1f}m to {max_depth:.1f}m")
                 # Don't fail - some locations may have extreme bathymetry
             
-            # Check for impossible depth changes (underwater cliffs)
+            # PRESERVE EXISTING: Check for impossible depth changes (underwater cliffs)
             for i in range(len(depths) - 1):
                 depth_change = abs(depths[i] - depths[i + 1])
                 # This is checked more thoroughly in gradient validation
                 if depth_change > 1000:  # More than 1km depth change between adjacent points
                     log.error(f"{CORE_ICONS['warning']} Impossible depth change: "
-                             f"{depth_change:.1f}m between points {i} and {i+1}")
+                            f"{depth_change:.1f}m between points {i} and {i+1}")
                     return False
             
             return True
@@ -2830,57 +2849,190 @@ class BathymetryProcessor:
         except Exception as e:
             validation_errors.append(f"CONF data structure error: {e}")
         
-        return validation_errors
+        return validation_errors       
 
-    def _validate_adaptive_bathymetry_profile(self, bathymetry_profile):
-        """Comprehensive validation for adaptive bathymetric profile scientific data integrity"""
-        if not bathymetry_profile:
-            log.error(f"{CORE_ICONS['warning']} Adaptive bathymetry validation failed: empty profile")
+    def _validate_coordinate_progression(self, bathymetry_profile):
+        """Validate coordinate progression follows logical path from offshore to shore"""
+        if len(bathymetry_profile) < 2:
             return False
         
-        validation_errors = []
-        
-        # Point count validation
-        if len(bathymetry_profile) < self.min_points:
-            validation_errors.append(f"Insufficient points: {len(bathymetry_profile)} < {self.min_points}")
-        elif len(bathymetry_profile) > self.max_points:
-            validation_errors.append(f"Excessive points: {len(bathymetry_profile)} > {self.max_points}")
-        
-        # Depth progression validation
-        depths = [point['depth'] for point in bathymetry_profile if 'depth' in point]
-        if len(depths) != len(bathymetry_profile):
-            validation_errors.append("Missing depth data in bathymetric profile")
-        elif len(depths) >= 2:
-            if depths[0] <= depths[-1]:
-                validation_errors.append("Invalid depth progression: must shoal toward shore")
+        # Check coordinates are reasonable (not null island, etc.)
+        for i, point in enumerate(bathymetry_profile):
+            lat = point.get('latitude', 0)
+            lon = point.get('longitude', 0)
             
-            # Check for reasonable gradients
-            for i in range(len(depths) - 1):
-                if depths[i] < depths[i + 1]:
-                    validation_errors.append(f"Depth inversion at point {i}: {depths[i]:.1f}m > {depths[i+1]:.1f}m")
+            # Basic coordinate sanity checks
+            if not (-90 <= lat <= 90):
+                log.warning(f"Invalid latitude: {lat} at point {i}")
+                return False
+            if not (-180 <= lon <= 180):
+                log.warning(f"Invalid longitude: {lon} at point {i}")
+                return False
         
-        # Distance validation if available
-        distances = [point.get('distance_km', 0) for point in bathymetry_profile]
-        if any(d > 0 for d in distances) and len(distances) >= 2:
-            if distances[0] <= distances[-1]:
-                validation_errors.append("Invalid distance progression: should decrease toward shore")
+        # Calculate total path distance for reasonableness
+        total_distance = 0
+        for i in range(len(bathymetry_profile) - 1):
+            current = bathymetry_profile[i]
+            next_point = bathymetry_profile[i + 1]
+            
+            segment_distance = self._calculate_great_circle_distance(
+                current['latitude'], current['longitude'],
+                next_point['latitude'], next_point['longitude']
+            )
+            total_distance += segment_distance
         
-        # Critical zone coverage validation
-        if depths:
-            critical_zone_points = [d for d in depths if self.critical_depth_min <= d <= self.critical_depth_max]
-            if len(critical_zone_points) < 3:
-                validation_errors.append(f"Insufficient critical zone coverage: {len(critical_zone_points)} points in {self.critical_depth_min}-{self.critical_depth_max}m range")
-        
-        if validation_errors:
-            log.error(f"{CORE_ICONS['warning']} Adaptive bathymetry validation failed:")
-            for error in validation_errors:
-                log.error(f"  - {error}")
+        # Path should be reasonable for surf forecasting (5-50km)
+        if total_distance < 5 or total_distance > 50:
+            log.warning(f"Unrealistic total path distance: {total_distance:.1f}km")
             return False
         
-        log.debug(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed: {len(bathymetry_profile)} points")
         return True
-          
+
+    def _validate_distance_progression(self, bathymetry_profile):
+        """Validate distance progression is logical and consistent"""
+        if len(bathymetry_profile) < 2:
+            return False
         
+        # Check if distance fields are present and logical
+        distances = []
+        for point in bathymetry_profile:
+            if 'distance_from_break_km' in point:
+                distances.append(point['distance_from_break_km'])
+            elif 'distance_km' in point:
+                distances.append(point['distance_km'])
+            else:
+                # No distance data available - cannot validate but don't fail
+                return True
+        
+        if len(distances) != len(bathymetry_profile):
+            return False
+        
+        # Distances should generally increase going offshore (with small tolerance)
+        for i in range(len(distances) - 1):
+            if distances[i] < distances[i+1] - 0.1:  # Allow small variations
+                log.warning(f"Non-monotonic distance progression: {distances[i]:.2f} → {distances[i+1]:.2f}")
+                return False
+        
+        # Total distance should be reasonable for surf forecasting
+        total_distance = distances[0] - distances[-1] if distances else 0
+        if total_distance < 5 or total_distance > 50:  # 5-50km reasonable range
+            log.warning(f"Unrealistic total distance range: {total_distance:.1f}km")
+            return False
+        
+        return True
+
+    def _calculate_total_path_distance(self, bathymetry_profile):
+        """Calculate total distance of bathymetric path"""
+        if len(bathymetry_profile) < 2:
+            return 0
+        
+        # Try different distance calculation methods in order of preference
+        first_point = bathymetry_profile[0]
+        last_point = bathymetry_profile[-1]
+        
+        if 'distance_from_break_km' in first_point and 'distance_from_break_km' in last_point:
+            return abs(first_point['distance_from_break_km'] - last_point['distance_from_break_km'])
+        elif 'latitude' in first_point and 'longitude' in first_point:
+            return self._calculate_great_circle_distance(
+                first_point['latitude'], first_point['longitude'],
+                last_point['latitude'], last_point['longitude']
+            )
+        else:
+            # Fallback - sum all spacings
+            spacings = self._calculate_point_spacings(bathymetry_profile)
+            return sum(spacings)
+
+    def _enhance_adaptive_algorithm_error_handling(self, deep_water_result, surf_break_lat, surf_break_lon):
+        """Enhanced error handling wrapper for adaptive algorithm"""
+        try:
+            # Step 1: Get established baseline using existing proven method
+            initial_result = self._create_original_surf_path_and_collect_bathymetry(
+                deep_water_result, surf_break_lat, surf_break_lon
+            )
+            
+            if not initial_result:
+                raise ValueError("Failed to create initial bathymetric profile using existing method")
+            
+            initial_profile = initial_result['surf_path_bathymetry']
+            
+            # Step 2: Initialize adaptive algorithm parameters from CONF
+            self._initialize_adaptive_parameters()
+            
+            # Step 3: Apply gradient-based refinement to existing data
+            refined_profile = self._apply_gradient_based_refinement(initial_profile)
+            
+            # Step 4: Comprehensive scientific validation - NO FALLBACKS
+            validation_enabled = getattr(self, 'validation_enabled', True)
+            
+            if not validation_enabled:
+                log.warning(f"{CORE_ICONS['warning']} Scientific validation disabled - proceeding without verification")
+            elif not self._validate_adaptive_bathymetry_profile(refined_profile):
+                raise ValueError("Adaptive bathymetry failed comprehensive scientific validation")
+            
+            # Step 5: Return validated results
+            log.info(f"{CORE_ICONS['navigation']} Adaptive algorithm success: {initial_result['path_points_total']} → {len(refined_profile)} points")
+            
+            return {
+                'surf_path_bathymetry': refined_profile,
+                'path_points_total': len(refined_profile),
+                'path_distance_km': initial_result['path_distance_km'],
+                'adaptive_method': 'gradient_based_refinement',
+                'refinement_iterations': getattr(self, '_last_iteration_count', 1),
+                'validation_passed': True
+            }
+            
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Adaptive algorithm failed: {e}")
+            # FAIL FAST: Re-raise exception to maintain scientific integrity
+            # No fallbacks in scientific application - ensures only valid data reaches CONF storage
+            raise ValueError(f"Adaptive bathymetry algorithm failed scientific validation: {e}")
+
+    def _generate_validation_diagnostic_report(self, bathymetry_profile):
+        """Generate detailed diagnostic report for validation analysis"""
+        report = []
+        report.append("=== ADAPTIVE BATHYMETRY VALIDATION DIAGNOSTIC REPORT ===")
+        
+        # Basic profile statistics
+        depths = [p.get('depth', 0) for p in bathymetry_profile]
+        report.append(f"Profile Statistics:")
+        report.append(f"  - Total points: {len(bathymetry_profile)}")
+        report.append(f"  - Depth range: {max(depths):.1f}m → {min(depths):.1f}m")
+        report.append(f"  - Average depth: {sum(depths)/len(depths):.1f}m")
+        
+        # Zone distribution analysis
+        zones = {'deep': 0, 'transition': 0, 'critical': 0, 'breaking': 0}
+        for point in bathymetry_profile:
+            depth = point.get('depth', 0)
+            if depth > self.deep_water_threshold:
+                zones['deep'] += 1
+            elif self.critical_depth_max < depth <= self.deep_water_threshold:
+                zones['transition'] += 1
+            elif self.critical_depth_min <= depth <= self.critical_depth_max:
+                zones['critical'] += 1
+            else:
+                zones['breaking'] += 1
+        
+        report.append(f"Zone Distribution:")
+        for zone, count in zones.items():
+            report.append(f"  - {zone}: {count} points")
+        
+        # Gradient analysis
+        gradients = []
+        for i in range(len(bathymetry_profile) - 1):
+            gradient, _ = self._calculate_segment_metrics(bathymetry_profile[i], bathymetry_profile[i+1])
+            gradients.append(gradient)
+        
+        if gradients:
+            report.append(f"Gradient Statistics:")
+            report.append(f"  - Average: {sum(gradients)/len(gradients):.4f}")
+            report.append(f"  - Maximum: {max(gradients):.4f}")
+            report.append(f"  - Refinement threshold: {self.refinement_threshold:.4f}")
+            steep_gradients = [g for g in gradients if g > self.refinement_threshold]
+            report.append(f"  - Segments above threshold: {len(steep_gradients)}")
+        
+        return "\n".join(report)
+
+     
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
     
