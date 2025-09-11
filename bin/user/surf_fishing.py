@@ -3157,93 +3157,86 @@ class SurfForecastGenerator:
                 enhanced_forecast.append(enhanced_period)
         
         return enhanced_forecast
-    
+        
     def _determine_tide_stage(self, forecast_time, tide_conditions):
         """Determine tide stage for surf forecast using Phase I tide_table"""
         try:
-            if not hasattr(self, 'engine') or not self.engine:
-                log.warning(f"{CORE_ICONS['warning']} No engine available for Phase I tide integration")
+            # Use WeeWX 5.1 StdService database access pattern
+            db_manager = self.engine.db_binder.get_manager('wx_binding')
+            
+            # Get tides within 12 hours of forecast time
+            start_time = forecast_time - 43200  # 12 hours before
+            end_time = forecast_time + 43200    # 12 hours after
+            
+            tide_query = """
+                SELECT tide_time, tide_type, predicted_height, station_id, datum
+                FROM tide_table 
+                WHERE tide_time BETWEEN ? AND ?
+                ORDER BY tide_time
+            """
+            
+            tide_rows = list(db_manager.genSql(tide_query, (start_time, end_time)))
+            
+            if not tide_rows:
+                log.warning(f"{CORE_ICONS['warning']} No Phase I tide data found for surf forecast time")
                 return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
             
-            # Query Phase I tide_table for tides around forecast time
-            db_manager = self.engine.db_binder.get_manager('wx_binding')
-            try:
-                # Get tides within 12 hours of forecast time
-                start_time = forecast_time - 43200  # 12 hours before
-                end_time = forecast_time + 43200    # 12 hours after
+            # Find the closest tide events before and after forecast time
+            past_tides = [row for row in tide_rows if row[0] <= forecast_time]
+            future_tides = [row for row in tide_rows if row[0] > forecast_time]
+            
+            if not past_tides and not future_tides:
+                return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
+            
+            # Determine tide stage based on surrounding tides
+            if past_tides and future_tides:
+                last_tide = past_tides[-1]
+                next_tide = future_tides[0]
                 
-                tide_query = """
-                    SELECT tide_time, tide_type, predicted_height, station_id, datum
-                    FROM tide_table 
-                    WHERE tide_time BETWEEN ? AND ?
-                    ORDER BY tide_time
-                """
+                # Interpolate height between tides
+                time_diff = next_tide[0] - last_tide[0]
+                time_progress = (forecast_time - last_tide[0]) / time_diff
+                height_diff = next_tide[2] - last_tide[2]
+                interpolated_height = last_tide[2] + (height_diff * time_progress)
                 
-                tide_rows = list(db_manager.genSql(tide_query, (start_time, end_time)))
-                
-                if not tide_rows:
-                    log.warning(f"{CORE_ICONS['warning']} No Phase I tide data found for surf forecast time")
-                    return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
-                
-                # Find the closest tide events before and after forecast time
-                past_tides = [row for row in tide_rows if row[0] <= forecast_time]
-                future_tides = [row for row in tide_rows if row[0] > forecast_time]
-                
-                if not past_tides and not future_tides:
-                    return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
-                
-                # Determine tide stage based on surrounding tides
-                if past_tides and future_tides:
-                    last_tide = past_tides[-1]
-                    next_tide = future_tides[0]
-                    
-                    # Interpolate height between tides
-                    time_diff = next_tide[0] - last_tide[0]
-                    time_progress = (forecast_time - last_tide[0]) / time_diff
-                    height_diff = next_tide[2] - last_tide[2]
-                    interpolated_height = last_tide[2] + (height_diff * time_progress)
-                    
-                    # Determine stage based on tide types and progression
-                    if last_tide[1] == 'L' and next_tide[1] == 'H':
-                        stage = 'rising'
-                    elif last_tide[1] == 'H' and next_tide[1] == 'L':
-                        stage = 'falling'
-                    elif last_tide[1] == 'H' and time_progress < 0.5:
-                        stage = 'high_slack'
-                    elif last_tide[1] == 'L' and time_progress < 0.5:
-                        stage = 'low_slack'
-                    else:
-                        stage = 'transitional'
-                    
-                    return {
-                        'stage': stage,
-                        'height': interpolated_height,
-                        'confidence': 0.8
-                    }
-                
-                elif past_tides:
-                    # Only past tide data available
-                    last_tide = past_tides[-1]
-                    stage = 'high_slack' if last_tide[1] == 'H' else 'low_slack'
-                    return {
-                        'stage': stage,
-                        'height': last_tide[2],
-                        'confidence': 0.6
-                    }
-                
+                # Determine stage based on tide types and progression
+                if last_tide[1] == 'L' and next_tide[1] == 'H':
+                    stage = 'rising'
+                elif last_tide[1] == 'H' and next_tide[1] == 'L':
+                    stage = 'falling'
+                elif last_tide[1] == 'H' and time_progress < 0.5:
+                    stage = 'high_slack'
+                elif last_tide[1] == 'L' and time_progress < 0.5:
+                    stage = 'low_slack'
                 else:
-                    # Only future tide data available  
-                    next_tide = future_tides[0]
-                    stage = 'rising' if next_tide[1] == 'H' else 'falling'
-                    return {
-                        'stage': stage,
-                        'height': next_tide[2],
-                        'confidence': 0.6
-                    }
-                    
-            finally:
-                db_manager.close()
-                    
+                    stage = 'transitional'
+                
+                return {
+                    'stage': stage,
+                    'height': interpolated_height,
+                    'confidence': 0.8
+                }
+            
+            elif past_tides:
+                # Only past tide data available
+                last_tide = past_tides[-1]
+                stage = 'high_slack' if last_tide[1] == 'H' else 'low_slack'
+                return {
+                    'stage': stage,
+                    'height': last_tide[2],
+                    'confidence': 0.6
+                }
+            
+            else:
+                # Only future tide data available  
+                next_tide = future_tides[0]
+                stage = 'rising' if next_tide[1] == 'H' else 'falling'
+                return {
+                    'stage': stage,
+                    'height': next_tide[2],
+                    'confidence': 0.6
+                }
+                
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error determining tide stage for surf: {e}")
             return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
@@ -4797,85 +4790,84 @@ class FishingForecastGenerator:
     def _collect_tide_data_from_phase_i(self, period, location_coords, data_source):
         """Collect tide data from Phase I tide_table for fishing forecasts"""
         try:
-            if not hasattr(self, 'engine') or not self.engine:
-                raise Exception("No engine available for Phase I tide integration")
-            
             period_start = period['period_start_time']
             period_end = period['period_end_time']
             
-            # Get tide data from Phase I tide_table using correct field names
+            # Use WeeWX 5.1 StdService database access pattern
             db_manager = self.engine.db_binder.get_manager('wx_binding')
-            try:
-                # Query Phase I tide_table for tide events during the fishing period
-                tide_query = """
-                    SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
-                    FROM tide_table 
-                    WHERE tide_time BETWEEN ? AND ?
-                    ORDER BY tide_time
-                """
+            
+            # Query Phase I tide_table for tide events during the fishing period
+            tide_query = """
+                SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
+                FROM tide_table 
+                WHERE tide_time BETWEEN ? AND ?
+                ORDER BY tide_time
+            """
+            
+            tide_rows = list(db_manager.genSql(tide_query, (period_start, period_end)))
+            
+            if not tide_rows:
+                # Expand search window to find nearest tides
+                expanded_start = period_start - 21600  # 6 hours before
+                expanded_end = period_end + 21600    # 6 hours after
                 
-                tide_rows = list(db_manager.genSql(tide_query, (period_start, period_end)))
+                tide_rows = list(db_manager.genSql(tide_query, (expanded_start, expanded_end)))
                 
                 if not tide_rows:
-                    # Expand search window to find nearest tides
-                    expanded_start = period_start - 21600  # 6 hours before
-                    expanded_end = period_end + 21600    # 6 hours after
-                    
-                    tide_rows = list(db_manager.genSql(tide_query, (expanded_start, expanded_end)))
-                    
-                    if not tide_rows:
-                        raise Exception(f"No Phase I tide data found in expanded time window")
-                
-                # Analyze tide movement during fishing period
-                if len(tide_rows) >= 2:
-                    # Calculate trend from multiple tide points
-                    heights = [row[2] for row in tide_rows if row[2] is not None]
-                    times = [row[0] for row in tide_rows if row[0] is not None]
-                    
-                    if len(heights) >= 2:
-                        height_change = heights[-1] - heights[0]
-                        time_span = times[-1] - times[0]
-                        
-                        # Calculate tide movement using default thresholds (until CONF expanded)
-                        if height_change > 0.1:
-                            movement = 'rising'
-                        elif height_change < -0.1:
-                            movement = 'falling'
-                        else:
-                            movement = 'slack'
-                    else:
-                        movement = 'unknown'
-                else:
-                    # Single tide event - determine from tide_type
-                    tide_type = tide_rows[0][1]
-                    if tide_type == 'H':
-                        movement = 'high_slack'
-                    elif tide_type == 'L':
-                        movement = 'low_slack'
-                    else:
-                        movement = 'unknown'
-                
-                # Calculate tide range (simplified)
+                    raise Exception(f"No Phase I tide data found in expanded time window")
+            
+            # Analyze tide movement during fishing period
+            if len(tide_rows) >= 2:
+                # Calculate trend from multiple tide points
                 heights = [row[2] for row in tide_rows if row[2] is not None]
-                tide_range = max(heights) - min(heights) if len(heights) > 1 else 0.0
+                times = [row[0] for row in tide_rows if row[0] is not None]
                 
-                # Get current/nearest tide height
-                current_height = heights[-1] if heights else 0.0
-                
-                # Estimate time to next tide change (default until CONF expanded)
-                time_to_next = 6.0  # Default 6 hour estimate
-                
-                return {
-                    'height': current_height,
-                    'movement': movement,
-                    'range': tide_range,
-                    'time_to_next_hours': time_to_next,
-                    'confidence': 0.8,
-                    'source': 'phase_i'
-                }
-            finally:
-                db_manager.close()
-                
+                if len(heights) >= 2:
+                    height_change = heights[-1] - heights[0]
+                    
+                    # Get movement thresholds from CONF
+                    movement_thresholds = self.fishing_scoring.get('tide_movement_thresholds', {})
+                    rising_threshold = float(movement_thresholds.get('rising_threshold', '0.1'))
+                    falling_threshold = float(movement_thresholds.get('falling_threshold', '-0.1'))
+                    
+                    if height_change > rising_threshold:
+                        movement = 'rising'
+                    elif height_change < falling_threshold:
+                        movement = 'falling'
+                    else:
+                        movement = 'slack'
+                else:
+                    movement = 'unknown'
+            else:
+                # Single tide event - determine from tide_type
+                tide_type = tide_rows[0][1]
+                if tide_type == 'H':
+                    movement = 'high_slack'
+                elif tide_type == 'L':
+                    movement = 'low_slack'
+                else:
+                    movement = 'unknown'
+            
+            # Calculate tide range
+            heights = [row[2] for row in tide_rows if row[2] is not None]
+            tide_range = max(heights) - min(heights) if len(heights) > 1 else 0.0
+            
+            # Get current/nearest tide height
+            current_height = heights[-1] if heights else 0.0
+            
+            # Get time to next tide change from CONF
+            tide_cycle_config = self.fishing_scoring.get('tide_cycle', {})
+            default_cycle_hours = float(tide_cycle_config.get('default_cycle_hours', '6.0'))
+            
+            return {
+                'height': current_height,
+                'movement': movement,
+                'range': tide_range,
+                'time_to_next_hours': default_cycle_hours,
+                'confidence': float(tide_cycle_config.get('phase_i_confidence', '0.8')),
+                'source': 'phase_i'
+            }
+            
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error collecting Phase I tide data: {e}")
             raise Exception(f"Phase I tide data collection failed: {e}")
