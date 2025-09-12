@@ -5401,10 +5401,6 @@ class FishingForecastGenerator:
     def generate_fishing_forecast(self, spot, marine_conditions):
         """
         Generate complete fishing forecast for a spot with Phase I tide integration
-        
-        REWRITTEN METHOD: Adds Phase I tide integration while preserving all existing functionality
-        THREAD-SAFE: Uses WeeWX 5.1 patterns for database access
-        NO FALLBACKS: Fails when Phase I tide data unavailable (per CLAUDE.md requirements)
         """
         try:
             log.debug(f"{CORE_ICONS['navigation']} Generating fishing forecast for {spot['name']}")
@@ -5438,31 +5434,10 @@ class FishingForecastGenerator:
             forecasts = []
             for period in periods:
                 try:
-                    # NEW: Phase I tide integration for fishing forecasts
-                    try:
-                        tide_info = self._determine_fishing_tide_movement(period['period_start_time'])
-                        
-                        # Enhanced tide scoring with Phase I data
-                        tide_score = {
-                            'score': self._calculate_fishing_tide_score(tide_info),
-                            'movement': tide_info['movement'],
-                            'time_to_next_hours': tide_info['time_to_next_hours'],
-                            'confidence': 0.9,  # High confidence with Phase I data
-                            'description': tide_info['description']
-                        }
-                        
-                        log.debug(f"{CORE_ICONS['status']} Fishing tide integrated: {tide_info['movement']} tide, {tide_info['quality']} conditions")
-                        
-                    except Exception as tide_error:
-                        # NO FALLBACKS: Fail as required
-                        log.error(f"{CORE_ICONS['warning']} Phase I fishing tide integration failed: {tide_error}")
-                        log.info(f"{CORE_ICONS['navigation']} Phase I MarineDataService required for fishing tide analysis")
-                        raise Exception(f"Phase I tide integration required for fishing: {tide_error}")
+                    # FIXED: Use existing unified scoring method that handles tide data internally
+                    period_score = self.score_fishing_period_unified(period, spot, marine_conditions)
                     
-                    # PRESERVE EXISTING: Score period with unified data sources (modified to use Phase I tide data)
-                    period_score = self.score_fishing_period_unified_with_tide(period, spot, marine_conditions, tide_score)
-                    
-                    # PRESERVE EXISTING: Create forecast record (enhanced with Phase I data)
+                    # PRESERVE EXISTING: Create forecast record with period_score data structure
                     forecast = {
                         'forecast_time': period['period_start_time'],
                         'forecast_date': period['forecast_date'],
@@ -5471,17 +5446,16 @@ class FishingForecastGenerator:
                         'period_end_hour': period['period_end_hour'],
                         'generated_time': int(time.time()),
                         'pressure_trend': period_score['pressure']['trend'],
-                        'tide_movement': tide_score['movement'],  # NEW: Real Phase I data
+                        'tide_movement': period_score['tide']['movement'],
                         'species_activity': period_score['species']['activity_level'],
                         'activity_rating': period_score['overall']['rating'],
                         'conditions_text': period_score['overall']['description'],
                         'best_species': period_score['species']['best_species'],
                         'confidence': period_score['overall']['confidence'],
-                        # NEW: Additional Phase I tide data
-                        'tide_score': tide_score['score'],
-                        'time_to_next_hours': tide_score['time_to_next_hours'],
-                        'tide_confidence': tide_score['confidence'],
-                        'tide_description': tide_score['description']
+                        'tide_score': period_score['tide']['score'],
+                        'time_to_next_hours': period_score['tide']['time_to_next_hours'],
+                        'tide_confidence': period_score['tide']['confidence'],
+                        'tide_description': period_score['tide']['description']
                     }
                     forecasts.append(forecast)
                     
