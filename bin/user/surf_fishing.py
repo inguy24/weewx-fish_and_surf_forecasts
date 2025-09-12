@@ -6493,7 +6493,7 @@ class SurfFishingService(StdService):
                     
                     # EXISTING: Create thread-local generators with database manager
                     surf_generator = SurfForecastGenerator(self.config_dict, db_manager)
-                    fishing_generator = FishingForecastGenerator(self.config_dict, db_manager)
+                    fishing_generator = FishingForecastGenerator(self.config_dict, self.engine) 
                     
                     # EXISTING: Get active spots
                     active_surf_spots = self._get_active_surf_spots()
