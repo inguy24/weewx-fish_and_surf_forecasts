@@ -5787,17 +5787,17 @@ class FishingForecastGenerator:
             period_end = period['period_end_time']
             
             # Use WeeWX 5.1 StdService database access pattern
-            db_manager = self.engine.db_binder.get_manager('wx_binding')
-            
-            # Query Phase I tide_table for tide events during the fishing period
-            tide_query = """
-                SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
-                FROM tide_table 
-                WHERE tide_time BETWEEN ? AND ?
-                ORDER BY tide_time
-            """
-            
-            tide_rows = list(db_manager.genSql(tide_query, (period_start, period_end)))
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                
+                # Query Phase I tide_table for tide events during the fishing period
+                tide_query = """
+                    SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
+                    FROM tide_table 
+                    WHERE tide_time BETWEEN ? AND ?
+                    ORDER BY tide_time
+                """
+                
+                tide_rows = list(db_manager.genSql(tide_query, (period_start, period_end)))
             
             if not tide_rows:
                 # Expand search window to find nearest tides
