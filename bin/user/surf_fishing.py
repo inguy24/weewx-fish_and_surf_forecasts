@@ -5511,13 +5511,8 @@ class FishingForecastGenerator:
 
             # FIXED: Correct tide data collection method calls
             try:
-                if data_sources['tide']['type'] == 'phase_i' and self.integration_manager:
-                    # Use Phase I tide data
-                    tide_data = self._collect_tide_data_from_phase_i(period, location_coords, data_sources['tide'])
-                else:
-                    # FIXED: Create simple tide data structure instead of calling non-existent method
-                    # FAIL IMMEDIATELY: No fallbacks per CLAUDE.md rules
-                    raise Exception("Phase I tide integration required - no fallback available")
+                # Always try to collect Phase I tide data directly from tide_table (like surf forecasts do)
+                tide_data = self._collect_tide_data_from_phase_i(period, location_coords, data_sources['tide'])
 
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error collecting tide data: {e}")
