@@ -1950,6 +1950,7 @@ class BathymetryProcessor:
 
     def _requires_refinement(self, point1, point2, gradient, segment_distance):
         """Determine if bathymetric segment requires additional point refinement"""
+        
         # Minimum distance enforcement (prevent point clustering)
         if segment_distance < self.min_segment_distance:  # 200m minimum
             return False
@@ -1960,23 +1961,19 @@ class BathymetryProcessor:
         
         # Cliff face detection (prevent mapping vertical features)
         if gradient > 0.5 and segment_distance < 500:  # 50% grade over <500m = cliff face
-            log.debug(f"Cliff face detected - skipping refinement: {gradient:.3f} gradient over {segment_distance:.0f}m")
+            log.debug(f"Cliff face detected - skipping refinement: {gradient:.6f} gradient over {segment_distance:.0f}m")
             return False
         
-        # Zone-based refinement logic
-        avg_depth = (point1['depth'] + point2['depth']) / 2
+        # FIXED: Use base threshold directly for all zones - no multipliers
+        # Let the actual gradient magnitude determine refinement needs regardless of depth zone
+        needs_refinement = gradient > self.refinement_threshold  # Direct use of 0.02 from YAML
         
-        # Deep water zone - very conservative refinement
-        if avg_depth > self.deep_water_threshold:  # >50m
-            return gradient > (self.refinement_threshold * 5)  # 0.02 * 5 = 0.1
+        if needs_refinement:
+            avg_depth = (point1['depth'] + point2['depth']) / 2
+            log.debug(f"Refinement triggered: gradient={gradient:.6f} > threshold={self.refinement_threshold:.3f} "
+                    f"at depth={avg_depth:.1f}m, distance={segment_distance:.0f}m")
         
-        # Critical zone - aggressive refinement
-        elif self.critical_depth_min <= avg_depth <= self.critical_depth_max:  # 5-50m
-            return gradient > self.refinement_threshold  # 0.02
-        
-        # Transition zone - moderate refinement
-        else:
-            return gradient > (self.refinement_threshold * 2)  # 0.02 * 2 = 0.04
+        return needs_refinement
 
     def _create_interpolated_midpoint(self, point1, point2):
         """Create interpolated midpoint between two bathymetric points with GEBCO depth query"""
