@@ -830,13 +830,13 @@ class SurfFishingConfigurator:
             # Get coordinates with land/sea validation
             lat, lon = self._get_coordinates_with_validation("fishing spot")
             
-            location_type = self._configure_fishing_characteristics()
+            location_config = self._configure_fishing_characteristics(name, lat, lon)
             
             spot_data = {
                 'name': name,
                 'latitude': lat,
                 'longitude': lon,
-                'location_type': location_type
+                'location_type': location_config.get('location_type', 'shore')
             }
             
             fishing_spots.append(spot_data)
