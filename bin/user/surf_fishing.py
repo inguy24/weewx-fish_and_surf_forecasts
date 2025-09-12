@@ -5792,11 +5792,13 @@ class FishingForecastGenerator:
             if not fishing_forecast or not self.engine:
                 return False
             
-            # Clear existing forecasts for this spot (current forecasts only)
-            delete_query = "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?"
-            db_manager.connection.execute(delete_query, (spot_id,))
+            # Clear existing forecasts for this spot - WeeWX 5.1 pattern
+            db_manager.connection.execute(
+                "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
+                (spot_id,)
+            )
             
-            # Insert new forecasts with Phase I tide data including required WeeWX fields
+            # Insert new forecasts with all required WeeWX fields
             insert_query = """
                 INSERT INTO marine_forecast_fishing_data (
                     dateTime, usUnits, spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
@@ -5819,7 +5821,7 @@ class FishingForecastGenerator:
                     period['period_end_hour'],
                     period['generated_time'],
                     period.get('pressure_trend', 'stable'),
-                    period.get('tide_movement', 'not_available'),  # Clear indication vs 'unknown'
+                    period.get('tide_movement', 'not_available'),
                     period.get('species_activity', 'moderate'),
                     period.get('activity_rating', 2),
                     period.get('conditions_text', 'Fishing conditions'),
@@ -6102,6 +6104,21 @@ class FishingForecastGenerator:
             log.error(f"{CORE_ICONS['warning']} Error determining tide stage for surf: {e}")
             return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
 
+    def _get_target_unit_system(self):
+        """Get the target unit system from WeeWX configuration"""
+        
+        # Read the target unit system from StdConvert section
+        convert_config = self.config_dict.get('StdConvert', {})
+        target_unit_nick = convert_config.get('target_unit', 'US')
+        
+        # Map string to WeeWX constant
+        if target_unit_nick.upper() == 'METRIC':
+            return weewx.METRIC
+        elif target_unit_nick.upper() == 'METRICWX':
+            return weewx.METRICWX
+        else:
+            return weewx.US
+    
 
 class FishingForecastSearchList:
     """Provides fishing forecast data to WeeWX templates - replaces old SearchList"""
