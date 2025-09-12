@@ -828,7 +828,7 @@ class SurfFishingConfigurator:
                 break
             
             # Get coordinates with land/sea validation
-            lat, lon = self._get_coordinates_for_water_location("fishing spot")
+            lat, lon = self._get_coordinates_with_validation("fishing spot")
             
             location_type = self._configure_fishing_characteristics()
             
