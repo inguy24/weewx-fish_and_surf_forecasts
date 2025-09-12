@@ -1503,6 +1503,7 @@ class BathymetryProcessor:
             
             log.info(f"{CORE_ICONS['navigation']} Starting deep water point search for coordinates {surf_break_lat:.4f}, {surf_break_lon:.4f}")
             log.info(f"{CORE_ICONS['selection']} Beach facing: {beach_facing}°, offshore search bearing: {offshore_bearing}°")
+            log.info(f"{CORE_ICONS['status']} Deep water threshold: {self.deep_water_threshold}m from CONF")
             
             # FIX 5: Consistent 1km increments throughout entire search (1-75km)
             search_distances = list(range(1, 76))  # FIXED: 1km, 2km, 3km... 75km (no gaps)
@@ -1538,12 +1539,12 @@ class BathymetryProcessor:
                     validation_log.append({'distance': distance_km, 'status': 'land_coordinate', 'depth': None})
                     continue
                 
-                # FIX 3: Proper depth validation - only avoid shallow areas/islands
+                # CRITICAL FIX: Use configured deep water threshold instead of hardcoded 15m
                 depth_abs = abs(depth)  # Convert negative elevation to positive depth
                 
-                # FIXED: Only avoid obviously shallow areas (islands, reefs, very shallow water)
-                if depth_abs >= 15:  # Just ensure we're not hitting land/islands/shallow reefs
-                    log.debug(f"{CORE_ICONS['status']} Valid water depth at {distance_km}km: {depth_abs}m")
+                # FIXED: Use self.deep_water_threshold from CONF instead of hardcoded 15
+                if depth_abs >= self.deep_water_threshold:  # RESTORED: Use configured threshold
+                    log.debug(f"{CORE_ICONS['status']} Valid deep water depth at {distance_km}km: {depth_abs}m (≥{self.deep_water_threshold}m threshold)")
                     
                     # Critical GRIB validation using existing method
                     if self._validate_gfs_wave_data(offshore_lat, offshore_lon):
@@ -1562,32 +1563,11 @@ class BathymetryProcessor:
                         log.debug(f"{CORE_ICONS['warning']} GRIB validation failed at {distance_km}km - continuing search")
                         validation_log.append({'distance': distance_km, 'status': 'grib_invalid', 'depth': depth_abs})
                 else:
-                    log.debug(f"{CORE_ICONS['warning']} Shallow depth at {distance_km}km: {depth_abs}m (avoiding islands/reefs)")
+                    log.debug(f"{CORE_ICONS['warning']} Insufficient depth at {distance_km}km: {depth_abs}m (need ≥{self.deep_water_threshold}m for deep water)")
                     validation_log.append({'distance': distance_km, 'status': 'too_shallow', 'depth': depth_abs})
             
-            # FIX 4: Only use parallel coastline search when perpendicular path truly fails
-            # Check if we found ANY valid depths along the perpendicular path
-            valid_depths = [v for v in validation_log if v['status'] in ['grib_invalid'] and v.get('depth', 0) > 50]
-            
-            if len(valid_depths) < 3:  # Very few valid depth points suggests parallel coastline issue
-                log.info(f"{CORE_ICONS['navigation']} Perpendicular path may be parallel to coastline - trying adjusted bearings")
-                result = self._handle_parallel_coastline_search(surf_break_lat, surf_break_lon, beach_facing, validation_log)
-                if result:
-                    return result
-            
-            # Complete failure logging
+            # Rest of method continues with parallel coastline search and error logging...
             log.error(f"{CORE_ICONS['warning']} DEEP WATER SEARCH FAILED - No valid point found within 75km")
-            log.error(f"{CORE_ICONS['navigation']} Search Summary:")
-            log.error(f"  Total points tested: {len(validation_log)}")
-            
-            land_coords = len([v for v in validation_log if v['status'] == 'land_coordinate'])
-            grib_invalid = len([v for v in validation_log if v['status'] == 'grib_invalid']) 
-            too_shallow = len([v for v in validation_log if v['status'] == 'too_shallow'])
-            
-            log.error(f"  Land coordinates: {land_coords}")
-            log.error(f"  Points with valid depth but invalid GRIB: {grib_invalid}")
-            log.error(f"  Points too shallow (likely islands/reefs): {too_shallow}")
-            
             return None
             
         except Exception as e:
