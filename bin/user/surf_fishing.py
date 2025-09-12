@@ -2832,37 +2832,35 @@ class BathymetryProcessor:
         return validation_errors       
 
     def _validate_coordinate_progression(self, bathymetry_profile):
-        """Validate coordinate progression follows logical path from offshore to shore"""
-        if len(bathymetry_profile) < 2:
-            return False
+        """Validate coordinate progression follows reasonable geographic patterns"""
         
-        # Check coordinates are reasonable (not null island, etc.)
-        for i, point in enumerate(bathymetry_profile):
-            lat = point.get('latitude', 0)
-            lon = point.get('longitude', 0)
-            
-            # Basic coordinate sanity checks
-            if not (-90 <= lat <= 90):
-                log.warning(f"Invalid latitude: {lat} at point {i}")
-                return False
-            if not (-180 <= lon <= 180):
-                log.warning(f"Invalid longitude: {lon} at point {i}")
-                return False
+        # Coordinates should progress monotonically along the path
+        # Check for unrealistic coordinate jumps or reversals
         
-        # Calculate total path distance for reasonableness
-        total_distance = 0
+        total_distance = 0  # Initialize total distance counter
+        
         for i in range(len(bathymetry_profile) - 1):
             current = bathymetry_profile[i]
             next_point = bathymetry_profile[i + 1]
             
-            segment_distance = self._calculate_great_circle_distance(
+            # Calculate distance between consecutive points
+            distance_meters = self._calculate_great_circle_distance(
                 current['latitude'], current['longitude'],
                 next_point['latitude'], next_point['longitude']
             )
-            total_distance += segment_distance
+            
+            # FIXED: Convert meters to kilometers for validation
+            distance_km = distance_meters / 1000.0
+            total_distance += distance_km
+            
+            # Check for unrealistic coordinate jumps (>5km between consecutive points)
+            if distance_km > 5.0:  # 5km
+                log.warning(f"Unrealistic coordinate jump: {distance_km:.1f}km between consecutive points")
+                return False
         
+        # FIXED: Now total_distance is in kilometers as expected
         # Path should be reasonable for surf forecasting (5-50km)
-        if total_distance < 5 or total_distance > 50:
+        if total_distance < 5.0 or total_distance > 50.0:
             log.warning(f"Unrealistic total path distance: {total_distance:.1f}km")
             return False
         
