@@ -5512,7 +5512,16 @@ class FishingForecastGenerator:
             # FIXED: Correct tide data collection method calls
             try:
                 # Always try to collect Phase I tide data directly from tide_table (like surf forecasts do)
-                tide_data = self._collect_tide_data_from_phase_i(period, location_coords, data_sources['tide'])
+                with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                    tide_info = self._determine_tide_stage(period['period_start_time'], {}, db_manager)
+                    
+                    # Convert surf tide format to fishing tide format
+                    tide_data = {
+                        'tide_movement': tide_info['stage'],  # 'rising', 'falling', 'high_slack', 'low_slack'
+                        'tide_height': tide_info['height'],
+                        'confidence': tide_info['confidence'],
+                        'time_to_next_hours': 6.0  # Default from CONF if needed
+                    }
 
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error collecting tide data: {e}")
@@ -5774,91 +5783,6 @@ class FishingForecastGenerator:
             log.error(f"{CORE_ICONS['warning']} Error scoring fishing period: {e}")
             # FIXED: Fail cleanly when Phase I unavailable per CLAUDE.md Fix 5
             raise Exception(f"Fishing period scoring requires Phase I integration: {e}")
-
-    def _collect_tide_data_from_phase_i(self, period, location_coords, data_source):
-        """Collect tide data from Phase I tide_table for fishing forecasts"""
-        try:
-            period_start = period['period_start_time']
-            period_end = period['period_end_time']
-            
-            # Use WeeWX 5.1 StdService database access pattern
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                
-                # Query Phase I tide_table for tide events during the fishing period
-                tide_query = """
-                    SELECT tide_time, tide_type, predicted_height, station_id, datum, days_ahead
-                    FROM tide_table 
-                    WHERE tide_time BETWEEN ? AND ?
-                    ORDER BY tide_time
-                """
-                
-                tide_rows = list(db_manager.genSql(tide_query, (period_start, period_end)))
-            
-            if not tide_rows:
-                # Expand search window to find nearest tides
-                expanded_start = period_start - 21600  # 6 hours before
-                expanded_end = period_end + 21600    # 6 hours after
-                
-                tide_rows = list(db_manager.genSql(tide_query, (expanded_start, expanded_end)))
-                
-                if not tide_rows:
-                    raise Exception(f"No Phase I tide data found in expanded time window")
-            
-            # Analyze tide movement during fishing period
-            if len(tide_rows) >= 2:
-                # Calculate trend from multiple tide points
-                heights = [row[2] for row in tide_rows if row[2] is not None]
-                times = [row[0] for row in tide_rows if row[0] is not None]
-                
-                if len(heights) >= 2:
-                    height_change = heights[-1] - heights[0]
-                    
-                    # Get movement thresholds from CONF
-                    movement_thresholds = self.fishing_scoring.get('tide_movement_thresholds', {})
-                    rising_threshold = float(movement_thresholds.get('rising_threshold', '0.1'))
-                    falling_threshold = float(movement_thresholds.get('falling_threshold', '-0.1'))
-                    
-                    if height_change > rising_threshold:
-                        movement = 'rising'
-                    elif height_change < falling_threshold:
-                        movement = 'falling'
-                    else:
-                        movement = 'slack'
-                else:
-                    movement = 'unknown'
-            else:
-                # Single tide event - determine from tide_type
-                tide_type = tide_rows[0][1]
-                if tide_type == 'H':
-                    movement = 'high_slack'
-                elif tide_type == 'L':
-                    movement = 'low_slack'
-                else:
-                    movement = 'unknown'
-            
-            # Calculate tide range
-            heights = [row[2] for row in tide_rows if row[2] is not None]
-            tide_range = max(heights) - min(heights) if len(heights) > 1 else 0.0
-            
-            # Get current/nearest tide height
-            current_height = heights[-1] if heights else 0.0
-            
-            # Get time to next tide change from CONF
-            tide_cycle_config = self.fishing_scoring.get('tide_cycle', {})
-            default_cycle_hours = float(tide_cycle_config.get('default_cycle_hours', '6.0'))
-            
-            return {
-                'height': current_height,
-                'movement': movement,
-                'range': tide_range,
-                'time_to_next_hours': default_cycle_hours,
-                'confidence': float(tide_cycle_config.get('phase_i_confidence', '0.8')),
-                'source': 'phase_i'
-            }
-            
-        except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error collecting Phase I tide data: {e}")
-            raise Exception(f"Phase I tide data collection failed: {e}")
 
     def store_fishing_forecasts(self, spot_id, fishing_forecast):
         """
