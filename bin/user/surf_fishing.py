@@ -1932,7 +1932,10 @@ class BathymetryProcessor:
             log.debug(f"{CORE_ICONS['navigation']} Iteration {iteration}: {len(current_profile)} points")
         
         # Apply statistical anomaly detection and smoothing
-        final_profile = self._detect_and_smooth_bathymetric_anomalies(current_profile)
+        smoothed_profile = self._detect_and_smooth_bathymetric_anomalies(current_profile)
+
+        # Apply conservative coarsening in deep water zones with minimal gradients
+        final_profile = self._apply_conservative_coarsening(smoothed_profile)
         
         return final_profile
 
