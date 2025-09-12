@@ -6014,6 +6014,91 @@ class FishingForecastGenerator:
             log.error(f"{CORE_ICONS['warning']} Error exporting fishing forecast summary: {e}")
             return {'error': f'Export failed: {str(e)}'}
 
+    def _determine_tide_stage(self, forecast_time, tide_conditions, db_manager=None):
+        """Determine tide stage for surf forecast using Phase I tide_table"""
+        try:
+            # Use WeeWX 5.1 StdService database access pattern
+            if db_manager is None:
+                db_manager = self.db_manager
+                if db_manager is None:
+                    raise Exception("No database manager available")
+            
+            # Get tides within 12 hours of forecast time
+            start_time = forecast_time - 43200  # 12 hours before
+            end_time = forecast_time + 43200    # 12 hours after
+            
+            tide_query = """
+                SELECT tide_time, tide_type, predicted_height, station_id, datum
+                FROM tide_table 
+                WHERE tide_time BETWEEN ? AND ?
+                ORDER BY tide_time
+            """
+            
+            tide_rows = list(db_manager.genSql(tide_query, (start_time, end_time)))
+            
+            if not tide_rows:
+                log.warning(f"{CORE_ICONS['warning']} No Phase I tide data found for surf forecast time")
+                return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
+            
+            # Find the closest tide events before and after forecast time
+            past_tides = [row for row in tide_rows if row[0] <= forecast_time]
+            future_tides = [row for row in tide_rows if row[0] > forecast_time]
+            
+            if not past_tides and not future_tides:
+                return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
+            
+            # Determine tide stage based on surrounding tides
+            if past_tides and future_tides:
+                last_tide = past_tides[-1]
+                next_tide = future_tides[0]
+                
+                # Interpolate height between tides
+                time_diff = next_tide[0] - last_tide[0]
+                time_progress = (forecast_time - last_tide[0]) / time_diff
+                height_diff = next_tide[2] - last_tide[2]
+                interpolated_height = last_tide[2] + (height_diff * time_progress)
+                
+                # Determine stage based on tide types and progression
+                if last_tide[1] == 'L' and next_tide[1] == 'H':
+                    stage = 'rising'
+                elif last_tide[1] == 'H' and next_tide[1] == 'L':
+                    stage = 'falling'
+                elif last_tide[1] == 'H' and time_progress < 0.5:
+                    stage = 'high_slack'
+                elif last_tide[1] == 'L' and time_progress < 0.5:
+                    stage = 'low_slack'
+                else:
+                    stage = 'transitional'
+                
+                return {
+                    'stage': stage,
+                    'height': interpolated_height,
+                    'confidence': 0.8
+                }
+            
+            elif past_tides:
+                # Only past tide data available
+                last_tide = past_tides[-1]
+                stage = 'high_slack' if last_tide[1] == 'H' else 'low_slack'
+                return {
+                    'stage': stage,
+                    'height': last_tide[2],
+                    'confidence': 0.6
+                }
+            
+            else:
+                # Only future tide data available  
+                next_tide = future_tides[0]
+                stage = 'rising' if next_tide[1] == 'H' else 'falling'
+                return {
+                    'stage': stage,
+                    'height': next_tide[2],
+                    'confidence': 0.6
+                }
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error determining tide stage for surf: {e}")
+            return {'stage': 'unknown', 'height': 0.0, 'confidence': 0.3}
 
 
 class FishingForecastSearchList:
