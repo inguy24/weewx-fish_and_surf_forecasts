@@ -5516,12 +5516,9 @@ class FishingForecastGenerator:
                     tide_data = self._collect_tide_data_from_phase_i(period, location_coords, data_sources['tide'])
                 else:
                     # FIXED: Create simple tide data structure instead of calling non-existent method
-                    tide_data = {
-                        'tide_movement': 'unknown',
-                        'tide_height': 0.0,
-                        'confidence': 0.3,
-                        'time_to_next_hours': 6.0
-                    }
+                    # FAIL IMMEDIATELY: No fallbacks per CLAUDE.md rules
+                    raise Exception("Phase I tide integration required - no fallback available")
+
             except Exception as e:
                 log.error(f"{CORE_ICONS['warning']} Error collecting tide data: {e}")
                 # FAIL CLEANLY: No hardcoded fallbacks per CLAUDE.md Fix 5
@@ -5529,7 +5526,7 @@ class FishingForecastGenerator:
 
             # PRESERVE EXISTING: Enhanced pressure scoring using CONF parameters (UNCHANGED)
             try:
-                pressure_ranges = self.fishing_scoring.get('pressure_scoring', {}).get('ranges', {})
+                pressure_ranges = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
                 if not pressure_ranges:
                     raise Exception("Pressure scoring ranges not found in CONF")
                 
@@ -5564,32 +5561,27 @@ class FishingForecastGenerator:
                 tide_movement = tide_data.get('tide_movement', 'unknown')
                 time_to_next = tide_data.get('time_to_next_hours', 6.0)
                 
-                # Determine tide quality based on movement and timing
-                if tide_movement in ['falling', 'rising']:
-                    if time_to_next <= 2.0:
-                        quality = 'optimal'
-                    elif time_to_next <= 4.0:
-                        quality = 'good'
-                    else:
-                        quality = 'fair'
-                else:
-                    quality = 'fair'
-                
-                # Calculate tide score using existing method if available
-                if hasattr(self, '_calculate_fishing_tide_score'):
-                    tide_score_value = self._calculate_fishing_tide_score({
-                        'movement': tide_movement,
-                        'quality': quality,
-                        'range': 4.0  # Default range
-                    })
-                else:
-                    # Fallback scoring if method missing
-                    if quality == 'optimal':
-                        tide_score_value = 0.9
-                    elif quality == 'good':
-                        tide_score_value = 0.7
-                    else:
-                        tide_score_value = 0.5
+                # Map tide movement to CONF tide phase scoring
+                tide_phase_mapping = {
+                    'rising': 'incoming',
+                    'falling': 'outgoing', 
+                    'high_slack': 'high_slack',
+                    'low_slack': 'low_slack',
+                    'slack': 'low_slack'  # Default slack to low_slack
+                }
+
+                tide_phase = tide_phase_mapping.get(tide_movement, tide_movement)
+
+                # Get tide phase scores from CONF
+                tide_phase_scoring = self.fishing_scoring.get('tide_phase_scoring', {})
+                if not tide_phase_scoring:
+                    raise Exception("Tide phase scoring not found in CONF")
+
+                tide_score_value = tide_phase_scoring.get(tide_phase, None)
+                if tide_score_value is None:
+                    raise Exception(f"Tide phase '{tide_phase}' not found in CONF tide_phase_scoring")
+
+                tide_score_value = float(tide_score_value)
                 
                 tide_score = {
                     'score': tide_score_value,
