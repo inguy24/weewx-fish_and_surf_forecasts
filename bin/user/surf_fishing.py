@@ -5258,53 +5258,101 @@ class FishingForecastGenerator:
         """
         
         try:
-            # THREAD SAFE: Use engine's DBBinder instead of opening new manager
+            # THREAD SAFE: Use WeeWX 5.1 database manager pattern
             if not self.engine:
                 raise Exception("No engine available for Phase I tide integration")
             
-            # WeeWX 5.1 PATTERN: Use engine's cached database manager
-            db_manager = self.engine.db_binder.get_manager('wx_binding')
-            
-            # Query Phase I tide_table for tide movement analysis
-            time_window = 12 * 3600  # 12 hours window
-            start_time = forecast_time - time_window
-            end_time = forecast_time + time_window
-            
-            # WeeWX 5.1 PATTERN: Add retry logic for database contention
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    result = db_manager.connection.execute("""
-                        SELECT tide_time, tide_type, predicted_height, station_id
-                        FROM tide_table 
-                        WHERE tide_time BETWEEN ? AND ?
-                        ORDER BY tide_time
-                        LIMIT 10
-                    """, (start_time, end_time))
+            # THREAD SAFE: Get fresh database manager for this thread
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                
+                # Query Phase I tide_table for tide movement analysis
+                time_window = 12 * 3600  # 12 hours window
+                start_time = forecast_time - time_window
+                end_time = forecast_time + time_window
+                
+                # ✅ FIXED: Use genSql pattern like working surf code
+                tide_query = """
+                    SELECT tide_time, tide_type, predicted_height, station_id
+                    FROM tide_table 
+                    WHERE tide_time BETWEEN ? AND ?
+                    ORDER BY tide_time
+                    LIMIT 10
+                """
+                tide_events = list(db_manager.genSql(tide_query, (start_time, end_time)))
+                
+                if not tide_events:
+                    raise Exception(f"No Phase I tide data found for fishing forecast time {forecast_time}")
+                
+                # PRESERVE EXISTING: Analyze tide movement for fishing optimization
+                before_events = [t for t in tide_events if t[0] <= forecast_time]
+                after_events = [t for t in tide_events if t[0] > forecast_time]
+                
+                if before_events and after_events:
+                    last_tide = before_events[-1]  # Most recent
+                    next_tide = after_events[0]    # Next upcoming
                     
-                    # Check if result is None (database timeout)
-                    if result is None:
-                        raise Exception("Database query returned None - possible timeout")
+                    # Calculate time to next tide change (important for fishing)
+                    time_to_next = (next_tide[0] - forecast_time) / 3600.0  # Hours
+                    time_from_last = (forecast_time - last_tide[0]) / 3600.0  # Hours
                     
-                    tide_events = result.fetchall()
-                    break  # Success - exit retry loop
-                    
-                except Exception as db_error:
-                    if attempt < max_retries - 1:
-                        log.warning(f"Database retry {attempt + 1}/{max_retries}: {db_error}")
-                        time.sleep(0.5)  # Brief delay before retry
-                        continue
+                    # Determine fishing-optimized tide movement
+                    if last_tide[1] == 'L' and next_tide[1] == 'H':
+                        movement = 'rising'
+                        # Fishing optimal: 2 hours before and after tide change
+                        if time_to_next <= 2.0 or time_from_last <= 2.0:
+                            fishing_quality = 'optimal'
+                        else:
+                            fishing_quality = 'good'
+                            
+                    elif last_tide[1] == 'H' and next_tide[1] == 'L':
+                        movement = 'falling'
+                        # Fishing optimal: 2 hours before and after tide change
+                        if time_to_next <= 2.0 or time_from_last <= 2.0:
+                            fishing_quality = 'optimal'
+                        else:
+                            fishing_quality = 'good'
                     else:
-                        raise  # Final attempt failed
-            
-            # Rest of the existing logic unchanged...
-            if not tide_events:
-                raise Exception(f"No Phase I tide data found for fishing forecast time {forecast_time}")
-            
-            # [Continue with existing tide analysis logic...]
+                        # Slack tide periods
+                        if abs(time_from_last) < 0.5:  # Within 30 minutes of tide
+                            movement = 'high' if last_tide[1] == 'H' else 'low'
+                            fishing_quality = 'fair'  # Slack water less optimal
+                        else:
+                            movement = 'rising' if next_tide[1] == 'H' else 'falling'
+                            fishing_quality = 'good'
+                    
+                    # Calculate tide range (affects fishing quality)
+                    tide_range = abs(next_tide[2] - last_tide[2])
+                    
+                elif before_events:
+                    # Only past events - use most recent
+                    closest_tide = before_events[-1]
+                    movement = 'high' if closest_tide[1] == 'H' else 'low'
+                    fishing_quality = 'fair'
+                    time_to_next = 6.0  # Default
+                    tide_range = 3.0  # Default
+                    
+                elif after_events:
+                    # Only future events - use next
+                    closest_tide = after_events[0]
+                    time_to_next = (closest_tide[0] - forecast_time) / 3600.0
+                    movement = 'rising' if closest_tide[1] == 'H' else 'falling'
+                    fishing_quality = 'good' if time_to_next <= 2.0 else 'fair'
+                    tide_range = 3.0  # Default
+                
+                else:
+                    raise Exception("Unable to determine tide movement from available data")
+                
+                return {
+                    'movement': movement,  # rising, falling, high, low
+                    'quality': fishing_quality,  # optimal, good, fair
+                    'time_to_next_hours': round(time_to_next, 1),
+                    'tide_range_feet': round(tide_range, 1),
+                    'description': f"{movement.title()} tide, {fishing_quality} fishing conditions"
+                }
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Phase I fishing tide integration failed: {e}")
+            # NO FALLBACKS: Fail as required by CLAUDE.md
             raise Exception(f"Phase I tide integration required for fishing forecasts: {e}")
 
     def _calculate_fishing_tide_score(self, tide_info):
@@ -5878,7 +5926,6 @@ class FishingForecastGenerator:
     def store_fishing_forecasts(self, spot_id, fishing_forecast):
         """
         Store fishing forecasts using WeeWX 5.1 thread-safe database patterns with Phase I tide data
-
         """
         try:
             if not fishing_forecast or not self.engine:
@@ -5886,23 +5933,22 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                connection = db_manager.connection
-            
-                # Clear existing forecasts for this spot (current forecasts only)
-                connection.execute(
-                    "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?",
-                    (spot_id,)
-                )
                 
-                # Insert new forecasts with Phase I tide data
+                # ✅ FIXED: Clear existing forecasts for this spot (current forecasts only)
+                delete_query = "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?"
+                list(db_manager.genSql(delete_query, (spot_id,)))
+                
+                # ✅ FIXED: Insert new forecasts with Phase I tide data
+                insert_query = """
+                    INSERT INTO marine_forecast_fishing_data (
+                        spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
+                        generated_time, pressure_trend, tide_movement, species_activity, 
+                        activity_rating, conditions_text, best_species
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                
                 for period in fishing_forecast:
-                    connection.execute("""
-                        INSERT INTO marine_forecast_fishing_data (
-                            spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
-                            generated_time, pressure_trend, tide_movement, species_activity, 
-                            activity_rating, conditions_text, best_species
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    values = (
                         spot_id,
                         period['forecast_date'],
                         period['period_name'], 
@@ -5915,10 +5961,8 @@ class FishingForecastGenerator:
                         period.get('activity_rating', 2),
                         period.get('conditions_text', 'Fishing conditions'),
                         json.dumps(period.get('best_species', []))
-                    ))
-                
-                # THREAD SAFE: Explicit commit
-                connection.commit()
+                    )
+                    list(db_manager.genSql(insert_query, values))
                 
                 log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods with tide data for spot {spot_id}")
                 return True
@@ -5938,42 +5982,43 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                result = db_manager.connection.execute("""
+                # ✅ FIXED: Use genSql pattern
+                query = """
                     SELECT forecast_date, period_name, period_start_hour, period_end_hour,
                         pressure_trend, tide_movement, species_activity, activity_rating,
                         conditions_text, best_species, generated_time
                     FROM marine_forecast_fishing_data 
                     WHERE spot_id = ? AND forecast_date BETWEEN ? AND ?
                     ORDER BY forecast_date ASC, period_start_hour ASC
-                """, (spot_id, current_time, end_time))
+                """
+                rows = list(db_manager.genSql(query, (spot_id, current_time, end_time)))
                 
-            rows = result.fetchall()
-            
-            forecasts = []
-            for row in rows:
-                try:
-                    best_species = json.loads(row[9]) if row[9] else []
-                except (json.JSONDecodeError, TypeError):
-                    best_species = []
+                # PRESERVE EXISTING: Complete forecast processing logic
+                forecasts = []
+                for row in rows:
+                    try:
+                        best_species = json.loads(row[9]) if row[9] else []
+                    except (json.JSONDecodeError, TypeError):
+                        best_species = []
+                    
+                    forecast = {
+                        'forecast_date': row[0],
+                        'period_name': row[1],
+                        'period_start_hour': row[2],
+                        'period_end_hour': row[3],
+                        'pressure_trend': row[4],
+                        'tide_movement': row[5],
+                        'species_activity': row[6],
+                        'activity_rating': row[7],
+                        'conditions_text': row[8],
+                        'best_species': best_species,
+                        'generated_time': row[10],
+                        'forecast_time_text': datetime.fromtimestamp(row[0] + (row[2] * 3600)).strftime('%m/%d %I:%M %p')
+                    }
+                    forecasts.append(forecast)
                 
-                forecast = {
-                    'forecast_date': row[0],
-                    'period_name': row[1],
-                    'period_start_hour': row[2],
-                    'period_end_hour': row[3],
-                    'pressure_trend': row[4],
-                    'tide_movement': row[5],
-                    'species_activity': row[6],
-                    'activity_rating': row[7],
-                    'conditions_text': row[8],
-                    'best_species': best_species,
-                    'generated_time': row[10],
-                    'forecast_time_text': datetime.fromtimestamp(row[0] + (row[2] * 3600)).strftime('%m/%d %I:%M %p')
-                }
-                forecasts.append(forecast)
-            
-            return forecasts
-            
+                return forecasts
+                
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error retrieving fishing forecast for spot {spot_id}: {e}")
             return []
@@ -5988,34 +6033,36 @@ class FishingForecastGenerator:
             
             # THREAD SAFE: Get fresh database manager for this thread
             with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                result = db_manager.connection.execute("""
+                # ✅ FIXED: Use genSql pattern
+                query = """
                     SELECT forecast_date, period_name, period_start_hour, period_end_hour,
                         activity_rating, conditions_text, best_species
                     FROM marine_forecast_fishing_data 
                     WHERE spot_id = ? AND forecast_date >= ? AND activity_rating >= ?
                     ORDER BY forecast_date ASC, period_start_hour ASC
                     LIMIT 1
-                """, (spot_id, current_time, min_rating))
-            
-            row = result.fetchone()
-            
-            if row:
-                try:
-                    best_species = json.loads(row[6]) if row[6] else []
-                except (json.JSONDecodeError, TypeError):
-                    best_species = []
+                """
+                rows = list(db_manager.genSql(query, (spot_id, current_time, min_rating)))
                 
-                return {
-                    'forecast_time': row[0] + (row[2] * 3600),
-                    'period_name': row[1],
-                    'activity_rating': row[4],
-                    'conditions_text': row[5],
-                    'best_species': best_species,
-                    'forecast_time_text': datetime.fromtimestamp(row[0] + (row[2] * 3600)).strftime('%m/%d %I:%M %p')
-                }
-            
-            return None
-            
+                # PRESERVE EXISTING: Complete result processing logic
+                if rows:
+                    row = rows[0]  # Get first result
+                    try:
+                        best_species = json.loads(row[6]) if row[6] else []
+                    except (json.JSONDecodeError, TypeError):
+                        best_species = []
+                    
+                    return {
+                        'forecast_time': row[0] + (row[2] * 3600),
+                        'period_name': row[1],
+                        'activity_rating': row[4],
+                        'conditions_text': row[5],
+                        'best_species': best_species,
+                        'forecast_time_text': datetime.fromtimestamp(row[0] + (row[2] * 3600)).strftime('%m/%d %I:%M %p')
+                    }
+                
+                return None
+                
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error finding next good fishing period: {e}")
             return None
