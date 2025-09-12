@@ -5476,7 +5476,6 @@ class FishingForecastGenerator:
     def score_fishing_period_unified(self, period, spot, marine_conditions):
         """
         SINGLE DECISION POINT: Score fishing period using enhanced CONF-based parameters
-        FIXED: Corrects missing _collect_tide_data method call
         """
         try:
             # PRESERVE EXISTING: Data source decision logic (UNCHANGED)
