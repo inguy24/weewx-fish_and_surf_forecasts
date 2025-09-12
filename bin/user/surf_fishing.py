@@ -2206,8 +2206,10 @@ class BathymetryProcessor:
             for i, point in enumerate(path_points):
                 depth = depths[i]
                 if depth is not None:
-                    # Calculate distance from surf break
-                    distance_from_break = point['fraction_to_shore'] * self.offshore_distance_km
+                    # FIXED: Correct distance calculation 
+                    # distance_from_break should be MAXIMUM when offshore (fraction = 0.0)
+                    # and ZERO when at shore (fraction = 1.0)
+                    distance_from_break = (1.0 - point['fraction_to_shore']) * self.offshore_distance_km
                     
                     bathymetry_profile.append({
                         'latitude': point['latitude'],
