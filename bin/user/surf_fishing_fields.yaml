@@ -387,6 +387,14 @@ scoring_criteria:
       time_of_day: 0.2          # Time effects importance
       species_activity: 0.1     # Species-specific modifiers
 
+    rating_descriptions:
+      1: "Slow fishing conditions"
+      2: "Fair fishing conditions" 
+      3: "Good fishing conditions"
+      4: "Excellent fishing conditions"
+      5: "Epic fishing conditions"
+
+
 # =============================================================================
 # BATHYMETRY DATA SOURCE - GEBCO API via OpenTopo
 # =============================================================================
