@@ -1804,8 +1804,8 @@ class BathymetryProcessor:
     def _create_original_surf_path_and_collect_bathymetry(self, deep_water_result, surf_break_lat, surf_break_lon):
         """Create surf path using original 16-point linear interpolation algorithm"""
         try:
-            offshore_lat = deep_water_result['latitude']
-            offshore_lon = deep_water_result['longitude']
+            offshore_lat = deep_water_result['offshore_latitude']
+            offshore_lon = deep_water_result['offshore_longitude']
             offshore_distance_km = deep_water_result['offshore_distance_km']
             
             # Create path points using existing linear interpolation logic
