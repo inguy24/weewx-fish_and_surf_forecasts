@@ -5784,7 +5784,7 @@ class FishingForecastGenerator:
             # FIXED: Fail cleanly when Phase I unavailable per CLAUDE.md Fix 5
             raise Exception(f"Fishing period scoring requires Phase I integration: {e}")
 
-    def store_fishing_forecasts(self, spot_id, fishing_forecast):
+    def store_fishing_forecasts(self, spot_id, fishing_forecast, db_manager):
         """
         Store fishing forecasts using WeeWX 5.1 thread-safe database patterns with Phase I tide data
         """
@@ -5792,41 +5792,38 @@ class FishingForecastGenerator:
             if not fishing_forecast or not self.engine:
                 return False
             
-            # THREAD SAFE: Get fresh database manager for this thread
-            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                
-                # ✅ FIXED: Clear existing forecasts for this spot (current forecasts only)
-                delete_query = "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?"
-                list(db_manager.genSql(delete_query, (spot_id,)))
-                
-                # ✅ FIXED: Insert new forecasts with Phase I tide data
-                insert_query = """
-                    INSERT INTO marine_forecast_fishing_data (
-                        spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
-                        generated_time, pressure_trend, tide_movement, species_activity, 
-                        activity_rating, conditions_text, best_species
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-                
-                for period in fishing_forecast:
-                    values = (
-                        spot_id,
-                        period['forecast_date'],
-                        period['period_name'], 
-                        period['period_start_hour'],
-                        period['period_end_hour'],
-                        period['generated_time'],
-                        period.get('pressure_trend', 'stable'),
-                        period.get('tide_movement', 'not_available'),  # ENHANCED: Clear indication vs 'unknown'
-                        period.get('species_activity', 'moderate'),
-                        period.get('activity_rating', 2),
-                        period.get('conditions_text', 'Fishing conditions'),
-                        json.dumps(period.get('best_species', []))
-                    )
-                    list(db_manager.genSql(insert_query, values))
-                
-                log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods with tide data for spot {spot_id}")
-                return True
+            # ✅ FIXED: Clear existing forecasts for this spot (current forecasts only)
+            delete_query = "DELETE FROM marine_forecast_fishing_data WHERE spot_id = ?"
+            list(db_manager.genSql(delete_query, (spot_id,)))
+            
+            # ✅ FIXED: Insert new forecasts with Phase I tide data
+            insert_query = """
+                INSERT INTO marine_forecast_fishing_data (
+                    spot_id, forecast_date, period_name, period_start_hour, period_end_hour,
+                    generated_time, pressure_trend, tide_movement, species_activity, 
+                    activity_rating, conditions_text, best_species
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            
+            for period in fishing_forecast:
+                values = (
+                    spot_id,
+                    period['forecast_date'],
+                    period['period_name'], 
+                    period['period_start_hour'],
+                    period['period_end_hour'],
+                    period['generated_time'],
+                    period.get('pressure_trend', 'stable'),
+                    period.get('tide_movement', 'not_available'),  # ENHANCED: Clear indication vs 'unknown'
+                    period.get('species_activity', 'moderate'),
+                    period.get('activity_rating', 2),
+                    period.get('conditions_text', 'Fishing conditions'),
+                    json.dumps(period.get('best_species', []))
+                )
+                list(db_manager.genSql(insert_query, values))
+            
+            log.debug(f"{CORE_ICONS['status']} Stored {len(fishing_forecast)} fishing forecast periods with tide data for spot {spot_id}")
+            return True
                 
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error storing fishing forecasts for spot {spot_id}: {e}")
