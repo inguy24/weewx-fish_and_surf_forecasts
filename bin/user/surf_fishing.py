@@ -3365,21 +3365,11 @@ class SurfForecastGenerator:
     def assess_surf_quality_complete(self, forecast_periods, current_wind=None, spot_config=None):
         """Assess surf quality using enhanced physics-based scoring from CONF"""
 
-        # ADD COMPREHENSIVE DEBUG LOGGING
-        log.error(f"DEBUG: === STARTING assess_surf_quality_complete ===")
-        log.error(f"DEBUG: forecast_periods type: {type(forecast_periods)}")
-        log.error(f"DEBUG: forecast_periods length: {len(forecast_periods) if forecast_periods else 'None'}")
-        log.error(f"DEBUG: current_wind: {current_wind}")
-        log.error(f"DEBUG: spot_config type: {type(spot_config)}")
-        log.error(f"DEBUG: spot_config keys: {list(spot_config.keys()) if spot_config else 'None'}")
-
         try:
             enhanced_forecast = []
             failed_periods = 0
             total_periods = len(forecast_periods)
-            
-            log.error(f"DEBUG: total_periods = {total_periods}")
-            
+                     
             # Get enhanced scoring criteria from CONF - CRITICAL path validation
             service_config = self.config_dict.get('SurfFishingService', {})
             scoring_criteria = service_config.get('scoring_criteria', {})
@@ -3408,10 +3398,7 @@ class SurfForecastGenerator:
                 log.error("Check surf_scoring.scoring_weights in CONF - must be numeric values")
                 return []  # Cannot proceed with invalid configuration
             
-            log.error(f"DEBUG: About to enter period loop with {total_periods} periods")
-            
             for period in forecast_periods:
-                log.error(f"DEBUG: Processing period: {period}")
                 try:
                     # Extract wave data - CRITICAL FIX: Convert all numeric values to float
                     try:
@@ -3449,7 +3436,6 @@ class SurfForecastGenerator:
                         continue
                     
                     # Enhanced swell quality assessment with total swell + wind wave approach
-                    log.error(f"DEBUG: About to call _assess_swell_dominance_updated")
                     swell_dominance = self._assess_swell_dominance_updated(
                         total_swell_height, total_swell_period, wind_wave_height, wind_wave_period
                     )
@@ -3501,7 +3487,6 @@ class SurfForecastGenerator:
                         continue
                     
                     # Calculate relative wind direction
-                    log.error(f"DEBUG: About to calculate wind_relative with wind_direction_float={wind_direction_float}, beach_facing_float={beach_facing_float}")
                     wind_relative = abs(wind_direction_float - beach_facing_float)
                     if wind_relative > 180:
                         wind_relative = 360 - wind_relative
@@ -3706,8 +3691,6 @@ class SurfForecastGenerator:
                     
                     # Calculate confidence based on data quality using simplified logic since _calculate_quality_confidence doesn't exist
                     confidence = min(1.0, (size_score + period_score + wind_score + swell_quality_score) / 4.0)
-                    
-                    log.error(f"DEBUG: Successfully processed period - stars: {stars}, quality_text: {quality_text}")
                     
                     # Enhanced period with all existing fields plus new analysis
                     enhanced_period = period.copy()
@@ -6567,8 +6550,12 @@ class SurfFishingService(StdService):
                     # EXISTING: Generate fishing forecasts
                     for spot in active_fishing_spots:
                         try:
+                            
+                            # Get current marine conditions from Phase I
+                            marine_conditions = self._get_phase_i_marine_conditions(spot['latitude'], spot['longitude'])
+
                             # EXISTING: Generate fishing forecast
-                            fishing_forecast = fishing_generator.generate_fishing_forecast(spot)
+                            fishing_forecast = fishing_generator.generate_fishing_forecast(spot, marine_conditions)
                             
                             if fishing_forecast:
                                 # EXISTING: Store directly with the generator's method
