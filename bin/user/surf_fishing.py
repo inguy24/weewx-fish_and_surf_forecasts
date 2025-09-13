@@ -6122,24 +6122,24 @@ class FishingForecastGenerator:
             # Try local station data first if fusion is enabled
             if integration_method == 'station_supplement' and enable_station_data:
                 try:
-                    # Use the same database manager pattern as Phase I tide data
-                    recent_time = int(time.time()) - (3600 * 2)  # 2 hours ago
-                    
-                    # Use existing db_manager like other Phase I queries
-                    result = self.db_manager.connection.execute("""
-                        SELECT barometer, dateTime 
-                        FROM archive 
-                        WHERE dateTime > ? AND barometer IS NOT NULL
-                        ORDER BY dateTime DESC 
-                        LIMIT 1
-                    """, (recent_time,))
-                    
-                    local_result = result.fetchone()
-                    if local_result and local_result[0] is not None:
-                        pressure_value = float(local_result[0])
-                        data_source = 'local_station'
-                        confidence = 0.9
-                        log.debug(f"{CORE_ICONS['status']} Using local station barometer data: {pressure_value}")
+                    # Use the same database access pattern as _determine_tide_stage
+                    with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                        recent_time = int(time.time()) - (3600 * 2)  # 2 hours ago
+                        
+                        result = db_manager.connection.execute("""
+                            SELECT barometer, dateTime 
+                            FROM archive 
+                            WHERE dateTime > ? AND barometer IS NOT NULL
+                            ORDER BY dateTime DESC 
+                            LIMIT 1
+                        """, (recent_time,))
+                        
+                        local_result = result.fetchone()
+                        if local_result and local_result[0] is not None:
+                            pressure_value = float(local_result[0])
+                            data_source = 'local_station'
+                            confidence = 0.9
+                            log.debug(f"{CORE_ICONS['status']} Using local station barometer data: {pressure_value}")
                             
                 except Exception as e:
                     log.debug(f"{CORE_ICONS['navigation']} Local station pressure not available: {e}")
