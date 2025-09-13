@@ -5475,10 +5475,10 @@ class FishingForecastGenerator:
 
     def score_fishing_period_unified(self, period, spot, marine_conditions):
         """
-        SINGLE DECISION POINT: Score fishing period using enhanced CONF-based parameters
+        Score fishing period using enhanced CONF-based parameters - NO FALLBACKS
         """
         try:
-            # PRESERVE EXISTING: Data source decision logic (UNCHANGED)
+            # Data source decision logic
             data_sources = {
                 'pressure': {'type': 'noaa_only', 'sources': [], 'confidence': 0.5},
                 'tide': {'type': 'noaa_only', 'sources': [], 'confidence': 0.5}
@@ -5487,7 +5487,7 @@ class FishingForecastGenerator:
             integration_type = self.station_integration.get('type', 'noaa_only')
             location_coords = (float(spot['latitude']), float(spot['longitude']))
             
-            # PRESERVE EXISTING: Integration manager logic (UNCHANGED)
+            # Integration manager logic  
             if integration_type == 'station_supplement' and self.integration_manager:
                 log.debug(f"{CORE_ICONS['selection']} Using station supplement data fusion")
                 atm_sources = self.integration_manager.select_optimal_atmospheric_sources(location_coords)
@@ -5503,263 +5503,246 @@ class FishingForecastGenerator:
                     if atm_sources:
                         data_sources['pressure'] = {'type': 'noaa_only', 'sources': atm_sources, 'confidence': 0.7}
 
-            # PRESERVE EXISTING: Data collection logic (UNCHANGED)
-            try:
-                pressure_data = self._collect_pressure_data(period, marine_conditions, data_sources['pressure'])
-            except:
-                pressure_data = {'pressure': 30.0, 'trend': 0.0, 'confidence': 0.3}
+            # Data collection - NO FALLBACKS
+            pressure_data = self._collect_pressure_data(period, marine_conditions, data_sources['pressure'])
 
-            # FIXED: Correct tide data collection method calls
-            try:
-                # Always try to collect Phase I tide data directly from tide_table (like surf forecasts do)
-                with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                    tide_info = self._determine_tide_stage(period['period_start_time'], {}, db_manager)
-                    
-                    # Convert surf tide format to fishing tide format
-                    tide_data = {
-                        'tide_movement': tide_info['stage'],  # 'rising', 'falling', 'high_slack', 'low_slack'
-                        'tide_height': tide_info['height'],
-                        'confidence': tide_info['confidence'],
-                        'time_to_next_hours': 6.0  # Default from CONF if needed
-                    }
-
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error collecting tide data: {e}")
-                # FAIL CLEANLY: No hardcoded fallbacks per CLAUDE.md Fix 5
-                raise Exception(f"Phase I tide data required but not available: {e}")
-
-            # PRESERVE EXISTING: Enhanced pressure scoring using CONF parameters (UNCHANGED)
-            try:
-                pressure_ranges = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
-                if not pressure_ranges:
-                    raise Exception("Pressure scoring ranges not found in CONF")
+            # Tide data collection - NO FALLBACKS  
+            with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                tide_info = self._determine_tide_stage(period['period_start_time'], {}, db_manager)
                 
-                # Determine pressure condition
-                pressure_value = pressure_data['pressure']
-                if pressure_value >= float(pressure_ranges.get('high_pressure_threshold', '30.2')):
-                    pressure_condition = 'high_stable'
-                    pressure_score_value = 0.8
-                elif pressure_value >= float(pressure_ranges.get('normal_pressure_min', '29.8')):
-                    pressure_condition = 'stable'
-                    pressure_score_value = 0.7
-                elif pressure_value >= float(pressure_ranges.get('low_pressure_threshold', '29.5')):
-                    pressure_condition = 'falling'
-                    pressure_score_value = 0.9
-                else:
-                    pressure_condition = 'low_stormy'
-                    pressure_score_value = 0.3
-                
-                pressure_score = {
-                    'score': pressure_score_value,
-                    'condition': pressure_condition,
-                    'trend': pressure_data.get('trend', 'stable'),
-                    'value': pressure_value,
-                    'confidence': pressure_data.get('confidence', 0.7)
-                }
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error scoring pressure: {e}")
-                raise Exception(f"Pressure scoring failed: {e}")
-
-            # PRESERVE EXISTING: Enhanced tide scoring using CONF parameters (UNCHANGED)
-            try:
-                tide_movement = tide_data.get('tide_movement', 'unknown')
-                time_to_next = tide_data.get('time_to_next_hours', 6.0)
-                
-                # Map tide movement to CONF tide phase scoring
-                tide_phase_mapping = {
-                    'rising': 'incoming',
-                    'falling': 'outgoing', 
-                    'high_slack': 'high_slack',
-                    'low_slack': 'low_slack',
-                    'slack': 'low_slack'  # Default slack to low_slack
+                tide_data = {
+                    'tide_movement': tide_info['stage'],
+                    'tide_height': tide_info['height'],
+                    'confidence': tide_info['confidence'],
+                    'time_to_next_hours': 6.0
                 }
 
-                tide_phase = tide_phase_mapping.get(tide_movement, tide_movement)
+            # Enhanced pressure scoring using CONF parameters
+            pressure_ranges = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
+            if not pressure_ranges:
+                raise Exception("Pressure scoring ranges not found in CONF")
+            
+            pressure_value = pressure_data['pressure']
+            pressure_trend = pressure_data['trend']
+            
+            # Map pressure trend to score using CONF
+            pressure_score_value = pressure_ranges.get(pressure_trend)
+            if pressure_score_value is None:
+                raise Exception(f"Pressure trend '{pressure_trend}' not found in CONF pressure_trend_scoring")
+            
+            pressure_score = {
+                'score': float(pressure_score_value),
+                'trend': pressure_trend,
+                'value': pressure_value,
+                'confidence': pressure_data.get('confidence', 0.7)
+            }
 
-                # Get tide phase scores from CONF
-                tide_phase_scoring = self.fishing_scoring.get('tide_phase_scoring', {})
-                if not tide_phase_scoring:
-                    raise Exception("Tide phase scoring not found in CONF")
+            # Enhanced tide scoring using CONF parameters
+            tide_movement = tide_data.get('tide_movement', 'unknown')
+            if tide_movement == 'unknown':
+                raise Exception("Tide movement could not be determined from Phase I data")
+                
+            time_to_next = tide_data.get('time_to_next_hours', 6.0)
+            
+            # Map tide movement to CONF tide phase scoring
+            tide_phase_mapping = {
+                'rising': 'incoming',
+                'falling': 'outgoing', 
+                'high_slack': 'high_slack',
+                'low_slack': 'low_slack'
+            }
 
-                tide_score_value = tide_phase_scoring.get(tide_phase, None)
-                if tide_score_value is None:
-                    raise Exception(f"Tide phase '{tide_phase}' not found in CONF tide_phase_scoring")
+            tide_phase = tide_phase_mapping.get(tide_movement)
+            if tide_phase is None:
+                raise Exception(f"Unknown tide movement '{tide_movement}' - cannot map to CONF tide phase")
 
-                tide_score_value = float(tide_score_value)
-                
-                tide_score = {
-                    'score': tide_score_value,
-                    'movement': tide_movement,
-                    'time_to_next_hours': time_to_next,
-                    'confidence': tide_data.get('confidence', 0.8),
-                    'description': f'{tide_movement.replace("_", " ").title()} tide phase'
-                }
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error in enhanced tide scoring: {e}")
-                raise Exception(f"Tide scoring failed: {e}")
+            # Get tide phase scores from CONF
+            tide_phase_scoring = self.fishing_scoring.get('tide_phase_scoring', {})
+            if not tide_phase_scoring:
+                raise Exception("Tide phase scoring not found in CONF")
 
-            # PRESERVE EXISTING: Enhanced time scoring using CONF parameters (UNCHANGED)
-            try:
-                period_start_time = period['period_start_time']
-                period_hour = int((period_start_time % 86400) / 3600)
-                
-                time_of_day_scoring = self.fishing_scoring.get('time_of_day_scoring', {})
-                
-                if 5 <= period_hour <= 7:
-                    time_key = 'dawn'
-                    period_name = 'Dawn'
-                elif 8 <= period_hour <= 11:
-                    time_key = 'morning'
-                    period_name = 'Morning'
-                elif 12 <= period_hour <= 16:
-                    time_key = 'midday'
-                    period_name = 'Midday'
-                elif 17 <= period_hour <= 19:
-                    time_key = 'dusk'
-                    period_name = 'Dusk'
-                elif 20 <= period_hour <= 23:
-                    time_key = 'night'
-                    period_name = 'Night'
-                else:
-                    time_key = 'night'
-                    period_name = 'Late Night'
-                
-                # Get score from CONF
-                time_score_value = float(time_of_day_scoring.get(time_key, '0.6'))
-                
-                time_score = {
-                    'score': time_score_value,
-                    'period_name': period_name,
-                    'peak_times': ['dawn', 'dusk'],  # Prime feeding times
-                    'description': f'{period_name} fishing period'
-                }
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error in enhanced time scoring: {e}")
-                raise Exception(f"Time scoring failed: {e}")
+            tide_score_value = tide_phase_scoring.get(tide_phase)
+            if tide_score_value is None:
+                raise Exception(f"Tide phase '{tide_phase}' not found in CONF tide_phase_scoring")
 
-            # PRESERVE EXISTING: Enhanced species scoring using CONF fish categories (UNCHANGED)
-            try:
-                target_category = spot.get('target_category', 'mixed_bag')
-                category_config = self.fish_categories.get(target_category, {})
-                
-                if category_config:
-                    # Get species list from CONF (string format converted to list)
-                    species_string = category_config.get('species', 'Mixed')
-                    if isinstance(species_string, str):
-                        species_list = [s.strip() for s in species_string.split(',')]
-                    else:
-                        species_list = ['Mixed']
-                    
-                    # Get species activity modifiers from CONF
-                    species_modifiers = self.fishing_scoring.get('species_activity_modifiers', {})
-                    category_modifier = float(species_modifiers.get(target_category, '1.0'))
-                    
-                    # Calculate species activity using CONF-based weights
-                    pressure_component = pressure_score['score'] * 0.4
-                    tide_component = tide_score['score'] * 0.4
-                    base_activity = 0.2
-                    
-                    activity_score = (pressure_component + tide_component + base_activity) * category_modifier
-                    
-                    # Determine activity level
-                    if activity_score >= 0.8:
-                        activity_level = 'high'
-                        best_species = species_list[:2] if len(species_list) >= 2 else species_list
-                    elif activity_score >= 0.6:
-                        activity_level = 'moderate'
-                        best_species = species_list[:3] if len(species_list) >= 3 else species_list
-                    elif activity_score >= 0.4:
-                        activity_level = 'low'
-                        best_species = species_list[:1] if species_list else ['Mixed bag']
-                    else:
-                        activity_level = 'very_low'
-                        best_species = ['Opportunistic species']
-                    
-                    species_score = {
-                        'score': min(1.0, max(0.0, activity_score)),
-                        'activity_level': activity_level,
-                        'best_species': best_species,
-                        'target_category': target_category,
-                        'description': f'{activity_level.replace("_", " ").title()} species activity'
-                    }
-                else:
-                    species_score = {
-                        'score': 0.5,
-                        'activity_level': 'moderate',
-                        'best_species': ['Mixed bag'],
-                        'target_category': target_category,
-                        'description': 'Moderate species activity'
-                    }
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error scoring species: {e}")
-                raise Exception(f"Species scoring failed: {e}")
+            tide_score = {
+                'score': float(tide_score_value),
+                'movement': tide_movement,
+                'time_to_next_hours': time_to_next,
+                'confidence': tide_data.get('confidence', 0.8),
+                'description': f'{tide_movement.replace("_", " ").title()} tide phase'
+            }
 
-            # PRESERVE EXISTING: Enhanced overall rating using CONF weights (UNCHANGED)
-            try:
-                # Get component weights from CONF
-                scoring_weights = self.fishing_scoring.get('scoring_weights', {})
-                pressure_weight = float(scoring_weights.get('pressure_trend', '0.4'))
-                tide_weight = float(scoring_weights.get('tide_phase', '0.3'))
-                time_weight = float(scoring_weights.get('time_of_day', '0.2'))
-                species_weight = float(scoring_weights.get('species_activity', '0.1'))
-                
-                # Calculate weighted score
-                weighted_score = (
-                    pressure_score['score'] * pressure_weight +
-                    tide_score['score'] * tide_weight +
-                    time_score['score'] * time_weight +
-                    species_score['score'] * species_weight
-                )
-                
-                # Calculate confidence based on component confidences
-                avg_confidence = (
-                    pressure_score.get('confidence', 0.5) * pressure_weight +
-                    tide_score.get('confidence', 0.5) * tide_weight +
-                    0.9 * time_weight +
-                    0.8 * species_weight
-                )
-                
-                # Convert to 1-5 star rating
-                if weighted_score >= 0.8:
-                    rating = 5
-                elif weighted_score >= 0.6:
-                    rating = 4
-                elif weighted_score >= 0.4:
-                    rating = 3
-                elif weighted_score >= 0.2:
-                    rating = 2
-                else:
-                    rating = 1
-                
-                overall_rating = {
-                    'rating': rating,
-                    'raw_score': weighted_score,
-                    'confidence': avg_confidence
-                }
-            except Exception as e:
-                log.error(f"{CORE_ICONS['warning']} Error calculating overall rating: {e}")
-                raise Exception(f"Overall rating calculation failed: {e}")
+            # Enhanced time scoring using CONF parameters
+            period_start_time = period['period_start_time']
+            period_hour = int((period_start_time % 86400) / 3600)
+            
+            time_of_day_scoring = self.fishing_scoring.get('time_of_day_scoring', {})
+            if not time_of_day_scoring:
+                raise Exception("Time of day scoring not found in CONF")
+            
+            if 5 <= period_hour <= 7:
+                time_key = 'dawn'
+                period_name = 'Dawn'
+            elif 8 <= period_hour <= 11:
+                time_key = 'morning'
+                period_name = 'Morning'
+            elif 12 <= period_hour <= 16:
+                time_key = 'midday'
+                period_name = 'Midday'
+            elif 17 <= period_hour <= 19:
+                time_key = 'dusk'
+                period_name = 'Dusk'
+            elif 20 <= period_hour <= 23:
+                time_key = 'night'
+                period_name = 'Night'
+            else:
+                time_key = 'night'
+                period_name = 'Late Night'
+            
+            # Get score from CONF
+            time_score_value = time_of_day_scoring.get(time_key)
+            if time_score_value is None:
+                raise Exception(f"Time of day '{time_key}' not found in CONF time_of_day_scoring")
+            
+            time_score = {
+                'score': float(time_score_value),
+                'period_name': period_name,
+                'peak_times': ['dawn', 'dusk'],
+                'description': f'{period_name} fishing period'
+            }
 
-            # PRESERVE EXISTING: Description generation logic (ENHANCED) - using CONF for descriptions
+            # Enhanced species scoring using CONF fish categories
+            target_category = spot.get('target_category', 'mixed_bag')
+            category_config = self.fish_categories.get(target_category)
+            if not category_config:
+                raise Exception(f"Target category '{target_category}' not found in CONF fish_categories")
+            
+            # Get species list from CONF
+            species_data = category_config.get('species')
+            if not species_data:
+                raise Exception(f"No species data found for category '{target_category}' in CONF")
+            
+            if isinstance(species_data, str):
+                species_list = [s.strip() for s in species_data.split(',')]
+            elif isinstance(species_data, list):
+                species_list = species_data
+            else:
+                raise Exception(f"Invalid species data format for category '{target_category}'")
+            
+            # Get species activity modifiers from CONF
+            species_modifiers = self.fishing_scoring.get('species_activity_modifiers', {})
+            if not species_modifiers:
+                raise Exception("Species activity modifiers not found in CONF")
+                
+            category_modifier = species_modifiers.get(target_category)
+            if category_modifier is None:
+                raise Exception(f"Category modifier for '{target_category}' not found in CONF")
+            
+            # Calculate species activity using CONF-based weights
+            pressure_component = pressure_score['score'] * 0.4
+            tide_component = tide_score['score'] * 0.4
+            base_activity = 0.2
+            
+            activity_score = (pressure_component + tide_component + base_activity) * float(category_modifier)
+            
+            # Determine activity level
+            if activity_score >= 0.8:
+                activity_level = 'high'
+                best_species = species_list[:2] if len(species_list) >= 2 else species_list
+            elif activity_score >= 0.6:
+                activity_level = 'moderate'
+                best_species = species_list[:3] if len(species_list) >= 3 else species_list
+            elif activity_score >= 0.4:
+                activity_level = 'low'
+                best_species = species_list[:1] if species_list else ['Mixed bag']
+            else:
+                activity_level = 'very_low'
+                best_species = ['Opportunistic species']
+            
+            species_score = {
+                'score': min(1.0, max(0.0, activity_score)),
+                'activity_level': activity_level,
+                'best_species': best_species,
+                'target_category': target_category,
+                'description': f'{activity_level.replace("_", " ").title()} species activity'
+            }
+
+            # Enhanced overall rating using CONF weights
+            scoring_weights = self.fishing_scoring.get('scoring_weights', {})
+            if not scoring_weights:
+                raise Exception("Scoring weights not found in CONF")
+            
+            pressure_weight = scoring_weights.get('pressure_trend')
+            tide_weight = scoring_weights.get('tide_phase')
+            time_weight = scoring_weights.get('time_of_day')
+            species_weight = scoring_weights.get('species_activity')
+            
+            if None in [pressure_weight, tide_weight, time_weight, species_weight]:
+                raise Exception("Missing scoring weights in CONF")
+            
+            # Calculate weighted score
+            weighted_score = (
+                pressure_score['score'] * float(pressure_weight) +
+                tide_score['score'] * float(tide_weight) +
+                time_score['score'] * float(time_weight) +
+                species_score['score'] * float(species_weight)
+            )
+            
+            # Calculate confidence based on component confidences
+            avg_confidence = (
+                pressure_score.get('confidence', 0.5) * float(pressure_weight) +
+                tide_score.get('confidence', 0.5) * float(tide_weight) +
+                0.9 * float(time_weight) +
+                0.8 * float(species_weight)
+            )
+            
+            # Convert to 1-5 star rating
+            if weighted_score >= 0.8:
+                rating = 5
+            elif weighted_score >= 0.6:
+                rating = 4
+            elif weighted_score >= 0.4:
+                rating = 3
+            elif weighted_score >= 0.2:
+                rating = 2
+            else:
+                rating = 1
+            
+            overall_rating = {
+                'rating': rating,
+                'raw_score': weighted_score,
+                'confidence': avg_confidence
+            }
+
+            # Description generation using CONF
             rating_descriptions = self.fishing_scoring.get('rating_descriptions', {})
             if not rating_descriptions:
                 raise Exception("Rating descriptions not found in CONF")
             
-            rating = overall_rating['rating']
-            base_desc = rating_descriptions.get(str(rating), f"Rating {rating} fishing conditions")
+            rating_str = str(rating)
+            base_desc = rating_descriptions.get(rating_str)
+            if base_desc is None:
+                raise Exception(f"Rating description for '{rating_str}' not found in CONF")
             
             # Add key contributing factors using CONF thresholds
             factor_thresholds = self.fishing_scoring.get('description_factor_thresholds', {})
-            pressure_threshold = float(factor_thresholds.get('pressure_threshold', '0.7'))
-            tide_threshold = float(factor_thresholds.get('tide_threshold', '0.7')) 
-            time_threshold = float(factor_thresholds.get('time_threshold', '0.7'))
+            if not factor_thresholds:
+                raise Exception("Description factor thresholds not found in CONF")
+            
+            pressure_threshold = factor_thresholds.get('pressure_threshold')
+            tide_threshold = factor_thresholds.get('tide_threshold')
+            time_threshold = factor_thresholds.get('time_threshold')
+            
+            if None in [pressure_threshold, tide_threshold, time_threshold]:
+                raise Exception("Missing factor thresholds in CONF")
             
             factors = []
-            if pressure_score['score'] >= pressure_threshold:
+            if pressure_score['score'] >= float(pressure_threshold):
                 factors.append(f"favorable {pressure_score['trend']} pressure")
-            if tide_score['score'] >= tide_threshold and tide_score['movement'] != 'unknown':
+            if tide_score['score'] >= float(tide_threshold):
                 factors.append(f"optimal {tide_score['movement']} tide")
-            if time_score['score'] >= time_threshold:
+            if time_score['score'] >= float(time_threshold):
                 factors.append(f"prime {time_score['period_name']} timing")
             
             if factors:
@@ -5781,8 +5764,7 @@ class FishingForecastGenerator:
             
         except Exception as e:
             log.error(f"{CORE_ICONS['warning']} Error scoring fishing period: {e}")
-            # FIXED: Fail cleanly when Phase I unavailable per CLAUDE.md Fix 5
-            raise Exception(f"Fishing period scoring requires Phase I integration: {e}")
+            raise Exception(f"Fishing period scoring failed: {e}")
 
     def store_fishing_forecasts(self, spot_id, fishing_forecast, db_manager):
         """
@@ -6118,6 +6100,37 @@ class FishingForecastGenerator:
             return weewx.METRICWX
         else:
             return weewx.US
+
+    def _collect_pressure_data(self, period, marine_conditions, pressure_source):
+        """
+        Collect pressure data from marine conditions for fishing period scoring
+        """
+        try:
+            if not marine_conditions:
+                raise Exception("No marine conditions data available for pressure analysis")
+            
+            # Extract pressure from marine conditions
+            pressure_value = marine_conditions.get('barometric_pressure')
+            if pressure_value is None:
+                raise Exception("Barometric pressure not available in marine conditions")
+            
+            # Calculate pressure trend if historical data available
+            pressure_trend = marine_conditions.get('pressure_trend', 'stable')
+            if pressure_trend not in ['rising_fast', 'rising_slow', 'stable_high', 'stable_low', 'falling_slow', 'falling_fast']:
+                pressure_trend = 'stable'
+            
+            # Get confidence from source quality
+            confidence = pressure_source.get('confidence', 0.7)
+            
+            return {
+                'pressure': float(pressure_value),
+                'trend': pressure_trend,
+                'confidence': confidence,
+                'source': pressure_source.get('type', 'unknown')
+            }
+            
+        except Exception as e:
+            raise Exception(f"Pressure data collection failed: {e}")
     
 
 class FishingForecastSearchList:
