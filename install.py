@@ -628,37 +628,31 @@ class SurfFishingPointManager:
             
             # Display fields with enhanced formatting
             for i, field in enumerate(fields):
-                y = 3 + i * 2  # More spacing between fields
+                y = 3 + i * 2
                 
-                # Field label
                 dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
                 
-                # Field value display with special handling for dropdown fields
-                field_display_value = field_values[i][:40]  # Truncate long values
-                
+                # Handle display values for dropdown fields
+                field_display_value = field_values[i][:40]
                 if spot_type == 'surf_spots':
-                    if field == 'Bottom Type':
+                    if 'Bottom Type' in field:
                         field_display_value = bottom_type_display.get(field_values[i], field_values[i])
-                    elif field == 'Exposure':
+                    elif 'Exposure' in field:
                         field_display_value = exposure_display.get(field_values[i], field_values[i])
-                else:  # fishing_spots
-                    if field == 'Location Type':
+                else:
+                    if 'Location Type' in field:
                         field_display_value = location_type_display.get(field_values[i], field_values[i])
-                    elif field == 'Target Category':
+                    elif 'Target Category' in field:
                         field_display_value = target_category_display.get(field_values[i], field_values[i])
                 
-                # Clear field area and display value
                 dialog_win.addstr(y, 20, " " * 45)
                 dialog_win.addstr(y, 20, field_display_value)
                 
-                # Show cursor for current field
                 if i == current_field:
                     cursor_pos = min(len(field_display_value), 40)
-                    if field in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
-                        # For dropdown fields, show selection indicator
+                    if 'Type' in field or 'Exposure' in field or 'Category' in field:
                         dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
                     else:
-                        # For text fields, show text cursor
                         dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
             
             # Instructions based on current field type
