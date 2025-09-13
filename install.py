@@ -943,7 +943,7 @@ class SurfFishingConfigurator:
         try:
             selected_category = category_keys[int(category_choice)-1]
         except (ValueError, IndexError):
-            selected_category = category_keys[0] if category_keys else 'mixed_bag'
+            selected_category = category_keys[0] if category_keys else 'saltwater_inshore'  
         
         config['target_category'] = selected_category
         
@@ -1042,7 +1042,7 @@ class SurfFishingConfigurator:
                         'latitude': str(spot['latitude']),
                         'longitude': str(spot['longitude']),
                         'location_type': spot.get('location_type', 'shore'),
-                        'target_category': spot.get('target_category', 'mixed_bag'),
+                        'target_category': spot.get('target_category', 'saltwater_inshore'),
                         'active': 'true'
                     }
             
