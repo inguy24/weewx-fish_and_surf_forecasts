@@ -2220,13 +2220,15 @@ class SurfFishingInstaller(ExtensionInstaller):
             raise Exception(f"Unknown forecast table: {table_name}")
         
         # ADD API FIELDS from YAML field mappings
-        for field_name, field_config in field_mappings.items():
-            database_field = field_config.get('database_field', field_name)
-            database_type = field_config.get('database_type', 'REAL')
-            
-            # Add API field to table
-            column_sql.append(f"{database_field} {database_type}")
-        
+        if table_name == 'marine_forecast_surf_data':
+            for field_name, field_config in field_mappings.items():
+                database_field = field_config.get('database_field', field_name)
+                database_type = field_config.get('database_type', 'REAL')
+                
+                # Add API field to surf table only
+                column_sql.append(f"{database_field} {database_type}")
+        # Fishing table gets NO API fields - it only uses calculated/derived fields
+
         # Add primary key constraint
         column_sql.append(primary_key)
         
