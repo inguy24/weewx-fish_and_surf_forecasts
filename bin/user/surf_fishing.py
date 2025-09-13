@@ -6103,30 +6103,72 @@ class FishingForecastGenerator:
 
     def _collect_pressure_data(self, period, marine_conditions, pressure_source):
         """
-        Collect pressure data from marine conditions for fishing period scoring
+        Collect pressure data from marine conditions and local station data fusion
         """
         try:
             if not marine_conditions:
                 raise Exception("No marine conditions data available for pressure analysis")
             
-            # Extract pressure from marine conditions
-            pressure_value = marine_conditions.get('barometric_pressure')
+            # Check if data integration is configured for station supplement
+            data_integration = self.config_dict.get('SurfFishingService', {}).get('data_integration', {})
+            integration_method = data_integration.get('method', 'noaa_only')
+            enable_station_data = data_integration.get('enable_station_data', 'false').lower() == 'true'
+            
+            pressure_value = None
+            pressure_trend = 'stable'
+            data_source = 'unknown'
+            confidence = 0.5
+            
+            # Try local station data first if fusion is enabled
+            if integration_method == 'station_supplement' and enable_station_data:
+                # Try to get pressure from local WeeWX station data (barometer field)
+                try:
+                    # Get recent barometer reading from WeeWX archive table
+                    with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
+                        recent_time = int(time.time()) - (3600 * 2)  # 2 hours ago
+                        result = db_manager.connection.execute("""
+                            SELECT barometer, dateTime 
+                            FROM archive 
+                            WHERE dateTime > ? AND barometer IS NOT NULL
+                            ORDER BY dateTime DESC 
+                            LIMIT 1
+                        """, (recent_time,))
+                        
+                        local_result = result.fetchone()
+                        if local_result and local_result[0] is not None:
+                            pressure_value = float(local_result[0])
+                            data_source = 'local_station'
+                            confidence = 0.9  # High confidence for local data
+                            log.debug(f"{CORE_ICONS['status']} Using local station barometer data: {pressure_value}")
+                            
+                            # Calculate pressure trend from local data if possible
+                            # (Could enhance with multiple readings for trend calculation)
+                            pressure_trend = 'stable'  # Default, could be enhanced
+                            
+                except Exception as e:
+                    log.debug(f"{CORE_ICONS['navigation']} Local station pressure not available: {e}")
+            
+            # Fall back to marine data if no local data
             if pressure_value is None:
-                raise Exception("Barometric pressure not available in marine conditions")
+                pressure_value = marine_conditions.get('barometric_pressure')
+                if pressure_value is not None:
+                    data_source = 'marine_ndbc'
+                    confidence = 0.7
+                    pressure_trend = marine_conditions.get('pressure_trend', 'stable')
+                    log.debug(f"{CORE_ICONS['status']} Using marine pressure data: {pressure_value}")
             
-            # Calculate pressure trend if historical data available
-            pressure_trend = marine_conditions.get('pressure_trend', 'stable')
-            if pressure_trend not in ['rising_fast', 'rising_slow', 'stable_high', 'stable_low', 'falling_slow', 'falling_fast']:
-                pressure_trend = 'stable'
-            
-            # Get confidence from source quality
-            confidence = pressure_source.get('confidence', 0.7)
+            # If still no pressure data available, fail cleanly
+            if pressure_value is None:
+                if integration_method == 'station_supplement':
+                    raise Exception("No pressure data available from local station or marine sources. Local station (simulator) has no barometer data, and NDBC stations (46253, 46275) do not provide pressure data.")
+                else:
+                    raise Exception("No barometric pressure available from marine sources (NDBC stations 46253, 46275 do not provide pressure data)")
             
             return {
                 'pressure': float(pressure_value),
                 'trend': pressure_trend,
                 'confidence': confidence,
-                'source': pressure_source.get('type', 'unknown')
+                'source': data_source
             }
             
         except Exception as e:
