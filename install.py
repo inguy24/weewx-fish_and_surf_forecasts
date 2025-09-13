@@ -615,7 +615,9 @@ class SurfFishingPointManager:
             fish_categories = self.yaml_data['fish_categories']
             for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
                 target_category_options[str(i)] = cat_key
+                # Truncate long display names to prevent overflow
                 display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
+                display_name = display_name[:20]  # Limit display name length
                 target_category_display[cat_key] = f"{i}-{display_name}"
         
         while True:
