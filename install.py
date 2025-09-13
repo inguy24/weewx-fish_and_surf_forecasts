@@ -416,7 +416,7 @@ class SurfFishingPointManager:
         height, width = stdscr.getmaxyx()
         
         # Create larger dialog window
-        dialog_height = 18 if spot_type == 'surf_spots' else 14
+        dialog_height = 18 if spot_type == 'surf_spots' else 16
         dialog_width = 70
         dialog_y = (height - dialog_height) // 2
         dialog_x = (width - dialog_width) // 2
@@ -551,7 +551,7 @@ class SurfFishingPointManager:
         height, width = stdscr.getmaxyx()
         
         # Create larger dialog window to accommodate all fields
-        dialog_height = 18 if spot_type == 'surf_spots' else 14
+        dialog_height = 18 if spot_type == 'surf_spots' else 16
         dialog_width = 70
         dialog_y = (height - dialog_height) // 2
         dialog_x = (width - dialog_width) // 2
