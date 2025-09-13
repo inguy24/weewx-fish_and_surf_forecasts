@@ -5475,7 +5475,8 @@ class FishingForecastGenerator:
 
     def score_fishing_period_unified(self, period, spot, marine_conditions):
         """
-        Score fishing period using enhanced CONF-based parameters - NO FALLBACKS
+        Score fishing period using enhanced CONF-based parameters
+        Handles missing pressure data gracefully
         """
         try:
             # Data source decision logic
@@ -5503,7 +5504,7 @@ class FishingForecastGenerator:
                     if atm_sources:
                         data_sources['pressure'] = {'type': 'noaa_only', 'sources': atm_sources, 'confidence': 0.7}
 
-            # Data collection - NO FALLBACKS
+            # Data collection - handle missing pressure gracefully
             pressure_data = self._collect_pressure_data(period, marine_conditions, data_sources['pressure'])
 
             # Tide data collection - NO FALLBACKS  
@@ -5517,25 +5518,35 @@ class FishingForecastGenerator:
                     'time_to_next_hours': 6.0
                 }
 
-            # Enhanced pressure scoring using CONF parameters
-            pressure_ranges = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
-            if not pressure_ranges:
-                raise Exception("Pressure scoring ranges not found in CONF")
-            
-            pressure_value = pressure_data['pressure']
-            pressure_trend = pressure_data['trend']
-            
-            # Map pressure trend to score using CONF
-            pressure_score_value = pressure_ranges.get(pressure_trend)
-            if pressure_score_value is None:
-                raise Exception(f"Pressure trend '{pressure_trend}' not found in CONF pressure_trend_scoring")
-            
-            pressure_score = {
-                'score': float(pressure_score_value),
-                'trend': pressure_trend,
-                'value': pressure_value,
-                'confidence': pressure_data.get('confidence', 0.7)
-            }
+            # Enhanced pressure scoring - handle missing pressure data
+            if pressure_data is not None:
+                pressure_ranges = self.fishing_scoring.get('pressure_trend_scoring', {}).get('ranges', {})
+                if not pressure_ranges:
+                    raise Exception("Pressure scoring ranges not found in CONF")
+                
+                pressure_value = pressure_data['pressure']
+                pressure_trend = pressure_data['trend']
+                
+                # Map pressure trend to score using CONF
+                pressure_score_value = pressure_ranges.get(pressure_trend)
+                if pressure_score_value is None:
+                    raise Exception(f"Pressure trend '{pressure_trend}' not found in CONF pressure_trend_scoring")
+                
+                pressure_score = {
+                    'score': float(pressure_score_value),
+                    'trend': pressure_trend,
+                    'value': pressure_value,
+                    'confidence': pressure_data.get('confidence', 0.7)
+                }
+            else:
+                # No pressure data - create neutral pressure score
+                pressure_score = {
+                    'score': 0.6,  # Neutral score when no pressure data
+                    'trend': 'unknown',
+                    'value': None,
+                    'confidence': 0.0
+                }
+                log.info(f"{CORE_ICONS['navigation']} Using neutral pressure score - no pressure data available")
 
             # Enhanced tide scoring using CONF parameters
             tide_movement = tide_data.get('tide_movement', 'unknown')
@@ -5668,33 +5679,43 @@ class FishingForecastGenerator:
                 'description': f'{activity_level.replace("_", " ").title()} species activity'
             }
 
-            # Enhanced overall rating using CONF weights
+            # Enhanced overall rating - adjust weights when pressure data missing
             scoring_weights = self.fishing_scoring.get('scoring_weights', {})
             if not scoring_weights:
                 raise Exception("Scoring weights not found in CONF")
             
-            pressure_weight = scoring_weights.get('pressure_trend')
-            tide_weight = scoring_weights.get('tide_phase')
-            time_weight = scoring_weights.get('time_of_day')
-            species_weight = scoring_weights.get('species_activity')
+            pressure_weight = float(scoring_weights.get('pressure_trend', '0.4'))
+            tide_weight = float(scoring_weights.get('tide_phase', '0.3'))
+            time_weight = float(scoring_weights.get('time_of_day', '0.2'))
+            species_weight = float(scoring_weights.get('species_activity', '0.1'))
             
-            if None in [pressure_weight, tide_weight, time_weight, species_weight]:
-                raise Exception("Missing scoring weights in CONF")
+            # Adjust weights when pressure data is missing
+            if pressure_data is None:
+                # Redistribute pressure weight to other components
+                total_other_weights = tide_weight + time_weight + species_weight
+                weight_multiplier = (1.0) / total_other_weights  # Redistribute to sum to 1.0
+                
+                tide_weight *= weight_multiplier
+                time_weight *= weight_multiplier  
+                species_weight *= weight_multiplier
+                pressure_weight = 0.0
+                
+                log.debug(f"{CORE_ICONS['status']} Adjusted scoring weights for missing pressure data")
             
-            # Calculate weighted score
+            # Calculate weighted score with adjusted weights
             weighted_score = (
-                pressure_score['score'] * float(pressure_weight) +
-                tide_score['score'] * float(tide_weight) +
-                time_score['score'] * float(time_weight) +
-                species_score['score'] * float(species_weight)
+                pressure_score['score'] * pressure_weight +
+                tide_score['score'] * tide_weight +
+                time_score['score'] * time_weight +
+                species_score['score'] * species_weight
             )
             
             # Calculate confidence based on component confidences
             avg_confidence = (
-                pressure_score.get('confidence', 0.5) * float(pressure_weight) +
-                tide_score.get('confidence', 0.5) * float(tide_weight) +
-                0.9 * float(time_weight) +
-                0.8 * float(species_weight)
+                pressure_score.get('confidence', 0.0) * pressure_weight +
+                tide_score.get('confidence', 0.5) * tide_weight +
+                0.9 * time_weight +
+                0.8 * species_weight
             )
             
             # Convert to 1-5 star rating
@@ -5738,7 +5759,7 @@ class FishingForecastGenerator:
                 raise Exception("Missing factor thresholds in CONF")
             
             factors = []
-            if pressure_score['score'] >= float(pressure_threshold):
+            if pressure_data is not None and pressure_score['score'] >= float(pressure_threshold):
                 factors.append(f"favorable {pressure_score['trend']} pressure")
             if tide_score['score'] >= float(tide_threshold):
                 factors.append(f"optimal {tide_score['movement']} tide")
@@ -6104,10 +6125,12 @@ class FishingForecastGenerator:
     def _collect_pressure_data(self, period, marine_conditions, pressure_source):
         """
         Collect pressure data from marine conditions and local station data fusion
+        Returns None if no pressure data available (instead of failing)
         """
         try:
             if not marine_conditions:
-                raise Exception("No marine conditions data available for pressure analysis")
+                log.info(f"{CORE_ICONS['navigation']} No marine conditions data available for pressure analysis")
+                return None
             
             # Check if data integration is configured for station supplement
             data_integration = self.config_dict.get('SurfFishingService', {}).get('data_integration', {})
@@ -6122,24 +6145,32 @@ class FishingForecastGenerator:
             # Try local station data first if fusion is enabled
             if integration_method == 'station_supplement' and enable_station_data:
                 try:
-                    # Use the same database access pattern as _determine_tide_stage
                     with weewx.manager.open_manager_with_config(self.config_dict, 'wx_binding') as db_manager:
-                        recent_time = int(time.time()) - (3600 * 2)  # 2 hours ago
+                        # Check if barometer field exists and has any data
+                        check_query = "SELECT COUNT(*) FROM archive WHERE barometer IS NOT NULL LIMIT 1"
+                        result = db_manager.connection.execute(check_query)
+                        count_row = result.fetchone()
                         
-                        result = db_manager.connection.execute("""
-                            SELECT barometer, dateTime 
-                            FROM archive 
-                            WHERE dateTime > ? AND barometer IS NOT NULL
-                            ORDER BY dateTime DESC 
-                            LIMIT 1
-                        """, (recent_time,))
-                        
-                        local_result = result.fetchone()
-                        if local_result and local_result[0] is not None:
-                            pressure_value = float(local_result[0])
-                            data_source = 'local_station'
-                            confidence = 0.9
-                            log.debug(f"{CORE_ICONS['status']} Using local station barometer data: {pressure_value}")
+                        if count_row and count_row[0] > 0:
+                            # Barometer data exists, try to get recent reading
+                            recent_time = int(time.time()) - (3600 * 2)  # 2 hours ago
+                            pressure_query = """
+                                SELECT barometer FROM archive 
+                                WHERE dateTime > ? AND barometer IS NOT NULL
+                                ORDER BY dateTime DESC 
+                                LIMIT 1
+                            """
+                            
+                            pressure_result = db_manager.connection.execute(pressure_query, (recent_time,))
+                            pressure_row = pressure_result.fetchone()
+                            
+                            if pressure_row and pressure_row[0] is not None:
+                                pressure_value = float(pressure_row[0])
+                                data_source = 'local_station'
+                                confidence = 0.9
+                                log.debug(f"{CORE_ICONS['status']} Using local station barometer data: {pressure_value}")
+                        else:
+                            log.debug(f"{CORE_ICONS['navigation']} No barometer data in local station archive (simulator)")
                             
                 except Exception as e:
                     log.debug(f"{CORE_ICONS['navigation']} Local station pressure not available: {e}")
@@ -6153,12 +6184,13 @@ class FishingForecastGenerator:
                     pressure_trend = marine_conditions.get('pressure_trend', 'stable')
                     log.debug(f"{CORE_ICONS['status']} Using marine pressure data: {pressure_value}")
             
-            # If still no pressure data available, fail cleanly
+            # If no pressure data available, log and return None (don't fail)
             if pressure_value is None:
                 if integration_method == 'station_supplement':
-                    raise Exception("No pressure data available: Local station (simulator) has no barometer data, and NDBC stations do not provide pressure data")
+                    log.info(f"{CORE_ICONS['navigation']} No pressure data available from local station (simulator) or NDBC stations - fishing forecast will continue without pressure component")
                 else:
-                    raise Exception("No barometric pressure available from NDBC stations")
+                    log.info(f"{CORE_ICONS['navigation']} No barometric pressure available from NDBC stations - fishing forecast will continue without pressure component")
+                return None
             
             return {
                 'pressure': float(pressure_value),
@@ -6168,7 +6200,8 @@ class FishingForecastGenerator:
             }
             
         except Exception as e:
-            raise Exception(f"Pressure data collection failed: {e}")
+            log.warning(f"{CORE_ICONS['warning']} Error collecting pressure data: {e} - fishing forecast will continue without pressure component")
+            return None
     
 
 class FishingForecastSearchList:
