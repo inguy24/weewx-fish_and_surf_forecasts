@@ -411,13 +411,13 @@ class SurfFishingPointManager:
         return 'continue'
     
     def _add_new_spot_dialog(self, stdscr, spot_type: str) -> str:
-        """Dialog for adding a new surf or fishing spot"""
+        """Enhanced dialog for adding a new surf or fishing spot with all characteristics"""
         
         height, width = stdscr.getmaxyx()
         
-        # Create dialog window
-        dialog_height = 12
-        dialog_width = 60
+        # Create larger dialog window
+        dialog_height = 18 if spot_type == 'surf_spots' else 14
+        dialog_width = 70
         dialog_y = (height - dialog_height) // 2
         dialog_x = (width - dialog_width) // 2
         
@@ -427,31 +427,79 @@ class SurfFishingPointManager:
         type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
         dialog_win.addstr(1, 2, f"Add New {type_name} Spot", curses.A_BOLD)
         
-        # Input fields
-        fields = ['Name', 'Latitude', 'Longitude']
+        # Input fields with defaults
         if spot_type == 'surf_spots':
-            fields.append('Beach Angle (0-360)')
+            fields = ['Name', 'Latitude', 'Longitude', 'Beach Angle (0-360)', 'Bottom Type', 'Exposure']
+            field_values = ['', '', '', '270', 'sand', 'exposed']
+        else:
+            fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
+            field_values = ['', '', '', 'shore', 'mixed_bag']
         
-        field_values = [''] * len(fields)
         current_field = 0
-        
         curses.curs_set(1)  # Show cursor for input
         
+        # Same options dictionaries as in edit dialog
+        bottom_type_options = {'1': 'sand', '2': 'reef', '3': 'point', '4': 'jetty', '5': 'mixed'}
+        bottom_type_display = {'sand': '1-Sand', 'reef': '2-Reef', 'point': '3-Point', 'jetty': '4-Jetty', 'mixed': '5-Mixed'}
+        exposure_options = {'1': 'exposed', '2': 'semi_protected', '3': 'protected'}
+        exposure_display = {'exposed': '1-Exposed', 'semi_protected': '2-Semi-protected', 'protected': '3-Protected'}
+        location_type_options = {'1': 'shore', '2': 'pier', '3': 'boat', '4': 'mixed'}
+        location_type_display = {'shore': '1-Shore', 'pier': '2-Pier', 'boat': '3-Boat', 'mixed': '4-Mixed'}
+        
+        # Get fish categories for target category field
+        target_category_options = {}
+        target_category_display = {}
+        if hasattr(self, 'yaml_data') and self.yaml_data and 'fish_categories' in self.yaml_data:
+            fish_categories = self.yaml_data['fish_categories']
+            for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
+                target_category_options[str(i)] = cat_key
+                display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
+                target_category_display[cat_key] = f"{i}-{display_name}"
+        
         while True:
-            # Display fields
+            # Clear and redraw dialog (same logic as edit dialog)
+            for y in range(2, dialog_height - 1):
+                dialog_win.addstr(y, 1, " " * (dialog_width - 2))
+            
+            # Display fields (same logic as edit dialog)
             for i, field in enumerate(fields):
-                y = 3 + i
+                y = 3 + i * 2
+                
                 dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
                 
-                # Clear field area
-                dialog_win.addstr(y, 20, " " * 30)
-                dialog_win.addstr(y, 20, field_values[i][:30])
+                # Handle display values for dropdown fields
+                field_display_value = field_values[i][:40]
+                if spot_type == 'surf_spots':
+                    if 'Bottom Type' in field:
+                        field_display_value = bottom_type_display.get(field_values[i], field_values[i])
+                    elif 'Exposure' in field:
+                        field_display_value = exposure_display.get(field_values[i], field_values[i])
+                else:
+                    if 'Location Type' in field:
+                        field_display_value = location_type_display.get(field_values[i], field_values[i])
+                    elif 'Target Category' in field:
+                        field_display_value = target_category_display.get(field_values[i], field_values[i])
+                
+                dialog_win.addstr(y, 20, " " * 45)
+                dialog_win.addstr(y, 20, field_display_value)
                 
                 if i == current_field:
-                    dialog_win.addch(y, 20 + len(field_values[i]), curses.ACS_BLOCK)
+                    cursor_pos = min(len(field_display_value), 40)
+                    if 'Type' in field or 'Exposure' in field or 'Category' in field:
+                        dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
+                    else:
+                        dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
             
             # Instructions
-            dialog_win.addstr(dialog_height - 3, 2, "Tab: Next Field, Enter: Save, Esc: Cancel")
+            instructions_y = dialog_height - 4
+            dialog_win.addstr(instructions_y, 2, " " * (dialog_width - 4))
+            current_field_name = fields[current_field]
+            if 'Type' in current_field_name or 'Exposure' in current_field_name or 'Category' in current_field_name:
+                dialog_win.addstr(instructions_y, 2, "1-5: Select option, Tab: Next field", curses.color_pair(5))
+            else:
+                dialog_win.addstr(instructions_y, 2, "Type to edit, Tab: Next field", curses.color_pair(5))
+            
+            dialog_win.addstr(dialog_height - 3, 2, "Enter: Save, Esc: Cancel")
             dialog_win.refresh()
             
             key = dialog_win.getch()
@@ -468,27 +516,43 @@ class SurfFishingPointManager:
                     curses.curs_set(0)
                     return 'action_added'
                 else:
-                    # Show error message
                     dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
                     dialog_win.refresh()
                     curses.napms(2000)
-            elif key == curses.KEY_BACKSPACE or key == 127:
-                if field_values[current_field]:
-                    field_values[current_field] = field_values[current_field][:-1]
-            elif 32 <= key <= 126:  # Printable characters
-                if len(field_values[current_field]) < 30:
-                    field_values[current_field] += chr(key)
+            
+            # Handle field-specific input (same logic as edit dialog)
+            elif 'Bottom Type' in current_field_name and spot_type == 'surf_spots':
+                if chr(key) in bottom_type_options:
+                    field_values[current_field] = bottom_type_options[chr(key)]
+            elif 'Exposure' in current_field_name and spot_type == 'surf_spots':
+                if chr(key) in exposure_options:
+                    field_values[current_field] = exposure_options[chr(key)]
+            elif 'Location Type' in current_field_name and spot_type == 'fishing_spots':
+                if chr(key) in location_type_options:
+                    field_values[current_field] = location_type_options[chr(key)]
+            elif 'Target Category' in current_field_name and spot_type == 'fishing_spots':
+                if chr(key) in target_category_options:
+                    field_values[current_field] = target_category_options[chr(key)]
+            
+            # Handle text input for non-dropdown fields
+            elif not any(x in current_field_name for x in ['Type', 'Exposure', 'Category']):
+                if key == curses.KEY_BACKSPACE or key == 127:
+                    if field_values[current_field]:
+                        field_values[current_field] = field_values[current_field][:-1]
+                elif 32 <= key <= 126:  # Printable characters
+                    if len(field_values[current_field]) < 30:
+                        field_values[current_field] += chr(key)
     
     def _edit_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
-        """Dialog for editing existing spot"""
+        """Enhanced dialog for editing existing spot with full surf characteristics"""
         
         spot_key, spot_config = spot_item
         
         height, width = stdscr.getmaxyx()
         
-        # Create dialog window  
-        dialog_height = 12
-        dialog_width = 60
+        # Create larger dialog window to accommodate all fields
+        dialog_height = 18 if spot_type == 'surf_spots' else 14
+        dialog_width = 70
         dialog_y = (height - dialog_height) // 2
         dialog_x = (width - dialog_width) // 2
         
@@ -506,28 +570,105 @@ class SurfFishingPointManager:
         ]
         
         if spot_type == 'surf_spots':
-            field_values.append(spot_config.get('beach_facing', ''))
-        
-        fields = ['Name', 'Latitude', 'Longitude']
-        if spot_type == 'surf_spots':
-            fields.append('Beach Angle')
+            field_values.extend([
+                spot_config.get('beach_facing', ''),
+                spot_config.get('bottom_type', 'sand'),
+                spot_config.get('exposure', 'exposed')
+            ])
+            fields = ['Name', 'Latitude', 'Longitude', 'Beach Angle', 'Bottom Type', 'Exposure']
+        else:  # fishing_spots
+            field_values.extend([
+                spot_config.get('location_type', 'shore'),
+                spot_config.get('target_category', 'mixed_bag')
+            ])
+            fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
         
         current_field = 0
         curses.curs_set(1)
         
+        # Options for dropdown fields
+        bottom_type_options = {
+            '1': 'sand', '2': 'reef', '3': 'point', '4': 'jetty', '5': 'mixed'
+        }
+        bottom_type_display = {
+            'sand': '1-Sand', 'reef': '2-Reef', 'point': '3-Point', 'jetty': '4-Jetty', 'mixed': '5-Mixed'
+        }
+        
+        exposure_options = {
+            '1': 'exposed', '2': 'semi_protected', '3': 'protected'
+        }
+        exposure_display = {
+            'exposed': '1-Exposed', 'semi_protected': '2-Semi-protected', 'protected': '3-Protected'
+        }
+        
+        location_type_options = {
+            '1': 'shore', '2': 'pier', '3': 'boat', '4': 'mixed'
+        }
+        location_type_display = {
+            'shore': '1-Shore', 'pier': '2-Pier', 'boat': '3-Boat', 'mixed': '4-Mixed'
+        }
+        
+        # Get fish categories for target category field (if available)
+        target_category_options = {}
+        target_category_display = {}
+        if hasattr(self, 'yaml_data') and self.yaml_data and 'fish_categories' in self.yaml_data:
+            fish_categories = self.yaml_data['fish_categories']
+            for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
+                target_category_options[str(i)] = cat_key
+                display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
+                target_category_display[cat_key] = f"{i}-{display_name}"
+        
         while True:
-            # Display fields (same logic as add dialog)
+            # Clear and redraw dialog content
+            for y in range(2, dialog_height - 1):
+                dialog_win.addstr(y, 1, " " * (dialog_width - 2))
+            
+            # Display fields with enhanced formatting
             for i, field in enumerate(fields):
-                y = 3 + i
+                y = 3 + i * 2  # More spacing between fields
+                
+                # Field label
                 dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
                 
-                dialog_win.addstr(y, 20, " " * 30)
-                dialog_win.addstr(y, 20, field_values[i][:30])
+                # Field value display with special handling for dropdown fields
+                field_display_value = field_values[i][:40]  # Truncate long values
                 
+                if spot_type == 'surf_spots':
+                    if field == 'Bottom Type':
+                        field_display_value = bottom_type_display.get(field_values[i], field_values[i])
+                    elif field == 'Exposure':
+                        field_display_value = exposure_display.get(field_values[i], field_values[i])
+                else:  # fishing_spots
+                    if field == 'Location Type':
+                        field_display_value = location_type_display.get(field_values[i], field_values[i])
+                    elif field == 'Target Category':
+                        field_display_value = target_category_display.get(field_values[i], field_values[i])
+                
+                # Clear field area and display value
+                dialog_win.addstr(y, 20, " " * 45)
+                dialog_win.addstr(y, 20, field_display_value)
+                
+                # Show cursor for current field
                 if i == current_field:
-                    dialog_win.addch(y, 20 + len(field_values[i]), curses.ACS_BLOCK)
+                    cursor_pos = min(len(field_display_value), 40)
+                    if field in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
+                        # For dropdown fields, show selection indicator
+                        dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
+                    else:
+                        # For text fields, show text cursor
+                        dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
             
-            dialog_win.addstr(dialog_height - 3, 2, "Tab: Next Field, Enter: Save, Esc: Cancel")
+            # Instructions based on current field type
+            instructions_y = dialog_height - 4
+            dialog_win.addstr(instructions_y, 2, " " * (dialog_width - 4))  # Clear instructions
+            
+            current_field_name = fields[current_field]
+            if current_field_name in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
+                dialog_win.addstr(instructions_y, 2, "1-5: Select option, Tab: Next field", curses.color_pair(5))
+            else:
+                dialog_win.addstr(instructions_y, 2, "Type to edit, Tab: Next field", curses.color_pair(5))
+            
+            dialog_win.addstr(dialog_height - 3, 2, "Enter: Save, Esc: Cancel", curses.color_pair(5))
             dialog_win.refresh()
             
             key = dialog_win.getch()
@@ -535,23 +676,46 @@ class SurfFishingPointManager:
             if key == 27:  # ESC - Cancel
                 curses.curs_set(0)
                 return 'continue'
-            elif key == ord('\t'):
+            elif key == ord('\t'):  # Tab - Next field
                 current_field = (current_field + 1) % len(fields)
             elif key == ord('\n'):  # Enter - Save
                 if self._validate_spot_input(field_values, spot_type):
-                    self._update_existing_spot(spot_key, field_values, spot_type)
+                    # Update spot with enhanced field handling
+                    if spot_type == 'surf_spots':
+                        enhanced_field_values = field_values[:6]  # All 6 fields
+                    else:
+                        enhanced_field_values = field_values[:5]  # All 5 fields
+                    
+                    self._update_existing_spot_enhanced(spot_key, enhanced_field_values, spot_type)
                     curses.curs_set(0)
                     return 'action_updated'
                 else:
                     dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
                     dialog_win.refresh()
                     curses.napms(2000)
-            elif key == curses.KEY_BACKSPACE or key == 127:
-                if field_values[current_field]:
-                    field_values[current_field] = field_values[current_field][:-1]
-            elif 32 <= key <= 126:
-                if len(field_values[current_field]) < 30:
-                    field_values[current_field] += chr(key)
+            
+            # Handle input based on field type
+            elif current_field_name == 'Bottom Type' and spot_type == 'surf_spots':
+                if chr(key) in bottom_type_options:
+                    field_values[current_field] = bottom_type_options[chr(key)]
+            elif current_field_name == 'Exposure' and spot_type == 'surf_spots':
+                if chr(key) in exposure_options:
+                    field_values[current_field] = exposure_options[chr(key)]
+            elif current_field_name == 'Location Type' and spot_type == 'fishing_spots':
+                if chr(key) in location_type_options:
+                    field_values[current_field] = location_type_options[chr(key)]
+            elif current_field_name == 'Target Category' and spot_type == 'fishing_spots':
+                if chr(key) in target_category_options:
+                    field_values[current_field] = target_category_options[chr(key)]
+            
+            # Handle text input for non-dropdown fields
+            elif current_field_name not in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
+                if key == curses.KEY_BACKSPACE or key == 127:
+                    if field_values[current_field]:
+                        field_values[current_field] = field_values[current_field][:-1]
+                elif 32 <= key <= 126:  # Printable characters
+                    if len(field_values[current_field]) < 30:
+                        field_values[current_field] += chr(key)
     
     def _delete_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
         """Confirmation dialog for deleting spot"""
