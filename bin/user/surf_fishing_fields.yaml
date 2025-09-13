@@ -394,6 +394,11 @@ scoring_criteria:
       4: "Excellent fishing conditions"
       5: "Epic fishing conditions"
 
+    description_factor_thresholds:
+      pressure_threshold: 0.7    # Score threshold to mention pressure in description
+      tide_threshold: 0.7        # Score threshold to mention tide in description  
+      time_threshold: 0.7        # Score threshold to mention time in description
+
 
 # =============================================================================
 # BATHYMETRY DATA SOURCE - GEBCO API via OpenTopo
