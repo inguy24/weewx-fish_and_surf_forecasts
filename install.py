@@ -622,8 +622,9 @@ class SurfFishingPointManager:
         
         while True:
             # Clear and redraw dialog content
-            for y in range(2, dialog_height - 1):
-                dialog_win.addstr(y, 1, " " * (dialog_width - 2))
+            dialog_win.clear()
+            dialog_win.box()
+            dialog_win.addstr(1, 2, f"Edit {type_name} Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
             
             # Display fields with enhanced formatting
             for i, field in enumerate(fields):
@@ -662,7 +663,8 @@ class SurfFishingPointManager:
             
             # Instructions based on current field type
             instructions_y = dialog_height - 4
-            dialog_win.addstr(instructions_y, 2, " " * (dialog_width - 4))  # Clear instructions
+            for clear_y in range(instructions_y, dialog_height - 1):
+                dialog_win.addstr(clear_y, 1, " " * (dialog_width - 2))
             
             current_field_name = fields[current_field]
             if current_field_name in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
