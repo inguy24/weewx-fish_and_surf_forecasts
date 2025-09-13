@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Magic Animal: Kitty Cat
+# Magic Animal: Tazmanian Devil
 """
 WeeWX Surf & Fishing Forecast Extension Installer
 Phase II: Local Surf & Fishing Forecast System
@@ -8,6 +8,7 @@ Copyright 2025 Shane Burkhardt
 """
 
 import os
+import configobj
 import json
 import urllib.request
 import urllib.parse
@@ -70,6 +71,989 @@ class InstallationProgressManager:
         print(f"\r  {step_name}... {CORE_ICONS['warning']}  {error_msg}")
 
 
+class SurfFishingPointManager:
+    """
+    Cursor UI management system for surf and fishing points with real-time weewx.conf persistence
+    """
+    
+    def __init__(self, yaml_data, gebco_client=None):
+        """Initialize point manager with YAML configuration and optional GEBCO client"""
+        self.yaml_data = yaml_data
+        self.gebco_client = gebco_client
+        self.config_path = None
+        self.current_spots = {'surf_spots': {}, 'fishing_spots': {}}
+        self.menu_state = 'main'
+        self.selected_index = 0
+        
+        # Core icons for consistency
+        self.CORE_ICONS = {
+            'navigation': '📍',
+            'status': '✅',
+            'warning': '⚠️',
+            'selection': '🔧'
+        }
+    
+    def _find_weewx_config_path(self) -> Optional[str]:
+        """Find weewx.conf file following WeeWX 5.1 standard locations"""
+        possible_paths = [
+            '/etc/weewx/weewx.conf',
+            '/home/weewx/weewx.conf',
+            '~/weewx-data/weewx.conf',
+            '/opt/weewx/weewx.conf'
+        ]
+        
+        for path in possible_paths:
+            expanded_path = os.path.expanduser(path)
+            if os.path.exists(expanded_path):
+                return expanded_path
+        return None
+    
+    def _load_current_spots_from_conf(self) -> bool:
+        """Load existing spots from weewx.conf using WeeWX 5.1 thread-safe ConfigObj operations"""
+        try:
+            if not self.config_path:
+                self.config_path = self._find_weewx_config_path()
+                if not self.config_path:
+                    return False
+            
+            # WeeWX 5.1 best practice: disable interpolation to prevent ConfigObj format issues
+            config = configobj.ConfigObj(self.config_path, interpolation=False)
+            
+            # Navigate to SurfFishingService section
+            service_config = config.get('SurfFishingService', {})
+            
+            # Load surf spots
+            surf_spots = service_config.get('surf_spots', {})
+            self.current_spots['surf_spots'] = dict(surf_spots)
+            
+            # Load fishing spots  
+            fishing_spots = service_config.get('fishing_spots', {})
+            self.current_spots['fishing_spots'] = dict(fishing_spots)
+            
+            return True
+            
+        except Exception as e:
+            # Graceful fallback - start with empty spots if config read fails
+            self.current_spots = {'surf_spots': {}, 'fishing_spots': {}}
+            return False
+    
+    def _save_spots_to_conf(self) -> bool:
+        """Save current spots to weewx.conf using WeeWX 5.1 thread-safe write operations"""
+        try:
+            if not self.config_path:
+                return False
+            
+            # WeeWX 5.1 best practice: Read, modify, write pattern with proper ConfigObj handling
+            config = configobj.ConfigObj(self.config_path, interpolation=False)
+            
+            # Ensure SurfFishingService section exists
+            if 'SurfFishingService' not in config:
+                config['SurfFishingService'] = {}
+            
+            # Update surf spots section
+            config['SurfFishingService']['surf_spots'] = self.current_spots['surf_spots']
+            
+            # Update fishing spots section
+            config['SurfFishingService']['fishing_spots'] = self.current_spots['fishing_spots']
+            
+            # WeeWX 5.1 best practice: Immediate write to persist changes
+            config.write()
+            
+            return True
+            
+        except Exception as e:
+            return False
+    
+    def _reset_bathymetry_flag(self, spot_type: str, spot_key: str) -> bool:
+        """Reset bathymetry_calculated flag to false for spot recalculation"""
+        try:
+            if spot_key in self.current_spots[spot_type]:
+                self.current_spots[spot_type][spot_key]['bathymetry_calculated'] = 'false'
+                return self._save_spots_to_conf()
+            return False
+        except Exception:
+            return False
+    
+    def _get_next_spot_key(self, spot_type: str) -> str:
+        """Generate next available spot key (spot_0, spot_1, etc.)"""
+        existing_keys = list(self.current_spots[spot_type].keys())
+        
+        # Find highest numeric suffix
+        max_index = -1
+        for key in existing_keys:
+            if key.startswith('spot_'):
+                try:
+                    index = int(key.split('_')[1])
+                    max_index = max(max_index, index)
+                except (ValueError, IndexError):
+                    continue
+        
+        return f'spot_{max_index + 1}'
+    
+    def _validate_coordinates(self, lat_str: str, lon_str: str) -> Tuple[Optional[float], Optional[float]]:
+        """Validate and convert coordinate strings to float values"""
+        try:
+            lat = float(lat_str)
+            lon = float(lon_str)
+            
+            # Basic range validation
+            if not (-90 <= lat <= 90):
+                return None, None
+            if not (-180 <= lon <= 180):
+                return None, None
+                
+            return lat, lon
+        except ValueError:
+            return None, None
+    
+    def run_management_interface(self) -> Dict[str, Any]:
+        """
+        Main entry point - run cursor UI management interface
+        Returns configuration data for integration with existing install.py workflow
+        """
+        
+        # Load existing configuration
+        config_loaded = self._load_current_spots_from_conf()
+        
+        # Run curses interface if terminal supports it
+        try:
+            result = curses.wrapper(self._run_curses_interface)
+            
+            # Convert current_spots format to install.py expected format
+            selected_locations = self._convert_to_installer_format()
+            
+            return {
+                'surf_spots': selected_locations['surf_spots'],
+                'fishing_spots': selected_locations['fishing_spots'],
+                'config_loaded': config_loaded,
+                'changes_made': result.get('changes_made', False)
+            }
+            
+        except Exception:
+            # Fallback to text interface if curses fails
+            return self._run_text_fallback_interface()
+    
+    def _run_curses_interface(self, stdscr) -> Dict[str, Any]:
+        """Main curses interface loop with navigation and spot management"""
+        
+        curses.curs_set(0)  # Hide cursor
+        curses.use_default_colors()
+        
+        # Initialize color pairs
+        curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)   # Header
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Selected
+        curses.init_pair(3, curses.COLOR_GREEN, -1)                  # Success
+        curses.init_pair(4, curses.COLOR_RED, -1)                    # Warning
+        curses.init_pair(5, curses.COLOR_YELLOW, -1)                 # Info
+        
+        changes_made = False
+        
+        while True:
+            stdscr.clear()
+            
+            if self.menu_state == 'main':
+                action = self._display_main_menu(stdscr)
+                if action == 'exit':
+                    break
+                elif action == 'surf_spots':
+                    self.menu_state = 'surf_management'
+                    self.selected_index = 0
+                elif action == 'fishing_spots':
+                    self.menu_state = 'fishing_management' 
+                    self.selected_index = 0
+            
+            elif self.menu_state == 'surf_management':
+                action = self._display_spot_management(stdscr, 'surf_spots')
+                if action == 'back':
+                    self.menu_state = 'main'
+                    self.selected_index = 0
+                elif action.startswith('action_'):
+                    changes_made = True
+            
+            elif self.menu_state == 'fishing_management':
+                action = self._display_spot_management(stdscr, 'fishing_spots')
+                if action == 'back':
+                    self.menu_state = 'main'
+                    self.selected_index = 0
+                elif action.startswith('action_'):
+                    changes_made = True
+            
+            stdscr.refresh()
+        
+        return {'changes_made': changes_made}
+    
+    def _display_main_menu(self, stdscr) -> str:
+        """Display main menu with surf/fishing spot management options"""
+        
+        height, width = stdscr.getmaxyx()
+        
+        # Header
+        header = f"{self.CORE_ICONS['selection']} Surf & Fishing Point Management System"
+        stdscr.addstr(0, (width - len(header)) // 2, header, curses.color_pair(1) | curses.A_BOLD)
+        
+        # Current status
+        surf_count = len(self.current_spots['surf_spots'])
+        fishing_count = len(self.current_spots['fishing_spots'])
+        status = f"Current: {surf_count} surf spots, {fishing_count} fishing spots"
+        stdscr.addstr(2, (width - len(status)) // 2, status, curses.color_pair(5))
+        
+        # Menu options
+        menu_items = [
+            "Manage Surf Spots",
+            "Manage Fishing Spots", 
+            "Exit and Continue Installation"
+        ]
+        
+        start_y = height // 2 - len(menu_items) // 2
+        
+        for i, item in enumerate(menu_items):
+            y = start_y + i * 2
+            if i == self.selected_index:
+                stdscr.addstr(y, (width - len(item)) // 2, f"> {item} <", curses.color_pair(2) | curses.A_BOLD)
+            else:
+                stdscr.addstr(y, (width - len(item)) // 2, f"  {item}  ", curses.A_NORMAL)
+        
+        # Instructions
+        instructions = "↑↓ Navigate, Enter Select, q Quit"
+        stdscr.addstr(height - 2, (width - len(instructions)) // 2, instructions, curses.color_pair(5))
+        
+        # Handle input
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            self.selected_index = (self.selected_index - 1) % len(menu_items)
+        elif key == curses.KEY_DOWN:
+            self.selected_index = (self.selected_index + 1) % len(menu_items)
+        elif key == ord('\n') or key == ord(' '):
+            if self.selected_index == 0:
+                return 'surf_spots'
+            elif self.selected_index == 1:
+                return 'fishing_spots'
+            elif self.selected_index == 2:
+                return 'exit'
+        elif key == ord('q') or key == 27:  # ESC
+            return 'exit'
+        
+        return 'continue'
+    
+    def _display_spot_management(self, stdscr, spot_type: str) -> str:
+        """Display spot management interface for surf or fishing spots"""
+        
+        height, width = stdscr.getmaxyx()
+        spots = self.current_spots[spot_type]
+        spot_list = list(spots.items())
+        
+        # Header
+        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
+        header = f"{self.CORE_ICONS['navigation']} {type_name} Spot Management ({len(spots)} spots)"
+        stdscr.addstr(0, (width - len(header)) // 2, header, curses.color_pair(1) | curses.A_BOLD)
+        
+        # Spot list with actions
+        if spots:
+            start_y = 3
+            max_display = min(height - 8, len(spot_list))
+            
+            for i, (spot_key, spot_config) in enumerate(spot_list[:max_display]):
+                y = start_y + i
+                name = spot_config.get('name', spot_key)
+                lat = spot_config.get('latitude', 'N/A')
+                lon = spot_config.get('longitude', 'N/A')
+                
+                # Show bathymetry status for surf spots
+                if spot_type == 'surf_spots':
+                    bathy_calc = spot_config.get('bathymetry_calculated', 'false')
+                    bathy_status = f" [{self.CORE_ICONS['status'] if bathy_calc == 'true' else self.CORE_ICONS['warning']}]"
+                else:
+                    bathy_status = ""
+                
+                spot_text = f"{name} ({lat}, {lon}){bathy_status}"
+                
+                if i == self.selected_index:
+                    stdscr.addstr(y, 2, f"> {spot_text}", curses.color_pair(2) | curses.A_BOLD)
+                else:
+                    stdscr.addstr(y, 4, spot_text, curses.A_NORMAL)
+        else:
+            stdscr.addstr(3, (width - 20) // 2, "No spots configured", curses.color_pair(4))
+        
+        # Action menu
+        actions_y = height - 6
+        stdscr.addstr(actions_y, 2, "Actions:", curses.A_BOLD)
+        stdscr.addstr(actions_y + 1, 4, "a - Add New Spot")
+        
+        if spots:
+            stdscr.addstr(actions_y + 2, 4, "e - Edit Selected Spot")
+            stdscr.addstr(actions_y + 3, 4, "d - Delete Selected Spot")
+            if spot_type == 'surf_spots':
+                stdscr.addstr(actions_y + 4, 4, "r - Reset Bathymetry Flag")
+        
+        stdscr.addstr(height - 2, 4, "↑↓ Navigate, b Back to Main Menu, q Quit", curses.color_pair(5))
+        
+        # Handle input
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP and spots:
+            self.selected_index = max(0, self.selected_index - 1)
+        elif key == curses.KEY_DOWN and spots:
+            self.selected_index = min(len(spot_list) - 1, self.selected_index + 1)
+        elif key == ord('a'):
+            return self._add_new_spot_dialog(stdscr, spot_type)
+        elif key == ord('e') and spots:
+            return self._edit_spot_dialog(stdscr, spot_type, spot_list[self.selected_index])
+        elif key == ord('d') and spots:
+            return self._delete_spot_dialog(stdscr, spot_type, spot_list[self.selected_index])
+        elif key == ord('r') and spots and spot_type == 'surf_spots':
+            return self._reset_bathymetry_dialog(stdscr, spot_list[self.selected_index])
+        elif key == ord('b'):
+            return 'back'
+        elif key == ord('q') or key == 27:  # ESC
+            return 'back'
+        
+        return 'continue'
+    
+    def _add_new_spot_dialog(self, stdscr, spot_type: str) -> str:
+        """Dialog for adding a new surf or fishing spot"""
+        
+        height, width = stdscr.getmaxyx()
+        
+        # Create dialog window
+        dialog_height = 12
+        dialog_width = 60
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
+        dialog_win.addstr(1, 2, f"Add New {type_name} Spot", curses.A_BOLD)
+        
+        # Input fields
+        fields = ['Name', 'Latitude', 'Longitude']
+        if spot_type == 'surf_spots':
+            fields.append('Beach Angle (0-360)')
+        
+        field_values = [''] * len(fields)
+        current_field = 0
+        
+        curses.curs_set(1)  # Show cursor for input
+        
+        while True:
+            # Display fields
+            for i, field in enumerate(fields):
+                y = 3 + i
+                dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
+                
+                # Clear field area
+                dialog_win.addstr(y, 20, " " * 30)
+                dialog_win.addstr(y, 20, field_values[i][:30])
+                
+                if i == current_field:
+                    dialog_win.addch(y, 20 + len(field_values[i]), curses.ACS_BLOCK)
+            
+            # Instructions
+            dialog_win.addstr(dialog_height - 3, 2, "Tab: Next Field, Enter: Save, Esc: Cancel")
+            dialog_win.refresh()
+            
+            key = dialog_win.getch()
+            
+            if key == 27:  # ESC - Cancel
+                curses.curs_set(0)
+                return 'continue'
+            elif key == ord('\t'):  # Tab - Next field
+                current_field = (current_field + 1) % len(fields)
+            elif key == ord('\n'):  # Enter - Save
+                # Validate and save
+                if self._validate_spot_input(field_values, spot_type):
+                    self._save_new_spot(field_values, spot_type)
+                    curses.curs_set(0)
+                    return 'action_added'
+                else:
+                    # Show error message
+                    dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
+                    dialog_win.refresh()
+                    curses.napms(2000)
+            elif key == curses.KEY_BACKSPACE or key == 127:
+                if field_values[current_field]:
+                    field_values[current_field] = field_values[current_field][:-1]
+            elif 32 <= key <= 126:  # Printable characters
+                if len(field_values[current_field]) < 30:
+                    field_values[current_field] += chr(key)
+    
+    def _edit_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
+        """Dialog for editing existing spot"""
+        
+        spot_key, spot_config = spot_item
+        
+        height, width = stdscr.getmaxyx()
+        
+        # Create dialog window  
+        dialog_height = 12
+        dialog_width = 60
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
+        dialog_win.addstr(1, 2, f"Edit {type_name} Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
+        
+        # Pre-populate with current values
+        field_values = [
+            spot_config.get('name', ''),
+            spot_config.get('latitude', ''),
+            spot_config.get('longitude', '')
+        ]
+        
+        if spot_type == 'surf_spots':
+            field_values.append(spot_config.get('beach_facing', ''))
+        
+        fields = ['Name', 'Latitude', 'Longitude']
+        if spot_type == 'surf_spots':
+            fields.append('Beach Angle')
+        
+        current_field = 0
+        curses.curs_set(1)
+        
+        while True:
+            # Display fields (same logic as add dialog)
+            for i, field in enumerate(fields):
+                y = 3 + i
+                dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
+                
+                dialog_win.addstr(y, 20, " " * 30)
+                dialog_win.addstr(y, 20, field_values[i][:30])
+                
+                if i == current_field:
+                    dialog_win.addch(y, 20 + len(field_values[i]), curses.ACS_BLOCK)
+            
+            dialog_win.addstr(dialog_height - 3, 2, "Tab: Next Field, Enter: Save, Esc: Cancel")
+            dialog_win.refresh()
+            
+            key = dialog_win.getch()
+            
+            if key == 27:  # ESC - Cancel
+                curses.curs_set(0)
+                return 'continue'
+            elif key == ord('\t'):
+                current_field = (current_field + 1) % len(fields)
+            elif key == ord('\n'):  # Enter - Save
+                if self._validate_spot_input(field_values, spot_type):
+                    self._update_existing_spot(spot_key, field_values, spot_type)
+                    curses.curs_set(0)
+                    return 'action_updated'
+                else:
+                    dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
+                    dialog_win.refresh()
+                    curses.napms(2000)
+            elif key == curses.KEY_BACKSPACE or key == 127:
+                if field_values[current_field]:
+                    field_values[current_field] = field_values[current_field][:-1]
+            elif 32 <= key <= 126:
+                if len(field_values[current_field]) < 30:
+                    field_values[current_field] += chr(key)
+    
+    def _delete_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
+        """Confirmation dialog for deleting spot"""
+        
+        spot_key, spot_config = spot_item
+        
+        height, width = stdscr.getmaxyx()
+        
+        # Create confirmation dialog
+        dialog_height = 8
+        dialog_width = 50
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        name = spot_config.get('name', spot_key)
+        dialog_win.addstr(1, 2, f"Delete Spot: {name}", curses.A_BOLD)
+        dialog_win.addstr(3, 2, "Are you sure? This cannot be undone.")
+        dialog_win.addstr(5, 2, "y - Yes, Delete    n - No, Cancel", curses.color_pair(4))
+        
+        dialog_win.refresh()
+        
+        while True:
+            key = dialog_win.getch()
+            if key == ord('y') or key == ord('Y'):
+                # Delete spot
+                del self.current_spots[spot_type][spot_key]
+                self._save_spots_to_conf()
+                # Adjust selected_index if needed
+                if self.selected_index >= len(self.current_spots[spot_type]):
+                    self.selected_index = max(0, len(self.current_spots[spot_type]) - 1)
+                return 'action_deleted'
+            elif key == ord('n') or key == ord('N') or key == 27:
+                return 'continue'
+    
+    def _reset_bathymetry_dialog(self, stdscr, spot_item: Tuple[str, Dict]) -> str:
+        """Dialog for resetting bathymetry calculation flag"""
+        
+        spot_key, spot_config = spot_item
+        
+        height, width = stdscr.getmaxyx()
+        
+        dialog_height = 8
+        dialog_width = 55
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        name = spot_config.get('name', spot_key)
+        dialog_win.addstr(1, 2, f"Reset Bathymetry: {name}", curses.A_BOLD)
+        dialog_win.addstr(3, 2, "Reset bathymetry flag to recalculate depths?")
+        dialog_win.addstr(5, 2, "y - Yes, Reset    n - Cancel", curses.color_pair(5))
+        
+        dialog_win.refresh()
+        
+        while True:
+            key = dialog_win.getch()
+            if key == ord('y') or key == ord('Y'):
+                if self._reset_bathymetry_flag('surf_spots', spot_key):
+                    return 'action_reset'
+                else:
+                    return 'continue'
+            elif key == ord('n') or key == ord('N') or key == 27:
+                return 'continue'
+    
+    def _validate_spot_input(self, field_values: List[str], spot_type: str) -> bool:
+        """Validate user input for spot creation/editing"""
+        
+        # Check required fields
+        if not field_values[0].strip():  # Name
+            return False
+        
+        # Validate coordinates
+        lat, lon = self._validate_coordinates(field_values[1], field_values[2])
+        if lat is None or lon is None:
+            return False
+        
+        # Validate beach angle for surf spots
+        if spot_type == 'surf_spots' and len(field_values) > 3:
+            try:
+                angle = float(field_values[3])
+                if not (0 <= angle <= 360):
+                    return False
+            except ValueError:
+                return False
+        
+        return True
+    
+    def _save_new_spot(self, field_values: List[str], spot_type: str):
+        """Save new spot to current configuration"""
+        
+        spot_key = self._get_next_spot_key(spot_type)
+        lat, lon = self._validate_coordinates(field_values[1], field_values[2])
+        
+        # Create spot configuration using data-driven approach
+        spot_config = {
+            'name': field_values[0].strip(),
+            'latitude': str(lat),
+            'longitude': str(lon),
+            'type': spot_type.replace('_spots', ''),
+            'active': 'true'
+        }
+        
+        if spot_type == 'surf_spots':
+            spot_config.update({
+                'beach_facing': field_values[3] if len(field_values) > 3 else '270',
+                'bottom_type': 'sand',
+                'exposure': 'exposed',
+                'bathymetry_calculated': 'false'
+            })
+        else:  # fishing_spots
+            spot_config.update({
+                'location_type': 'shore',
+                'target_category': 'mixed_bag'
+            })
+        
+        # Add to current spots and save to conf
+        self.current_spots[spot_type][spot_key] = spot_config
+        self._save_spots_to_conf()
+    
+    def _update_existing_spot(self, spot_key: str, field_values: List[str], spot_type: str):
+        """Update existing spot configuration"""
+        
+        lat, lon = self._validate_coordinates(field_values[1], field_values[2])
+        
+        # Get existing config and update with new values
+        spot_config = self.current_spots[spot_type][spot_key]
+        spot_config['name'] = field_values[0].strip()
+        spot_config['latitude'] = str(lat)
+        spot_config['longitude'] = str(lon)
+        
+        if spot_type == 'surf_spots' and len(field_values) > 3:
+            spot_config['beach_facing'] = field_values[3]
+            # Reset bathymetry flag when coordinates or beach angle change
+            spot_config['bathymetry_calculated'] = 'false'
+        
+        self._save_spots_to_conf()
+    
+    def _run_text_fallback_interface(self) -> Dict[str, Any]:
+        """
+        Text-based fallback interface when curses is not available
+        Provides basic CRUD operations through command-line prompts
+        """
+        
+        print(f"\n{self.CORE_ICONS['selection']} Surf & Fishing Point Management System")
+        print("=" * 60)
+        
+        config_loaded = self._load_current_spots_from_conf()
+        changes_made = False
+        
+        if not config_loaded:
+            print(f"{self.CORE_ICONS['warning']} Could not load existing configuration - starting fresh")
+        
+        while True:
+            self._display_text_main_menu()
+            choice = input("\nSelect option (1-4): ").strip()
+            
+            if choice == '1':
+                changes_made |= self._text_manage_spots('surf_spots')
+            elif choice == '2':
+                changes_made |= self._text_manage_spots('fishing_spots')
+            elif choice == '3':
+                self._display_current_configuration()
+            elif choice == '4':
+                break
+            else:
+                print(f"{self.CORE_ICONS['warning']} Invalid choice. Please enter 1-4.")
+        
+        # Convert to installer format
+        selected_locations = self._convert_to_installer_format()
+        
+        return {
+            'surf_spots': selected_locations['surf_spots'],
+            'fishing_spots': selected_locations['fishing_spots'],
+            'config_loaded': config_loaded,
+            'changes_made': changes_made
+        }
+    
+    def _display_text_main_menu(self):
+        """Display main menu for text interface"""
+        
+        surf_count = len(self.current_spots['surf_spots'])
+        fishing_count = len(self.current_spots['fishing_spots'])
+        
+        print(f"\nCurrent Configuration: {surf_count} surf spots, {fishing_count} fishing spots")
+        print("\nManagement Options:")
+        print("1. Manage Surf Spots")
+        print("2. Manage Fishing Spots")
+        print("3. Display Current Configuration")
+        print("4. Exit and Continue Installation")
+    
+    def _text_manage_spots(self, spot_type: str) -> bool:
+        """Text interface for managing specific spot type"""
+        
+        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
+        spots = self.current_spots[spot_type]
+        changes_made = False
+        
+        while True:
+            print(f"\n{self.CORE_ICONS['navigation']} {type_name} Spot Management")
+            print("-" * 40)
+            
+            if spots:
+                print("Current Spots:")
+                for i, (spot_key, spot_config) in enumerate(spots.items(), 1):
+                    name = spot_config.get('name', spot_key)
+                    lat = spot_config.get('latitude', 'N/A')
+                    lon = spot_config.get('longitude', 'N/A')
+                    
+                    if spot_type == 'surf_spots':
+                        bathy_calc = spot_config.get('bathymetry_calculated', 'false')
+                        bathy_status = f" [Bathymetry: {'Calculated' if bathy_calc == 'true' else 'Needs Calculation'}]"
+                    else:
+                        bathy_status = ""
+                    
+                    print(f"  {i}. {name} ({lat}, {lon}){bathy_status}")
+            else:
+                print("No spots configured.")
+            
+            print(f"\nActions:")
+            print("1. Add New Spot")
+            if spots:
+                print("2. Edit Spot")
+                print("3. Delete Spot")
+                if spot_type == 'surf_spots':
+                    print("4. Reset Bathymetry Flag")
+            print("0. Back to Main Menu")
+            
+            choice = input(f"\nSelect action: ").strip()
+            
+            if choice == '0':
+                break
+            elif choice == '1':
+                changes_made |= self._text_add_spot(spot_type)
+            elif choice == '2' and spots:
+                changes_made |= self._text_edit_spot(spot_type, spots)
+            elif choice == '3' and spots:
+                changes_made |= self._text_delete_spot(spot_type, spots)
+            elif choice == '4' and spots and spot_type == 'surf_spots':
+                changes_made |= self._text_reset_bathymetry(spots)
+            else:
+                print(f"{self.CORE_ICONS['warning']} Invalid choice.")
+        
+        return changes_made
+    
+    def _text_add_spot(self, spot_type: str) -> bool:
+        """Text interface for adding new spot"""
+        
+        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
+        print(f"\n{self.CORE_ICONS['selection']} Add New {type_name} Spot")
+        
+        name = input("Spot name: ").strip()
+        if not name:
+            print(f"{self.CORE_ICONS['warning']} Name cannot be empty.")
+            return False
+        
+        lat_str = input("Latitude (-90 to 90): ").strip()
+        lon_str = input("Longitude (-180 to 180): ").strip()
+        
+        lat, lon = self._validate_coordinates(lat_str, lon_str)
+        if lat is None or lon is None:
+            print(f"{self.CORE_ICONS['warning']} Invalid coordinates.")
+            return False
+        
+        beach_angle = '270'  # Default
+        if spot_type == 'surf_spots':
+            beach_str = input("Beach facing angle (0-360, default 270): ").strip()
+            if beach_str:
+                try:
+                    beach_angle = str(float(beach_str))
+                    if not (0 <= float(beach_angle) <= 360):
+                        print(f"{self.CORE_ICONS['warning']} Beach angle must be 0-360.")
+                        return False
+                except ValueError:
+                    print(f"{self.CORE_ICONS['warning']} Invalid beach angle.")
+                    return False
+        
+        # Create spot using existing logic
+        field_values = [name, lat_str, lon_str]
+        if spot_type == 'surf_spots':
+            field_values.append(beach_angle)
+        
+        self._save_new_spot(field_values, spot_type)
+        print(f"{self.CORE_ICONS['status']} Added {name} successfully.")
+        return True
+    
+    def _text_edit_spot(self, spot_type: str, spots: Dict) -> bool:
+        """Text interface for editing existing spot"""
+        
+        spot_list = list(spots.items())
+        
+        print("Select spot to edit:")
+        for i, (spot_key, spot_config) in enumerate(spot_list, 1):
+            name = spot_config.get('name', spot_key)
+            print(f"  {i}. {name}")
+        
+        try:
+            choice = int(input("Spot number: ").strip()) - 1
+            if 0 <= choice < len(spot_list):
+                spot_key, spot_config = spot_list[choice]
+                
+                print(f"\nEditing: {spot_config.get('name', spot_key)}")
+                print("(Press Enter to keep current value)")
+                
+                # Get new values
+                name = input(f"Name [{spot_config.get('name', '')}]: ").strip()
+                if not name:
+                    name = spot_config.get('name', '')
+                
+                lat_str = input(f"Latitude [{spot_config.get('latitude', '')}]: ").strip()
+                if not lat_str:
+                    lat_str = spot_config.get('latitude', '')
+                
+                lon_str = input(f"Longitude [{spot_config.get('longitude', '')}]: ").strip()
+                if not lon_str:
+                    lon_str = spot_config.get('longitude', '')
+                
+                # Validate coordinates
+                lat, lon = self._validate_coordinates(lat_str, lon_str)
+                if lat is None or lon is None:
+                    print(f"{self.CORE_ICONS['warning']} Invalid coordinates.")
+                    return False
+                
+                beach_angle = spot_config.get('beach_facing', '270')
+                if spot_type == 'surf_spots':
+                    beach_str = input(f"Beach angle [{beach_angle}]: ").strip()
+                    if beach_str:
+                        try:
+                            beach_angle = str(float(beach_str))
+                        except ValueError:
+                            print(f"{self.CORE_ICONS['warning']} Invalid beach angle, keeping current.")
+                
+                # Update spot
+                field_values = [name, lat_str, lon_str]
+                if spot_type == 'surf_spots':
+                    field_values.append(beach_angle)
+                
+                self._update_existing_spot(spot_key, field_values, spot_type)
+                print(f"{self.CORE_ICONS['status']} Updated {name} successfully.")
+                return True
+            else:
+                print(f"{self.CORE_ICONS['warning']} Invalid spot number.")
+                return False
+        except ValueError:
+            print(f"{self.CORE_ICONS['warning']} Invalid input.")
+            return False
+    
+    def _text_delete_spot(self, spot_type: str, spots: Dict) -> bool:
+        """Text interface for deleting spot"""
+        
+        spot_list = list(spots.items())
+        
+        print("Select spot to delete:")
+        for i, (spot_key, spot_config) in enumerate(spot_list, 1):
+            name = spot_config.get('name', spot_key)
+            print(f"  {i}. {name}")
+        
+        try:
+            choice = int(input("Spot number: ").strip()) - 1
+            if 0 <= choice < len(spot_list):
+                spot_key, spot_config = spot_list[choice]
+                name = spot_config.get('name', spot_key)
+                
+                confirm = input(f"Delete '{name}'? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    del self.current_spots[spot_type][spot_key]
+                    self._save_spots_to_conf()
+                    print(f"{self.CORE_ICONS['status']} Deleted {name} successfully.")
+                    return True
+                else:
+                    print("Cancelled.")
+                    return False
+            else:
+                print(f"{self.CORE_ICONS['warning']} Invalid spot number.")
+                return False
+        except ValueError:
+            print(f"{self.CORE_ICONS['warning']} Invalid input.")
+            return False
+    
+    def _text_reset_bathymetry(self, spots: Dict) -> bool:
+        """Text interface for resetting bathymetry flag"""
+        
+        spot_list = list(spots.items())
+        
+        print("Select surf spot to reset bathymetry:")
+        for i, (spot_key, spot_config) in enumerate(spot_list, 1):
+            name = spot_config.get('name', spot_key)
+            bathy_calc = spot_config.get('bathymetry_calculated', 'false')
+            status = 'Calculated' if bathy_calc == 'true' else 'Needs Calculation'
+            print(f"  {i}. {name} [{status}]")
+        
+        try:
+            choice = int(input("Spot number: ").strip()) - 1
+            if 0 <= choice < len(spot_list):
+                spot_key, spot_config = spot_list[choice]
+                name = spot_config.get('name', spot_key)
+                
+                confirm = input(f"Reset bathymetry flag for '{name}'? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    if self._reset_bathymetry_flag('surf_spots', spot_key):
+                        print(f"{self.CORE_ICONS['status']} Reset bathymetry flag for {name}.")
+                        return True
+                    else:
+                        print(f"{self.CORE_ICONS['warning']} Failed to reset flag.")
+                        return False
+                else:
+                    print("Cancelled.")
+                    return False
+            else:
+                print(f"{self.CORE_ICONS['warning']} Invalid spot number.")
+                return False
+        except ValueError:
+            print(f"{self.CORE_ICONS['warning']} Invalid input.")
+            return False
+    
+    def _display_current_configuration(self):
+        """Display complete current configuration"""
+        
+        print(f"\n{self.CORE_ICONS['navigation']} Current Configuration")
+        print("=" * 50)
+        
+        # Display surf spots
+        surf_spots = self.current_spots['surf_spots']
+        print(f"\nSurf Spots ({len(surf_spots)}):")
+        if surf_spots:
+            for spot_key, spot_config in surf_spots.items():
+                name = spot_config.get('name', spot_key)
+                lat = spot_config.get('latitude', 'N/A')
+                lon = spot_config.get('longitude', 'N/A')
+                beach_angle = spot_config.get('beach_facing', 'N/A')
+                bathy_calc = spot_config.get('bathymetry_calculated', 'false')
+                
+                print(f"  • {name}")
+                print(f"    Location: {lat}, {lon}")
+                print(f"    Beach Facing: {beach_angle}°")
+                print(f"    Bathymetry: {'Calculated' if bathy_calc == 'true' else 'Needs Calculation'}")
+        else:
+            print("  None configured")
+        
+        # Display fishing spots
+        fishing_spots = self.current_spots['fishing_spots']
+        print(f"\nFishing Spots ({len(fishing_spots)}):")
+        if fishing_spots:
+            for spot_key, spot_config in fishing_spots.items():
+                name = spot_config.get('name', spot_key)
+                lat = spot_config.get('latitude', 'N/A')
+                lon = spot_config.get('longitude', 'N/A')
+                location_type = spot_config.get('location_type', 'shore')
+                
+                print(f"  • {name}")
+                print(f"    Location: {lat}, {lon}")
+                print(f"    Type: {location_type}")
+        else:
+            print("  None configured")
+    
+    def _convert_to_installer_format(self) -> Dict[str, List[Dict]]:
+        """Convert current spots to format expected by install.py workflow"""
+        
+        result = {
+            'surf_spots': [],
+            'fishing_spots': []
+        }
+        
+        # Convert surf spots
+        for spot_key, spot_config in self.current_spots['surf_spots'].items():
+            try:
+                surf_spot = {
+                    'name': spot_config.get('name', spot_key),
+                    'latitude': float(spot_config.get('latitude', '0.0')),
+                    'longitude': float(spot_config.get('longitude', '0.0')),
+                    'beach_angle': float(spot_config.get('beach_facing', '270.0')),
+                    'bottom_type': spot_config.get('bottom_type', 'sand'),
+                    'exposure': spot_config.get('exposure', 'exposed'),
+                    'bathymetry_calculated': spot_config.get('bathymetry_calculated', 'false') == 'true'
+                }
+                result['surf_spots'].append(surf_spot)
+            except ValueError:
+                # Skip spots with invalid coordinates
+                continue
+        
+        # Convert fishing spots
+        for spot_key, spot_config in self.current_spots['fishing_spots'].items():
+            try:
+                fishing_spot = {
+                    'name': spot_config.get('name', spot_key),
+                    'latitude': float(spot_config.get('latitude', '0.0')),
+                    'longitude': float(spot_config.get('longitude', '0.0')),
+                    'location_type': spot_config.get('location_type', 'shore'),
+                    'target_category': spot_config.get('target_category', 'mixed_bag')
+                }
+                result['fishing_spots'].append(fishing_spot)
+            except ValueError:
+                # Skip spots with invalid coordinates
+                continue
+        
+        return result
+    
+    
 class GRIBLibraryManager:
     """Detect GRIB processing libraries and enforce prerequisites"""
     
@@ -557,7 +1541,7 @@ class SurfFishingConfigurator:
             return True
        
     def run_interactive_setup(self):
-        """Main configuration workflow"""
+        """Main configuration workflow with cursor UI integration"""
         
         print(f"{CORE_ICONS['navigation']} Surf & Fishing Forecast Configuration")
         print("="*60)
@@ -565,33 +1549,62 @@ class SurfFishingConfigurator:
         print("This extension reads data from Phase I and adds forecasting capabilities")
         print()
         
-        # Step 1: Check Phase I dependency (ENHANCED)
+        # Step 1: Check Phase I dependency (UNCHANGED)
         self._check_phase_i_dependency()
         
-        # Step 2: Setup GRIB processing libraries (ENHANCED) 
+        # Step 2: Setup GRIB processing libraries (UNCHANGED) 
         grib_available = self._setup_grib_processing()
         
-        # Step 3: Configure data source strategy (ENHANCED)
+        # Step 3: Configure data source strategy (UNCHANGED)
         data_sources = self._configure_data_sources()
         
-        # Step 4: Configure forecast types and locations (EXISTING PATTERN)
+        # Step 4: Configure forecast types and locations (ENHANCED)
         forecast_types = self._select_location_types()
-        selected_locations = {}
         
-        if 'surf' in forecast_types:
-            selected_locations['surf_spots'] = self._configure_surf_spots()
+        # NEW: Check for existing configuration
+        existing_spots = self._check_existing_spots_in_conf()
+        total_existing = existing_spots['surf_count'] + existing_spots['fishing_count']
         
-        if 'fishing' in forecast_types:
-            selected_locations['fishing_spots'] = self._configure_fishing_spots()
+        if total_existing > 0:
+            print(f"\n{CORE_ICONS['status']} Found existing configuration:")
+            print(f"  • {existing_spots['surf_count']} surf spots")
+            print(f"  • {existing_spots['fishing_count']} fishing spots")
+            print()
+            
+            while True:
+                choice = input("Use enhanced management interface for existing spots? (y/n, default y): ").strip().lower()
+                if choice in ['', 'y', 'yes']:
+                    use_cursor_ui = True
+                    break
+                elif choice in ['n', 'no']:
+                    use_cursor_ui = False
+                    break
+                else:
+                    print(f"{CORE_ICONS['warning']} Please enter y or n")
+        else:
+            print(f"\n{CORE_ICONS['selection']} No existing spots found - starting fresh configuration")
+            while True:
+                choice = input("Use enhanced cursor UI interface? (y/n, default y): ").strip().lower()
+                if choice in ['', 'y', 'yes']:
+                    use_cursor_ui = True
+                    break
+                elif choice in ['n', 'no']:
+                    use_cursor_ui = False
+                    break
+                else:
+                    print(f"{CORE_ICONS['warning']} Please enter y or n")
         
-        # Step 5: Analyze marine station integration (NEW)
+        # Configure locations with chosen method
+        if use_cursor_ui:
+            selected_locations = self._configure_locations_with_cursor_ui(forecast_types)
+        else:
+            selected_locations = self._configure_locations_manually(forecast_types)
+        
+        # Step 5: Analyze marine station integration (UNCHANGED)
         station_analysis = self._analyze_marine_station_integration(selected_locations)
         
-        # Step 6: Create configuration dictionary (ENHANCED)
+        # Step 6: Create configuration dictionary (UNCHANGED)
         config_dict = self._create_config_dict(forecast_types, data_sources, selected_locations, grib_available, station_analysis)
-        
-        # Step 7: Display final summary (NEW)
-        self._display_configuration_summary(config_dict, station_analysis)
         
         return config_dict, selected_locations
     
@@ -1440,7 +2453,78 @@ class SurfFishingConfigurator:
                 return self._get_coordinates_for_water_location("surf break")
             else:
                 print(f"  {CORE_ICONS['warning']} Please enter 1 or 2")
-                
+
+    def _find_weewx_config_path(self):
+        """Find weewx.conf path using WeeWX 5.1 standard locations"""
+        possible_paths = [
+            '/etc/weewx/weewx.conf',
+            '/home/weewx/weewx.conf',
+            '~/weewx-data/weewx.conf',
+            '/opt/weewx/weewx.conf'
+        ]
+        
+        for path in possible_paths:
+            expanded_path = os.path.expanduser(path)
+            if os.path.exists(expanded_path):
+                return expanded_path
+        return None
+
+    def _check_existing_spots_in_conf(self):
+        """Check for existing spots in weewx.conf and return counts"""
+        try:
+            config_path = self._find_weewx_config_path()
+            if not config_path or not os.path.exists(config_path):
+                return {'surf_count': 0, 'fishing_count': 0}
+            
+            config = configobj.ConfigObj(config_path, interpolation=False)
+            service_config = config.get('SurfFishingService', {})
+            
+            surf_count = len(service_config.get('surf_spots', {}))
+            fishing_count = len(service_config.get('fishing_spots', {}))
+            
+            return {'surf_count': surf_count, 'fishing_count': fishing_count}
+        except Exception:
+            return {'surf_count': 0, 'fishing_count': 0}              
+
+    def _configure_locations_with_cursor_ui(self, forecast_types):
+        """Configure locations using your integrated cursor UI class"""
+        
+        print(f"\n{CORE_ICONS['selection']} Enhanced Point Management System")
+        print("Using interactive cursor interface for surf and fishing point management")
+        print()
+        
+        # Initialize your cursor UI class (assuming it's named SurfFishingPointManager)
+        point_manager = SurfFishingPointManager(self.yaml_data, self.gebco_client)
+        management_result = point_manager.run_management_interface()
+        
+        print(f"\n{CORE_ICONS['status']} Point management completed")
+        if management_result.get('changes_made', False):
+            print(f"  • Changes saved to weewx.conf")
+        if management_result.get('config_loaded', False):
+            print(f"  • Loaded existing configuration successfully")
+        
+        return {
+            'surf_spots': management_result.get('surf_spots', []),
+            'fishing_spots': management_result.get('fishing_spots', [])
+        }
+        
+    def _configure_locations_manually(self, forecast_types):
+        """Configure locations using existing manual methods (preserved functionality)"""
+        
+        print(f"\n{CORE_ICONS['selection']} Manual Point Configuration")
+        print("Using traditional manual entry interface")
+        print()
+        
+        selected_locations = {}
+        
+        if 'surf' in forecast_types:
+            selected_locations['surf_spots'] = self._configure_surf_spots()
+        
+        if 'fishing' in forecast_types:
+            selected_locations['fishing_spots'] = self._configure_fishing_spots()
+        
+        return selected_locations
+
                 
 class PhaseIAnalyzer:
     """
