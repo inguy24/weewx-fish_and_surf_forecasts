@@ -361,8 +361,12 @@ class SurfFishingPointManager:
                 
                 # Show bathymetry status for surf spots
                 if spot_type == 'surf_spots':
-                    bathy_calc = spot_config.get('bathymetry_calculated', 'false')
-                    bathy_status = f" [{self.CORE_ICONS['status'] if bathy_calc == 'true' else self.CORE_ICONS['warning']}]"
+                    validation_status = self._get_surf_spot_validation_status(spot_config)
+                    bathy_status = f" [{validation_status['icon']}]"
+                    
+                    # Show detailed popup if this spot is selected and has issues
+                    if validation_status['has_issue'] and i == self.selected_index:
+                        self._show_validation_details_popup(stdscr, spot_config, validation_status)
                 else:
                     bathy_status = ""
                 
