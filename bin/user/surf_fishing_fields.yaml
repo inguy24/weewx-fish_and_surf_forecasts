@@ -452,7 +452,7 @@ bathymetry_data:
     # Core algorithm parameters
     refinement_gradient_threshold: 0.02      # 1:50 slope ratio triggers refinement
     coarsening_gradient_threshold: 0.002     # 1:500 slope ratio allows coarsening
-    max_total_points: 75                     # Maximum points for single surf path
+    max_total_points: 150                     # Maximum points for single surf path
     min_total_points: 16                     # Minimum points to maintain coverage
     max_refinement_iterations: 4             # Prevent infinite refinement loops
     
