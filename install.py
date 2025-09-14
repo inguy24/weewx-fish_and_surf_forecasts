@@ -1369,8 +1369,16 @@ class SurfFishingPointManager:
         lat = float(spot_config.get('latitude', 0))
         depth = abs(lat - 30) * 0.3 + 2.0  # Mock depth calculation
         
-        config = self._load_surf_depth_config()
-        optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
+        # Load surf depth configuration directly from yaml_data
+        try:
+            bathymetry_config = self.yaml_data.get('bathymetry_data', {})
+            surf_validation = bathymetry_config.get('surf_break_validation', {})
+            depth_range = surf_validation.get('optimal_depth_range', {})
+            optimal_min = depth_range.get('min_meters', 1.5)
+            optimal_max = depth_range.get('max_meters', 6.0)
+        except:
+            # Fallback values if YAML config fails
+            optimal_min, optimal_max = 1.5, 6.0
         
         if optimal_min <= depth <= optimal_max:
             return {
