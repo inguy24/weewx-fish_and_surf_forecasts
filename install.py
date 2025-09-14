@@ -2478,8 +2478,11 @@ class SurfFishingConfigurator:
             if all(isinstance(item, (str, int, float)) for item in yaml_section):
                 return ','.join(str(item) for item in yaml_section)
             else:
-                # For complex lists, convert each item
-                return [self._convert_yaml_section_to_conf(item) for item in yaml_section]
+                # For complex lists, convert to dictionary with string keys for CONF compatibility
+                result = {}
+                for i, item in enumerate(yaml_section):
+                    result[str(i)] = self._convert_yaml_section_to_conf(item)  # Use str(i) instead of integer i
+                return result
         
         # EXISTING: Convert primitives to string for CONF compatibility
         else:
