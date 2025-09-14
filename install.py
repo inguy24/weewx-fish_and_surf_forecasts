@@ -2469,7 +2469,7 @@ class SurfFishingConfigurator:
                 # NEW: Skip geographic_regions at any nesting level
                 if key == 'geographic_regions':
                     continue
-                conf_section[key] = self._convert_yaml_section_to_conf(value)
+                conf_section[str(key)] = self._convert_yaml_section_to_conf(value)
             return conf_section
         
         # EXISTING: Handle list conversion
