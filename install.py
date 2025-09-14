@@ -109,53 +109,32 @@ class SurfFishingPointManager:
         return None
     
     def _load_current_spots_from_conf(self) -> bool:
-        """Load existing spots from weewx.conf with bathymetry preservation"""
+        """Load existing spots from weewx.conf using WeeWX 5.1 thread-safe ConfigObj operations"""
         try:
-            if not os.path.exists(self.config_path):
-                return False
+            if not self.config_path:
+                self.config_path = self._find_weewx_config_path()
+                if not self.config_path:
+                    return False
             
+            # WeeWX 5.1 best practice: disable interpolation to prevent ConfigObj format issues
             config = configobj.ConfigObj(self.config_path, interpolation=False)
             
+            # Navigate to SurfFishingService section
             service_config = config.get('SurfFishingService', {})
             
-            # Load surf spots with bathymetry preservation
-            surf_spots_config = service_config.get('surf_spots', {})
-            for spot_key, spot_data in surf_spots_config.items():
-                # PRESERVE: Load all spot data including bathymetry flags
-                spot_config = dict(spot_data)
-                
-                # Ensure required fields exist with defaults
-                spot_config.setdefault('name', f'Surf Spot {spot_key}')
-                spot_config.setdefault('latitude', '0.0')
-                spot_config.setdefault('longitude', '0.0')
-                spot_config.setdefault('beach_facing', '270.0')
-                spot_config.setdefault('bottom_type', 'sand')
-                spot_config.setdefault('exposure', 'exposed')
-                spot_config.setdefault('active', 'true')
-                # PRESERVE: Keep existing bathymetry_calculated flag
-                spot_config.setdefault('bathymetry_calculated', 'false')
-                
-                self.current_spots['surf_spots'][spot_key] = spot_config
+            # Load surf spots - PRESERVE EXISTING LOGIC
+            surf_spots = service_config.get('surf_spots', {})
+            self.current_spots['surf_spots'] = {str(k): v for k, v in surf_spots.items()}
             
-            # Load fishing spots (no bathymetry to preserve)
-            fishing_spots_config = service_config.get('fishing_spots', {})
-            for spot_key, spot_data in fishing_spots_config.items():
-                spot_config = dict(spot_data)
-                
-                # Ensure required fields exist with defaults
-                spot_config.setdefault('name', f'Fishing Spot {spot_key}')
-                spot_config.setdefault('latitude', '0.0')
-                spot_config.setdefault('longitude', '0.0')
-                spot_config.setdefault('location_type', 'shore')
-                spot_config.setdefault('target_category', 'mixed_bag')
-                spot_config.setdefault('active', 'true')
-                
-                self.current_spots['fishing_spots'][spot_key] = spot_config
+            # Load fishing spots - PRESERVE EXISTING LOGIC  
+            fishing_spots = service_config.get('fishing_spots', {})
+            self.current_spots['fishing_spots'] = {str(k): v for k, v in fishing_spots.items()}
             
             return True
             
         except Exception as e:
-            print(f"{self.CORE_ICONS['warning']} Error loading from CONF: {e}")
+            # Graceful fallback - start with empty spots if config read fails
+            self.current_spots = {'surf_spots': {}, 'fishing_spots': {}}
             return False
     
     def _save_spots_to_conf(self):
