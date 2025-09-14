@@ -1882,51 +1882,101 @@ class BathymetryProcessor:
                 f"max_segment={self.max_segment_distance:.0f}m, max_points={self.max_points}")
 
     def _apply_gradient_based_refinement(self, initial_bathymetry):
-        """Apply iterative gradient-based refinement to bathymetric profile with loop protection"""
+        """Apply iterative gradient-based refinement with proper GEBCO batching"""
         current_profile = initial_bathymetry.copy()
         iteration = 0
         
+        log.info(f"{CORE_ICONS['navigation']} Starting adaptive refinement with {len(current_profile)} initial points")
+        
         while iteration < self.max_iterations:
             iteration += 1
-            refined_profile = []
-            points_added = 0
+            
+            # PHASE 1: Collect all needed midpoint coordinates
+            midpoint_coords = []
+            refinement_plan = []
             
             for i in range(len(current_profile) - 1):
                 current_point = current_profile[i]
                 next_point = current_profile[i + 1]
                 
-                # Always add current point
-                refined_profile.append(current_point)
-                
                 # Calculate segment characteristics
                 gradient, segment_distance = self._calculate_segment_metrics(current_point, next_point)
                 
-                # Check if segment needs refinement with loop protection
+                # Check if segment needs refinement
                 if self._requires_refinement(current_point, next_point, gradient, segment_distance):
-                    if len(refined_profile) + points_added < self.max_points - 1:  # Reserve space for endpoint
-                        # Create and add midpoint
-                        midpoint = self._create_interpolated_midpoint(current_point, next_point)
-                        if midpoint:  # Only add if valid
+                    if len(midpoint_coords) < self.max_points - len(current_profile) - 1:
+                        # Calculate midpoint coordinates
+                        mid_lat = (current_point['latitude'] + next_point['latitude']) / 2
+                        mid_lon = (current_point['longitude'] + next_point['longitude']) / 2
+                        
+                        # Store coordinate and metadata for later
+                        midpoint_coords.append({
+                            'latitude': mid_lat,
+                            'longitude': mid_lon
+                        })
+                        
+                        refinement_plan.append({
+                            'insert_after_index': i,
+                            'midpoint_index': len(midpoint_coords) - 1,
+                            'point1': current_point,
+                            'point2': next_point
+                        })
+            
+            if not midpoint_coords:
+                log.info(f"{CORE_ICONS['status']} Adaptive refinement converged after {iteration} iterations: "
+                        f"{len(current_profile)} points")
+                break
+            
+            # PHASE 2: Batch query all midpoint depths using existing method
+            log.debug(f"{CORE_ICONS['navigation']} Batch querying {len(midpoint_coords)} GEBCO depths for iteration {iteration}")
+            midpoint_depths = self._batch_query_gebco_depths(midpoint_coords)
+            
+            if not midpoint_depths or len(midpoint_depths) != len(midpoint_coords):
+                log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed for refinement points")
+                break
+            
+            # PHASE 3: Create refined profile with real GEBCO depths
+            refined_profile = []
+            points_added = 0
+            
+            for i in range(len(current_profile)):
+                # Always add current point
+                refined_profile.append(current_profile[i])
+                
+                # Check if we need to insert a midpoint after this index
+                for plan in refinement_plan:
+                    if plan['insert_after_index'] == i:
+                        midpoint_depth = abs(midpoint_depths[plan['midpoint_index']])
+                        
+                        # Create midpoint with real GEBCO depth
+                        midpoint = self._create_midpoint_with_depth(
+                            plan['point1'], 
+                            plan['point2'], 
+                            midpoint_coords[plan['midpoint_index']]['latitude'],
+                            midpoint_coords[plan['midpoint_index']]['longitude'],
+                            midpoint_depth
+                        )
+                        
+                        if midpoint:
                             refined_profile.append(midpoint)
                             points_added += 1
-            
-            # Always add final point
-            refined_profile.append(current_profile[-1])
-            
-            # Check convergence - if no points added, we're done
-            if points_added == 0:
-                log.debug(f"{CORE_ICONS['status']} Adaptive refinement converged after {iteration} iterations")
-                break
+                            
+                            log.debug(f"Added refinement point: depth={midpoint_depth:.1f}m "
+                                    f"(real GEBCO data)")
             
             # Prepare for next iteration
             current_profile = refined_profile.copy()
-            log.debug(f"{CORE_ICONS['navigation']} Iteration {iteration}: {len(current_profile)} points")
+            log.info(f"{CORE_ICONS['navigation']} Iteration {iteration}: {len(current_profile)} points (+{points_added} added)")
         
         # Apply statistical anomaly detection and smoothing
+        log.debug(f"{CORE_ICONS['status']} Applying anomaly detection to {len(current_profile)} points")
         smoothed_profile = self._detect_and_smooth_bathymetric_anomalies(current_profile)
 
         # Apply conservative coarsening in deep water zones with minimal gradients
+        log.debug(f"{CORE_ICONS['status']} Applying conservative coarsening to {len(smoothed_profile)} points")
         final_profile = self._apply_conservative_coarsening(smoothed_profile)
+        
+        log.info(f"{CORE_ICONS['status']} Adaptive refinement complete: {len(initial_bathymetry)} → {len(final_profile)} points")
         
         return final_profile
 
@@ -2009,49 +2059,6 @@ class BathymetryProcessor:
                     f"({zone_name} zone, depth={avg_depth:.1f}m, distance={segment_distance:.0f}m)")
         
         return needs_refinement
-
-    def _create_interpolated_midpoint(self, point1, point2):
-        """Create interpolated midpoint between two bathymetric points with GEBCO depth query"""
-        try:
-            # Calculate midpoint coordinates
-            mid_lat = (point1['latitude'] + point2['latitude']) / 2
-            mid_lon = (point1['longitude'] + point2['longitude']) / 2
-            
-            # Query GEBCO for actual depth at midpoint
-            depths = self._query_gebco_batch(f"{mid_lat:.6f},{mid_lon:.6f}")
-            
-            if not depths or len(depths) == 0:
-                log.warning(f"{CORE_ICONS['warning']} Failed to get GEBCO depth for midpoint")
-                return None
-            
-            depth = abs(depths[0])  # Always positive depth
-            
-            # Calculate interpolated distance and fraction
-            if 'distance_from_break_km' in point1:
-                mid_distance = (point1['distance_from_break_km'] + point2['distance_from_break_km']) / 2
-            else:
-                mid_distance = 0.0
-                
-            if 'fraction_to_shore' in point1:
-                mid_fraction = (point1['fraction_to_shore'] + point2['fraction_to_shore']) / 2
-            else:
-                mid_fraction = 0.5
-            
-            # Mark refinement count for loop protection
-            midpoint = {
-                'latitude': mid_lat,
-                'longitude': mid_lon,
-                'depth': depth,
-                'distance_from_break_km': mid_distance,
-                'fraction_to_shore': mid_fraction,
-                'refinement_count': getattr(point1, 'refinement_count', 0) + 1
-            }
-            
-            return midpoint
-            
-        except Exception as e:
-            log.warning(f"{CORE_ICONS['warning']} Error creating interpolated midpoint: {e}")
-            return None
 
     def _detect_and_smooth_bathymetric_anomalies(self, bathymetry_profile):
         """Detect and smooth bathymetric anomalies using IQR statistical method"""
@@ -3047,6 +3054,35 @@ class BathymetryProcessor:
         
         return "\n".join(report)
 
+    def _create_midpoint_with_depth(self, point1, point2, mid_lat, mid_lon, gebco_depth):
+        """Create midpoint with pre-queried GEBCO depth (no additional API calls)"""
+        try:
+            # Calculate interpolated distance and fraction
+            if 'distance_from_break_km' in point1:
+                mid_distance = (point1['distance_from_break_km'] + point2['distance_from_break_km']) / 2
+            else:
+                mid_distance = 0.0
+                
+            if 'fraction_to_shore' in point1:
+                mid_fraction = (point1['fraction_to_shore'] + point2['fraction_to_shore']) / 2
+            else:
+                mid_fraction = 0.5
+            
+            # Create midpoint with real GEBCO depth
+            midpoint = {
+                'latitude': mid_lat,
+                'longitude': mid_lon,
+                'depth': gebco_depth,  # Real GEBCO depth from batch query
+                'distance_from_break_km': mid_distance,
+                'fraction_to_shore': mid_fraction,
+                'refinement_count': getattr(point1, 'refinement_count', 0) + 1
+            }
+            
+            return midpoint
+            
+        except Exception as e:
+            log.warning(f"{CORE_ICONS['warning']} Error creating midpoint with GEBCO depth: {e}")
+            return None
      
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
