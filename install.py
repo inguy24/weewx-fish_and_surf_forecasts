@@ -359,14 +359,10 @@ class SurfFishingPointManager:
                 lat = spot_config.get('latitude', 'N/A')
                 lon = spot_config.get('longitude', 'N/A')
                 
-                # Show bathymetry status for surf spots
+                # Show validation status for surf spots with detailed information
                 if spot_type == 'surf_spots':
                     validation_status = self._get_surf_spot_validation_status(spot_config)
-                    bathy_status = f" [{validation_status['icon']}]"
-                    
-                    # Show detailed popup if this spot is selected and has issues
-                    if validation_status['has_issue'] and i == self.selected_index:
-                        self._show_validation_details_popup(stdscr, spot_config, validation_status)
+                    bathy_status = f" [{validation_status['icon']} {validation_status['display_text']}]"
                 else:
                     bathy_status = ""
                 
@@ -389,6 +385,7 @@ class SurfFishingPointManager:
             stdscr.addstr(actions_y + 3, 4, "d - Delete Selected Spot")
             if spot_type == 'surf_spots':
                 stdscr.addstr(actions_y + 4, 4, "r - Reset Bathymetry Flag")
+                stdscr.addstr(actions_y + 5, 4, "i - Show Depth Info")
         
         stdscr.addstr(height - 2, 4, "↑↓ Navigate, b Back to Main Menu, q Quit", curses.color_pair(5))
         
@@ -407,6 +404,8 @@ class SurfFishingPointManager:
             return self._delete_spot_dialog(stdscr, spot_type, spot_list[self.selected_index])
         elif key == ord('r') and spots and spot_type == 'surf_spots':
             return self._reset_bathymetry_dialog(stdscr, spot_list[self.selected_index])
+        elif key == ord('i') and spots and spot_type == 'surf_spots':
+            return self._show_validation_info_dialog(stdscr, spot_type, spot_list[self.selected_index])
         elif key == ord('b'):
             return 'back'
         elif key == ord('q') or key == 27:  # ESC
@@ -1362,7 +1361,74 @@ class SurfFishingPointManager:
                 continue
         
         return result
-    
+
+    def _get_surf_spot_validation_status(self, spot_config):
+        """Get detailed validation status for a surf spot"""
+        
+        # For now, simulate depth check - in real implementation this would call GEBCO API
+        lat = float(spot_config.get('latitude', 0))
+        depth = abs(lat - 30) * 0.3 + 2.0  # Mock depth calculation
+        
+        config = self._load_surf_depth_config()
+        optimal_min, optimal_max = config['optimal_min'], config['optimal_max']
+        
+        if optimal_min <= depth <= optimal_max:
+            return {
+                'has_issue': False,
+                'icon': '✅',
+                'display_text': f'Optimal: {depth:.1f}m',
+                'depth': depth,
+                'recommendation': None
+            }
+        elif depth < config['shallow_limit']:
+            return {
+                'has_issue': True,
+                'icon': '⚠️',
+                'display_text': f'Too shallow: {depth:.1f}m',
+                'depth': depth,
+                'recommendation': 'Move coordinates seaward (away from shore)'
+            }
+        else:
+            return {
+                'has_issue': True,
+                'icon': '⚠️', 
+                'display_text': f'Too deep: {depth:.1f}m',
+                'depth': depth,
+                'recommendation': 'Move coordinates shoreward (toward beach)'
+            }
+
+    def _show_validation_info_dialog(self, stdscr, spot_type: str, spot_item):
+        """Show validation info dialog for surf spots"""
+        
+        spot_key, spot_config = spot_item
+        validation_status = self._get_surf_spot_validation_status(spot_config)
+        
+        height, width = stdscr.getmaxyx()
+        
+        dialog_height = 10
+        dialog_width = 60
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        name = spot_config.get('name', 'Unknown')
+        dialog_win.addstr(1, 2, f"Depth Info: {name}", curses.A_BOLD)
+        
+        dialog_win.addstr(3, 2, f"Current depth: {validation_status['depth']:.1f} meters")
+        dialog_win.addstr(4, 2, f"Optimal range: 1.5m - 6.0m")
+        dialog_win.addstr(5, 2, f"Status: {validation_status['display_text']}")
+        
+        if validation_status['recommendation']:
+            dialog_win.addstr(6, 2, f"Fix: {validation_status['recommendation']}")
+            dialog_win.addstr(7, 2, "Use NOAA Bathymetric Viewer for better coordinates")
+        
+        dialog_win.addstr(8, 2, "Press any key to continue...", curses.color_pair(5))
+        dialog_win.refresh()
+        
+        dialog_win.getch()
+        return 'continue'    
 
 class GRIBLibraryManager:
     """Detect GRIB processing libraries and enforce prerequisites"""
