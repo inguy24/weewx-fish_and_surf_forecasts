@@ -109,36 +109,57 @@ class SurfFishingPointManager:
         return None
     
     def _load_current_spots_from_conf(self) -> bool:
-        """Load existing spots from weewx.conf using WeeWX 5.1 thread-safe ConfigObj operations"""
+        """Load existing spots from weewx.conf with bathymetry preservation"""
         try:
-            if not self.config_path:
-                self.config_path = self._find_weewx_config_path()
-                if not self.config_path:
-                    return False
+            if not os.path.exists(self.config_path):
+                return False
             
-            # WeeWX 5.1 best practice: disable interpolation to prevent ConfigObj format issues
             config = configobj.ConfigObj(self.config_path, interpolation=False)
             
-            # Navigate to SurfFishingService section
             service_config = config.get('SurfFishingService', {})
             
-            # Load surf spots
-            surf_spots = service_config.get('surf_spots', {})
-            self.current_spots['surf_spots'] = {str(k): v for k, v in surf_spots.items()}
+            # Load surf spots with bathymetry preservation
+            surf_spots_config = service_config.get('surf_spots', {})
+            for spot_key, spot_data in surf_spots_config.items():
+                # PRESERVE: Load all spot data including bathymetry flags
+                spot_config = dict(spot_data)
+                
+                # Ensure required fields exist with defaults
+                spot_config.setdefault('name', f'Surf Spot {spot_key}')
+                spot_config.setdefault('latitude', '0.0')
+                spot_config.setdefault('longitude', '0.0')
+                spot_config.setdefault('beach_facing', '270.0')
+                spot_config.setdefault('bottom_type', 'sand')
+                spot_config.setdefault('exposure', 'exposed')
+                spot_config.setdefault('active', 'true')
+                # PRESERVE: Keep existing bathymetry_calculated flag
+                spot_config.setdefault('bathymetry_calculated', 'false')
+                
+                self.current_spots['surf_spots'][spot_key] = spot_config
             
-            # Load fishing spots  
-            fishing_spots = service_config.get('fishing_spots', {})
-            self.current_spots['fishing_spots'] = {str(k): v for k, v in fishing_spots.items()}
+            # Load fishing spots (no bathymetry to preserve)
+            fishing_spots_config = service_config.get('fishing_spots', {})
+            for spot_key, spot_data in fishing_spots_config.items():
+                spot_config = dict(spot_data)
+                
+                # Ensure required fields exist with defaults
+                spot_config.setdefault('name', f'Fishing Spot {spot_key}')
+                spot_config.setdefault('latitude', '0.0')
+                spot_config.setdefault('longitude', '0.0')
+                spot_config.setdefault('location_type', 'shore')
+                spot_config.setdefault('target_category', 'mixed_bag')
+                spot_config.setdefault('active', 'true')
+                
+                self.current_spots['fishing_spots'][spot_key] = spot_config
             
             return True
             
         except Exception as e:
-            # Graceful fallback - start with empty spots if config read fails
-            self.current_spots = {'surf_spots': {}, 'fishing_spots': {}}
+            print(f"{self.CORE_ICONS['warning']} Error loading from CONF: {e}")
             return False
     
-    def _save_spots_to_conf(self) -> bool:
-        """Save current spots to weewx.conf using WeeWX 5.1 thread-safe write operations"""
+    def _save_spots_to_conf(self):
+        """Save current spots configuration to weewx.conf with proper preservation"""
         try:
             if not self.config_path:
                 return False
@@ -150,10 +171,27 @@ class SurfFishingPointManager:
             if 'SurfFishingService' not in config:
                 config['SurfFishingService'] = {}
             
-            # Update surf spots section
-            config['SurfFishingService']['surf_spots'] = {str(k): v for k, v in self.current_spots['surf_spots'].items()}
+            # FIXED: Preserve existing bathymetry data when updating spots
+            existing_surf_spots = config.get('SurfFishingService', {}).get('surf_spots', {})
             
-            # Update fishing spots section
+            # Update surf spots section while preserving bathymetric data
+            updated_surf_spots = {}
+            for spot_key, spot_config in self.current_spots['surf_spots'].items():
+                updated_surf_spots[str(spot_key)] = dict(spot_config)
+                
+                # PRESERVE: If spot exists in CONF with bathymetric data, keep it
+                existing_spot = existing_surf_spots.get(str(spot_key), {})
+                if 'bathymetric_path' in existing_spot:
+                    # Only preserve if bathymetry_calculated is still true
+                    if spot_config.get('bathymetry_calculated') == 'true':
+                        # Copy all existing bathymetric data
+                        for key, value in existing_spot.items():
+                            if key.startswith(('offshore_', 'bathymetric_path', 'bathymetry_calculation_')):
+                                updated_surf_spots[str(spot_key)][key] = value
+            
+            config['SurfFishingService']['surf_spots'] = updated_surf_spots
+            
+            # Update fishing spots section (no bathymetry to preserve)
             config['SurfFishingService']['fishing_spots'] = {str(k): v for k, v in self.current_spots['fishing_spots'].items()}
             
             # WeeWX 5.1 best practice: Immediate write to persist changes
@@ -162,6 +200,7 @@ class SurfFishingPointManager:
             return True
             
         except Exception as e:
+            print(f"{self.CORE_ICONS['warning']} Error saving to CONF: {e}")
             return False
     
     def _reset_bathymetry_flag(self, spot_type: str, spot_key: str) -> bool:
@@ -848,6 +887,25 @@ class SurfFishingPointManager:
         
         # Get existing config and update with new values
         spot_config = self.current_spots[spot_type][spot_key]
+        
+        # FIXED: Check if bathymetry-affecting fields actually changed
+        bathymetry_reset_needed = False
+        
+        if spot_type == 'surf_spots':
+            # Check if location changed
+            old_lat = float(spot_config.get('latitude', '0'))
+            old_lon = float(spot_config.get('longitude', '0'))
+            if abs(lat - old_lat) > 0.0001 or abs(lon - old_lon) > 0.0001:
+                bathymetry_reset_needed = True
+            
+            # Check if beach facing changed
+            if len(field_values) > 3:
+                old_beach_facing = float(spot_config.get('beach_facing', '270'))
+                new_beach_facing = float(field_values[3])
+                if abs(new_beach_facing - old_beach_facing) > 0.1:
+                    bathymetry_reset_needed = True
+        
+        # Update basic fields
         spot_config['name'] = field_values[0].strip()
         spot_config['latitude'] = str(lat)
         spot_config['longitude'] = str(lon)
@@ -860,8 +918,17 @@ class SurfFishingPointManager:
                 spot_config['bottom_type'] = field_values[4]
             if len(field_values) > 5:
                 spot_config['exposure'] = field_values[5]
-            # Reset bathymetry flag when surf characteristics change
-            spot_config['bathymetry_calculated'] = 'false'
+            
+            # FIXED: Only reset bathymetry flag when location/orientation actually changed
+            if bathymetry_reset_needed:
+                spot_config['bathymetry_calculated'] = 'false'
+                print(f"{self.CORE_ICONS['navigation']} Bathymetry reset due to location/orientation change")
+            else:
+                # PRESERVE existing bathymetry calculation
+                existing_flag = spot_config.get('bathymetry_calculated', 'false')
+                spot_config['bathymetry_calculated'] = existing_flag
+                if existing_flag == 'true':
+                    print(f"{self.CORE_ICONS['status']} Preserved existing bathymetry calculation")
         else:  # fishing_spots
             # Update fishing-specific fields
             if len(field_values) > 3:
