@@ -2212,7 +2212,7 @@ class BathymetryProcessor:
             # PRESERVE EXISTING: Success logging
             log.info(f"{CORE_ICONS['status']} Adaptive bathymetry validation passed:")
             log.info(f"  - Total points: {len(bathymetry_profile)}")
-            log.info(f"  - Depth range: {max(depths):.1f}m → {min(depths):.1f}m")
+            log.info(f"  - Depth range: {max(point['depth'] for point in bathymetry_profile):.1f}m → {min(point['depth'] for point in bathymetry_profile):.1f}m")
             log.info(f"  - Critical zone coverage: {len(critical_zone_points)} points")
             
             return True
