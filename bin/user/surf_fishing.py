@@ -1854,7 +1854,7 @@ class BathymetryProcessor:
         }
 
     def _initialize_adaptive_parameters(self):
-        """Load and set adaptive algorithm parameters from CONF configuration"""
+        """Load and set adaptive algorithm parameters from CONF configuration - UPDATED NAMING"""
         adaptive_config = self.bathymetry_config.get('adaptive_spacing', {})
         
         # Load configuration with sensible defaults
@@ -1866,9 +1866,20 @@ class BathymetryProcessor:
         self.critical_depth_max = float(adaptive_config.get('critical_depth_max', '50'))
         self.deep_water_threshold = float(adaptive_config.get('deep_water_threshold', '50'))
         self.max_iterations = int(adaptive_config.get('max_refinement_iterations', '3'))
-        self.min_segment_distance = float(adaptive_config.get('min_segment_distance_m', '200'))
         
-        log.debug(f"{CORE_ICONS['status']} Adaptive parameters: threshold={self.refinement_threshold:.3f}, max_points={self.max_points}")
+        # FIXED: Rename parameter to reflect correct usage - this is MAX segment distance, not minimum
+        self.max_segment_distance = float(adaptive_config.get('max_segment_distance_m', '200'))  # RENAMED for clarity
+        # Keep old name for backward compatibility during transition
+        self.min_segment_distance = self.max_segment_distance  # Temporary alias
+        
+        self.validation_enabled = adaptive_config.get('validation_enabled', True)
+        
+        # NEW: Initialize performance optimization cache for gradient calculations
+        self._gradient_cache = {}
+        
+        # Enhanced logging with corrected parameter interpretation
+        log.debug(f"{CORE_ICONS['status']} Adaptive parameters: threshold={self.refinement_threshold:.3f}, "
+                f"max_segment={self.max_segment_distance:.0f}m, max_points={self.max_points}")
 
     def _apply_gradient_based_refinement(self, initial_bathymetry):
         """Apply iterative gradient-based refinement to bathymetric profile with loop protection"""
@@ -1949,11 +1960,13 @@ class BathymetryProcessor:
             return 0.0, 1000.0  # Safe defaults
 
     def _requires_refinement(self, point1, point2, gradient, segment_distance):
-        """Determine if bathymetric segment requires additional point refinement"""
+        """Determine if bathymetric segment requires additional point refinement - CORRECTED LOGIC"""
         
-        # Minimum distance enforcement (prevent point clustering)
-        if segment_distance < self.min_segment_distance:  # 200m minimum
-            return False
+        # FIXED: Correct distance logic - if segment is TOO LONG, we need refinement
+        # This was the critical bug causing the adaptive algorithm to fail
+        if segment_distance > self.min_segment_distance:  # 200m MAXIMUM segment length
+            log.debug(f"Refinement triggered by distance: {segment_distance:.0f}m > {self.min_segment_distance:.0f}m limit")
+            return True  # Always refine segments that are too long
         
         # Refinement count limit (prevent infinite refinement)
         if hasattr(point1, 'refinement_count') and point1.refinement_count >= 3:
@@ -1964,13 +1977,13 @@ class BathymetryProcessor:
             log.debug(f"Cliff face detected - skipping refinement: {gradient:.6f} gradient over {segment_distance:.0f}m")
             return False
         
-        # FIXED: Use base threshold directly for all zones - no multipliers
-        # Let the actual gradient magnitude determine refinement needs regardless of depth zone
+        # PRESERVED: Gradient-based refinement for segments within distance limits
+        # Use base threshold directly for all zones - no multipliers
         needs_refinement = gradient > self.refinement_threshold  # Direct use of 0.02 from YAML
         
         if needs_refinement:
             avg_depth = (point1['depth'] + point2['depth']) / 2
-            log.debug(f"Refinement triggered: gradient={gradient:.6f} > threshold={self.refinement_threshold:.3f} "
+            log.debug(f"Refinement triggered by gradient: {gradient:.6f} > threshold={self.refinement_threshold:.3f} "
                     f"at depth={avg_depth:.1f}m, distance={segment_distance:.0f}m")
         
         return needs_refinement
