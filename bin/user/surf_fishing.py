@@ -2187,8 +2187,7 @@ class BathymetryProcessor:
                             f"min={min_spacing:.0f}m, max={max_spacing:.0f}m")
             
             # PRESERVE EXISTING: Depth progression validation using helper method
-            depths = [point['depth'] for point in bathymetry_profile]
-            if not self._validate_depth_progression(depths):
+            if not self._validate_depth_progression(bathymetry_profile): 
                 log.error(f"{CORE_ICONS['warning']} Depth progression validation failed")
                 return False
             
@@ -2673,13 +2672,19 @@ class BathymetryProcessor:
             log.warning(f"{CORE_ICONS['warning']} Error calculating great circle distance: {e}")
             return 1000.0  # Safe fallback distance
 
-    def _validate_depth_progression(self, depths):
-        """Validate that depth progression is reasonable for a surf break bathymetric profile"""
+    def _validate_depth_progression(self, bathymetry_profile):
+        """
+        Validate depth progression using zone-based analysis with CONF thresholds
+        Replaces crude positional validation with scientifically sound zone classification
+        """
         try:
-            if len(depths) < 2:
+            if len(bathymetry_profile) < 2:
                 return True  # Can't validate with insufficient data
             
-            # PRESERVE EXISTING: Check for reasonable depth values
+            # Extract depths for basic sanity checks
+            depths = [point['depth'] for point in bathymetry_profile]
+            
+            # PRESERVE EXISTING: Basic depth sanity checks
             for i, depth in enumerate(depths):
                 if depth < 0:
                     log.error(f"{CORE_ICONS['warning']} Invalid negative depth: {depth}m at point {i}")
@@ -2688,45 +2693,95 @@ class BathymetryProcessor:
                     log.error(f"{CORE_ICONS['warning']} Impossibly deep: {depth}m at point {i}")
                     return False
             
-            # PRESERVE EXISTING: Check general shoaling progression (should generally get shallower toward shore)
-            # Allow for some irregularity but flag major inconsistencies
-            deep_water_depths = [d for d in depths[:len(depths)//3]]  # First third (offshore)
-            shallow_water_depths = [d for d in depths[2*len(depths)//3:]]  # Last third (nearshore)
+            # NEW: Zone-based validation using CONF thresholds
+            # Classify points by depth zones (from CONF)
+            deep_water_points = [p for p in bathymetry_profile if p['depth'] > self.deep_water_threshold]  # >50m
+            transition_points = [p for p in bathymetry_profile if self.critical_depth_max < p['depth'] <= self.deep_water_threshold]  # 20-50m  
+            critical_points = [p for p in bathymetry_profile if self.critical_depth_min <= p['depth'] <= self.critical_depth_max]  # 5-20m
+            breaking_points = [p for p in bathymetry_profile if p['depth'] < self.critical_depth_min]  # <5m
             
-            if deep_water_depths and shallow_water_depths:
-                avg_deep = sum(deep_water_depths) / len(deep_water_depths)
-                avg_shallow = sum(shallow_water_depths) / len(shallow_water_depths)
+            log.debug(f"{CORE_ICONS['status']} Zone distribution: Deep:{len(deep_water_points)}, Transition:{len(transition_points)}, Critical:{len(critical_points)}, Breaking:{len(breaking_points)}")
+            
+            # NEW: Distance-based validation (offshore vs nearshore by distance, not array position)
+            total_distance = max(p.get('distance_from_break_km', 0) for p in bathymetry_profile)
+            distance_threshold = total_distance / 2  # Midpoint distance
+            
+            offshore_points = [p for p in bathymetry_profile if p.get('distance_from_break_km', 0) > distance_threshold]
+            nearshore_points = [p for p in bathymetry_profile if p.get('distance_from_break_km', 0) <= distance_threshold]
+            
+            if offshore_points and nearshore_points:
+                avg_offshore_depth = sum(p['depth'] for p in offshore_points) / len(offshore_points)
+                avg_nearshore_depth = sum(p['depth'] for p in nearshore_points) / len(nearshore_points)
                 
-                # Deep water should generally be deeper than shallow water
-                if avg_shallow > avg_deep:
-                    log.warning(f"{CORE_ICONS['warning']} Unusual depth progression: "
-                            f"nearshore avg {avg_shallow:.1f}m > offshore avg {avg_deep:.1f}m")
-                    # Don't fail - this can occur with unusual bathymetry
+                # FIXED: Tolerant validation for complex bathymetry (submarine canyons, etc.)
+                depth_difference = avg_nearshore_depth - avg_offshore_depth
+                if depth_difference > 100:  # Only warn for extreme cases (>100m reversal)
+                    log.warning(f"{CORE_ICONS['warning']} Complex bathymetry detected: "
+                            f"nearshore avg {avg_nearshore_depth:.1f}m > offshore avg {avg_offshore_depth:.1f}m "
+                            f"(difference: {depth_difference:.1f}m) - this may indicate submarine canyon or complex seafloor")
+                    # Don't fail - complex bathymetry like submarine canyons can legitimately cause this
+                else:
+                    log.debug(f"{CORE_ICONS['status']} Distance-based depth progression validated: "
+                            f"offshore avg {avg_offshore_depth:.1f}m, nearshore avg {avg_nearshore_depth:.1f}m")
             
-            # PRESERVE EXISTING: Check for excessive depth variation (potential data errors)
-            max_depth = max(depths)
-            min_depth = min(depths)
-            depth_range = max_depth - min_depth
+            # NEW: Zone distribution validation
+            # Ensure we have reasonable coverage across zones for wave transformation
+            total_points = len(bathymetry_profile)
             
-            # Flag unrealistic depth ranges for typical surf breaks
-            if depth_range > 500:  # More than 500m variation unusual for 20km path
-                log.warning(f"{CORE_ICONS['warning']} Large depth range detected: "
-                        f"{depth_range:.1f}m from {min_depth:.1f}m to {max_depth:.1f}m")
-                # Don't fail - some locations may have extreme bathymetry
+            # Check for reasonable zone distribution
+            if len(deep_water_points) == 0 and total_distance > 10:  # No deep water points on long path
+                log.warning(f"{CORE_ICONS['warning']} No deep water points (>{self.deep_water_threshold}m) found on {total_distance:.1f}km path")
             
-            # PRESERVE EXISTING: Check for impossible depth changes (underwater cliffs)
-            for i in range(len(depths) - 1):
-                depth_change = abs(depths[i] - depths[i + 1])
-                # This is checked more thoroughly in gradient validation
+            if len(breaking_points) == 0:  # No breaking zone points
+                log.warning(f"{CORE_ICONS['warning']} No breaking zone points (<{self.critical_depth_min}m) found - may affect surf calculations")
+            
+            # NEW: Gradient-based validation for realistic depth changes
+            # Check for impossible underwater cliffs between adjacent points
+            for i in range(len(bathymetry_profile) - 1):
+                current = bathymetry_profile[i]
+                next_point = bathymetry_profile[i + 1]
+                
+                depth_change = abs(current['depth'] - next_point['depth'])
+                
+                # Calculate distance between points for gradient check
+                if 'distance_from_break_km' in current and 'distance_from_break_km' in next_point:
+                    distance_km = abs(current['distance_from_break_km'] - next_point['distance_from_break_km'])
+                    if distance_km > 0:
+                        gradient = depth_change / (distance_km * 1000)  # depth change per meter
+                        
+                        # Flag impossible gradients (>45 degree slope = 1.0 gradient)
+                        if gradient > 1.0:
+                            log.warning(f"{CORE_ICONS['warning']} Steep bathymetric gradient detected: "
+                                    f"{depth_change:.1f}m change over {distance_km*1000:.0f}m distance "
+                                    f"(gradient: {gradient:.3f})")
+                            
+                        # Flag completely impossible gradients (>2.0 = nearly vertical)
+                        if gradient > 2.0:
+                            log.error(f"{CORE_ICONS['warning']} Impossible bathymetric gradient: "
+                                    f"{gradient:.3f} indicates vertical cliff")
+                            return False
+                
+                # Legacy check for extreme depth jumps between adjacent points
                 if depth_change > 1000:  # More than 1km depth change between adjacent points
                     log.error(f"{CORE_ICONS['warning']} Impossible depth change: "
                             f"{depth_change:.1f}m between points {i} and {i+1}")
                     return False
             
+            # PRESERVE EXISTING: Check for excessive total depth variation
+            max_depth = max(depths)
+            min_depth = min(depths)
+            depth_range = max_depth - min_depth
+            
+            if depth_range > 500:  # More than 500m variation
+                log.warning(f"{CORE_ICONS['warning']} Large depth range detected: "
+                        f"{depth_range:.1f}m from {min_depth:.1f}m to {max_depth:.1f}m")
+                # Don't fail - some locations legitimately have extreme bathymetry (submarine canyons, etc.)
+            
+            log.debug(f"{CORE_ICONS['status']} Zone-based depth progression validation completed successfully")
             return True
             
         except Exception as e:
-            log.error(f"{CORE_ICONS['warning']} Error validating depth progression: {e}")
+            log.error(f"{CORE_ICONS['warning']} Error in zone-based depth progression validation: {e}")
             return False  # Fail validation on error
 
     def _calculate_distance_between_points(self, point1, point2):
