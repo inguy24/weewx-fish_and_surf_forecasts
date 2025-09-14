@@ -827,14 +827,14 @@ class SurfFishingPointManager:
         if spot_type == 'surf_spots':
             spot_config.update({
                 'beach_facing': field_values[3] if len(field_values) > 3 else '270',
-                'bottom_type': 'sand',
-                'exposure': 'exposed',
+                'bottom_type': field_values[4] if len(field_values) > 4 else 'sand',
+                'exposure': field_values[5] if len(field_values) > 5 else 'exposed',
                 'bathymetry_calculated': 'false'
             })
         else:  # fishing_spots
             spot_config.update({
-                'location_type': 'shore',
-                'target_category': 'mixed_bag'
+                'location_type': field_values[3] if len(field_values) > 3 else 'shore',
+                'target_category': field_values[4] if len(field_values) > 4 else 'mixed_bag'
             })
         
         # Add to current spots and save to conf
