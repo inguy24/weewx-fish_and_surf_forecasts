@@ -151,10 +151,10 @@ class SurfFishingPointManager:
                 config['SurfFishingService'] = {}
             
             # Update surf spots section
-            config['SurfFishingService']['surf_spots'] = self.current_spots['surf_spots']
+            config['SurfFishingService']['surf_spots'] = {str(k): v for k, v in self.current_spots['surf_spots'].items()}
             
             # Update fishing spots section
-            config['SurfFishingService']['fishing_spots'] = self.current_spots['fishing_spots']
+            config['SurfFishingService']['fishing_spots'] = {str(k): v for k, v in self.current_spots['fishing_spots'].items()}
             
             # WeeWX 5.1 best practice: Immediate write to persist changes
             config.write()
