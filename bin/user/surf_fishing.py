@@ -1436,6 +1436,10 @@ class BathymetryProcessor:
         # ONLY THEN: Run expensive algorithm for uncalculated spots
         log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
         
+        # FIX: Clear shared instance state before processing each spot
+        # This prevents data corruption between surf spots
+        self._clear_processor_state_for_new_spot()
+        
         try:
             log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
             
@@ -1455,7 +1459,7 @@ class BathymetryProcessor:
             
             # Step 1: Find valid deep water point
             deep_water_result = self._find_deep_water_point(surf_break_lat, surf_break_lon, float(beach_facing))
-            
+
             if not deep_water_result:
                 log.error(f"{CORE_ICONS['warning']} Could not find valid deep water point for {spot_name}")
                 return False
