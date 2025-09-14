@@ -1437,8 +1437,8 @@ class BathymetryProcessor:
         log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
         
         # FIX: Clear shared instance state before processing each spot
-        # This prevents data corruption between surf spots
-        self._clear_processor_state_for_new_spot()
+        # This prevents data corruption between surf spots when processing multiple spots sequentially
+        self._gradient_cache = {}
         
         try:
             log.info(f"{CORE_ICONS['navigation']} Processing bathymetry for {spot_name}")
