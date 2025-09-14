@@ -1960,31 +1960,53 @@ class BathymetryProcessor:
             return 0.0, 1000.0  # Safe defaults
 
     def _requires_refinement(self, point1, point2, gradient, segment_distance):
-        """Determine if bathymetric segment requires additional point refinement - CORRECTED LOGIC"""
+        """Determine if bathymetric segment requires additional point refinement"""
         
-        # FIXED: Correct distance logic - if segment is TOO LONG, we need refinement
-        # This was the critical bug causing the adaptive algorithm to fail
-        if segment_distance > self.min_segment_distance:  # 200m MAXIMUM segment length
-            log.debug(f"Refinement triggered by distance: {segment_distance:.0f}m > {self.min_segment_distance:.0f}m limit")
-            return True  # Always refine segments that are too long
+        # FIXED: Data-driven zone-based distance limits from CONF
+        avg_depth = (point1['depth'] + point2['depth']) / 2
+        
+        # Get zone limits from CONF configuration
+        adaptive_config = self.bathymetry_config.get('adaptive_spacing', {})
+        zone_limits = adaptive_config.get('zone_refinement_limits', {})
+        
+        # Zone-specific maximum segment distances (data-driven from YAML)
+        if avg_depth > self.deep_water_threshold:  # Deep water (>50m)
+            max_segment_distance = float(zone_limits.get('deep_water_max_segment_m', '1000'))
+            zone_name = 'deep_water'
+        elif avg_depth > self.critical_depth_max:  # Transition zone (20-50m)  
+            max_segment_distance = float(zone_limits.get('transition_max_segment_m', '500'))
+            zone_name = 'transition'
+        elif avg_depth >= self.critical_depth_min:  # Critical zone (5-20m)
+            max_segment_distance = float(zone_limits.get('critical_max_segment_m', '200'))
+            zone_name = 'critical'
+        else:  # Breaking zone (<5m)
+            max_segment_distance = float(zone_limits.get('breaking_max_segment_m', '100'))
+            zone_name = 'breaking'
+        
+        # Distance-based refinement with zone-specific limits
+        if segment_distance > max_segment_distance:
+            log.debug(f"Zone refinement triggered: {segment_distance:.0f}m > {max_segment_distance:.0f}m "
+                    f"({zone_name} zone, depth={avg_depth:.1f}m)")
+            return True
         
         # Refinement count limit (prevent infinite refinement)
         if hasattr(point1, 'refinement_count') and point1.refinement_count >= 3:
             return False
         
         # Cliff face detection (prevent mapping vertical features)
-        if gradient > 0.5 and segment_distance < 500:  # 50% grade over <500m = cliff face
+        cliff_gradient_limit = float(adaptive_config.get('cliff_face_gradient_limit', '0.5'))
+        cliff_distance_limit = float(adaptive_config.get('cliff_face_distance_limit', '500'))
+        
+        if gradient > cliff_gradient_limit and segment_distance < cliff_distance_limit:
             log.debug(f"Cliff face detected - skipping refinement: {gradient:.6f} gradient over {segment_distance:.0f}m")
             return False
         
-        # PRESERVED: Gradient-based refinement for segments within distance limits
-        # Use base threshold directly for all zones - no multipliers
-        needs_refinement = gradient > self.refinement_threshold  # Direct use of 0.02 from YAML
+        # Gradient-based refinement for segments within distance limits
+        needs_refinement = gradient > self.refinement_threshold  # From YAML config
         
         if needs_refinement:
-            avg_depth = (point1['depth'] + point2['depth']) / 2
-            log.debug(f"Refinement triggered by gradient: {gradient:.6f} > threshold={self.refinement_threshold:.3f} "
-                    f"at depth={avg_depth:.1f}m, distance={segment_distance:.0f}m")
+            log.debug(f"Gradient refinement triggered: {gradient:.6f} > threshold={self.refinement_threshold:.3f} "
+                    f"({zone_name} zone, depth={avg_depth:.1f}m, distance={segment_distance:.0f}m)")
         
         return needs_refinement
 
