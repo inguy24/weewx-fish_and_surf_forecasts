@@ -124,11 +124,11 @@ class SurfFishingPointManager:
             
             # Load surf spots
             surf_spots = service_config.get('surf_spots', {})
-            self.current_spots['surf_spots'] = dict(surf_spots)
+            self.current_spots['surf_spots'] = {str(k): v for k, v in surf_spots.items()}
             
             # Load fishing spots  
             fishing_spots = service_config.get('fishing_spots', {})
-            self.current_spots['fishing_spots'] = dict(fishing_spots)
+            self.current_spots['fishing_spots'] = {str(k): v for k, v in fishing_spots.items()}
             
             return True
             
