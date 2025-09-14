@@ -1927,9 +1927,9 @@ class BathymetryProcessor:
                         f"{len(current_profile)} points")
                 break
             
-            # PHASE 2: Batch query all midpoint depths using existing method
+            # PHASE 2: Batch query all midpoint depths using flexible method
             log.debug(f"{CORE_ICONS['navigation']} Batch querying {len(midpoint_coords)} GEBCO depths for iteration {iteration}")
-            midpoint_depths = self._batch_query_gebco_depths(midpoint_coords)
+            midpoint_depths = self._batch_query_gebco_depths_flexible(midpoint_coords)
             
             if not midpoint_depths or len(midpoint_depths) != len(midpoint_coords):
                 log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed for refinement points")
@@ -1946,22 +1946,20 @@ class BathymetryProcessor:
                 # Check if we need to insert a midpoint after this index
                 for plan in refinement_plan:
                     if plan['insert_after_index'] == i:
-                        midpoint_depth = abs(midpoint_depths[plan['midpoint_index']])
-                        
                         # Create midpoint with real GEBCO depth
                         midpoint = self._create_midpoint_with_depth(
                             plan['point1'], 
                             plan['point2'], 
                             midpoint_coords[plan['midpoint_index']]['latitude'],
                             midpoint_coords[plan['midpoint_index']]['longitude'],
-                            midpoint_depth
+                            midpoint_depths[plan['midpoint_index']]  # Already processed as positive depth
                         )
                         
                         if midpoint:
                             refined_profile.append(midpoint)
                             points_added += 1
                             
-                            log.debug(f"Added refinement point: depth={midpoint_depth:.1f}m "
+                            log.debug(f"Added refinement point: depth={midpoint_depths[plan['midpoint_index']]:.1f}m "
                                     f"(real GEBCO data)")
             
             # Prepare for next iteration
@@ -3054,6 +3052,48 @@ class BathymetryProcessor:
         
         return "\n".join(report)
 
+    def _batch_query_gebco_depths_flexible(self, path_points):
+        """Query GEBCO API for multiple points - handles both full path points and simple coordinates"""
+        
+        try:
+            # Build location string for batch API call
+            locations = []
+            for point in path_points:
+                locations.append(f"{point['latitude']:.6f},{point['longitude']:.6f}")
+            
+            locations_str = '|'.join(locations)
+            
+            # Make batch GEBCO API call
+            depths = self._query_gebco_batch(locations_str)
+            
+            if not depths or len(depths) != len(path_points):
+                log.error(f"{CORE_ICONS['warning']} Batch GEBCO query failed or returned wrong number of results")
+                return None
+            
+            # For original path points with fraction_to_shore, create full bathymetry profile
+            if path_points and 'fraction_to_shore' in path_points[0]:
+                bathymetry_profile = []
+                for i, point in enumerate(path_points):
+                    depth = depths[i]
+                    if depth is not None:
+                        distance_from_break = (1.0 - point['fraction_to_shore']) * self.offshore_distance_km
+                        
+                        bathymetry_profile.append({
+                            'latitude': point['latitude'],
+                            'longitude': point['longitude'],
+                            'depth': abs(depth),  # Always positive depth
+                            'distance_from_break_km': distance_from_break,
+                            'fraction_to_shore': point['fraction_to_shore']
+                        })
+                return bathymetry_profile
+            else:
+                # For simple coordinates (midpoints), just return depths
+                return [abs(depth) if depth is not None else 0 for depth in depths]
+                
+        except Exception as e:
+            log.error(f"{CORE_ICONS['warning']} Error in flexible batch GEBCO query: {e}")
+            return None
+
     def _create_midpoint_with_depth(self, point1, point2, mid_lat, mid_lon, gebco_depth):
         """Create midpoint with pre-queried GEBCO depth (no additional API calls)"""
         try:
@@ -3083,7 +3123,8 @@ class BathymetryProcessor:
         except Exception as e:
             log.warning(f"{CORE_ICONS['warning']} Error creating midpoint with GEBCO depth: {e}")
             return None
-     
+    
+
 class SurfForecastGenerator:
     """Generate surf condition forecasts"""
     
