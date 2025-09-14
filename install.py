@@ -161,12 +161,17 @@ class SurfFishingPointManager:
                 # PRESERVE: If spot exists in CONF with bathymetric data, keep it
                 existing_spot = existing_surf_spots.get(str(spot_key), {})
                 if 'bathymetric_path' in existing_spot:
-                    # Only preserve if bathymetry_calculated is still true
-                    if spot_config.get('bathymetry_calculated') == 'true':
-                        # Copy all existing bathymetric data
+                    # FIX: Check bathymetry_calculated flag from EXISTING CONF data, not in-memory data
+                    # This prevents loss of bathymetry data when in-memory data is incomplete
+                    existing_bathymetry_calculated = existing_spot.get('bathymetry_calculated', 'false')
+                    if existing_bathymetry_calculated == 'true':
+                        # Copy all existing bathymetric data from CONF
                         for key, value in existing_spot.items():
                             if key.startswith(('offshore_', 'bathymetric_path', 'bathymetry_calculation_')):
                                 updated_surf_spots[str(spot_key)][key] = value
+                        
+                        # Ensure the bathymetry_calculated flag is preserved
+                        updated_surf_spots[str(spot_key)]['bathymetry_calculated'] = 'true'
             
             config['SurfFishingService']['surf_spots'] = updated_surf_spots
             
