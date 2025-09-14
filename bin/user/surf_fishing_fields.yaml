@@ -454,8 +454,7 @@ bathymetry_data:
     coarsening_gradient_threshold: 0.002     # 1:500 slope ratio allows coarsening
     max_total_points: 75                     # Maximum points for single surf path
     min_total_points: 16                     # Minimum points to maintain coverage
-    max_refinement_iterations: 3             # Prevent infinite refinement loops
-    min_segment_distance_m: 200              # Minimum distance between points
+    max_refinement_iterations: 4             # Prevent infinite refinement loops
     
     # Depth-based zone classification
     critical_depth_min: 5.0                  # Critical zone lower bound (meters)
@@ -477,6 +476,13 @@ bathymetry_data:
     batch_api_calls: true                   # Use batch GEBCO API requests
     rate_limit_compliance: true             # Respect 1 call/second limit
     api_timeout_seconds: 30                 # Timeout for GEBCO API calls
+    
+  # NEW: Zone-based maximum segment distances (data-driven)
+  zone_refinement_limits:
+    deep_water_max_segment_m: 1000         # Deep water (>50m): 1km segments OK
+    transition_max_segment_m: 500          # Transition zone (20-50m): 500m max
+    critical_max_segment_m: 200            # Critical zone (5-20m): 200m max
+    breaking_max_segment_m: 100            # Breaking zone (<5m): 100m max
     
   # PRESERVE: All existing path_analysis configuration
   path_analysis:
