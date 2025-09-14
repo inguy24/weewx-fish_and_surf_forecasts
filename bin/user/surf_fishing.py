@@ -2241,15 +2241,28 @@ class BathymetryProcessor:
                 return None
             
             # Combine path points with depths
+            actual_offshore_distance_km = self.offshore_distance_km  # Default fallback
+            if len(path_points) >= 2:
+                offshore_point = path_points[0]   # First point is offshore
+                nearshore_point = path_points[-1] # Last point is nearshore/break
+                
+                actual_offshore_distance_km = self._calculate_great_circle_distance(
+                    offshore_point['latitude'], offshore_point['longitude'],
+                    nearshore_point['latitude'], nearshore_point['longitude']
+                ) / 1000.0  # Convert meters to km
+                
+                log.debug(f"{CORE_ICONS['navigation']} Using actual offshore distance: {actual_offshore_distance_km:.1f}km instead of config template: {self.offshore_distance_km:.1f}km")
+
+            # Combine path points with depths
             bathymetry_profile = []
-            
+
             for i, point in enumerate(path_points):
                 depth = depths[i]
                 if depth is not None:
                     # FIXED: Correct distance calculation 
                     # distance_from_break should be MAXIMUM when offshore (fraction = 0.0)
                     # and ZERO when at shore (fraction = 1.0)
-                    distance_from_break = (1.0 - point['fraction_to_shore']) * self.offshore_distance_km
+                    distance_from_break = (1.0 - point['fraction_to_shore']) * actual_offshore_distance_km
                     
                     bathymetry_profile.append({
                         'latitude': point['latitude'],
@@ -3072,11 +3085,24 @@ class BathymetryProcessor:
             
             # For original path points with fraction_to_shore, create full bathymetry profile
             if path_points and 'fraction_to_shore' in path_points[0]:
+                actual_offshore_distance_km = self.offshore_distance_km  # Default fallback
+                
+                if len(path_points) >= 2:
+                    offshore_point = path_points[0]   # First point is offshore
+                    nearshore_point = path_points[-1] # Last point is nearshore/break
+                    
+                    actual_offshore_distance_km = self._calculate_great_circle_distance(
+                        offshore_point['latitude'], offshore_point['longitude'],
+                        nearshore_point['latitude'], nearshore_point['longitude']
+                    ) / 1000.0  # Convert meters to km
+                    
+                    log.debug(f"{CORE_ICONS['navigation']} Flexible method using actual offshore distance: {actual_offshore_distance_km:.1f}km")
+                    
                 bathymetry_profile = []
                 for i, point in enumerate(path_points):
                     depth = depths[i]
                     if depth is not None:
-                        distance_from_break = (1.0 - point['fraction_to_shore']) * self.offshore_distance_km
+                        distance_from_break = (1.0 - point['fraction_to_shore']) * actual_offshore_distance_km
                         
                         bathymetry_profile.append({
                             'latitude': point['latitude'],
