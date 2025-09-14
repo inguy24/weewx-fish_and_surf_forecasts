@@ -2570,7 +2570,7 @@ class BathymetryProcessor:
                             coarsened_points.append(current_point)
                             skip_next = True  # Skip the next point
                             
-                            log.debug(f"{CORE_ICONS['info']} Coarsened deep water segment: "
+                            log.debug(f"{CORE_ICONS['status']} Coarsened deep water segment: "
                                     f"depth {current_point['depth']:.1f}m → {next_next_point['depth']:.1f}m, "
                                     f"gradient {overall_gradient:.6f} < threshold {self.coarsening_threshold}")
                             continue
