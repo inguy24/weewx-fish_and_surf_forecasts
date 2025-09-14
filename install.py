@@ -687,7 +687,7 @@ class SurfFishingPointManager:
                     else:
                         enhanced_field_values = field_values[:5]  # All 5 fields
                     
-                    self._update_existing_spot_enhanced(spot_key, enhanced_field_values, spot_type)
+                    self._update_existing_spot(spot_key, enhanced_field_values, spot_type)
                     curses.curs_set(0)
                     return 'action_updated'
                 else:
