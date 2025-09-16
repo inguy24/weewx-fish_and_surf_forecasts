@@ -234,6 +234,196 @@ noaa_gfs_wave:
       description: "Direction of swell waves"
 
 # =============================================================================
+# SEAFLOOR PHYSICS - Separated from coastal structures (Phase I research)
+# =============================================================================
+seafloor_physics:
+  description: "Seafloor composition physics coefficients from coastal engineering literature"
+  
+  breaking_coefficients:
+    sand: 0.78         # Spilling breakers (Dean & Dalrymple 2002)
+    rock: 1.0          # Plunging breakers
+    coral_reef: 1.2    # Enhanced breaking on reefs
+    mud: 0.7           # Reduced breaking on soft bottoms
+    mixed: 0.85        # Intermediate value
+    
+  friction_coefficients:
+    sand: 0.01         # Standard coastal engineering values
+    rock: 0.008        # Less friction on smooth rock
+    coral_reef: 0.012  # Higher roughness coefficient
+    mud: 0.015         # High friction from soft sediment
+    mixed: 0.010       # Average value
+    
+  user_descriptions:
+    sand: "Typical beach sand bottom - spilling waves"
+    rock: "Rocky reef or cobble bottom - plunging waves"
+    coral_reef: "Living or dead coral reef - powerful breaking"
+    mud: "Muddy bay or estuary bottom - weak breaking"
+    mixed: "Combination of materials - intermediate breaking"
+
+# =============================================================================
+# STRUCTURE PHYSICS - All 5 structure types (Phase I research)
+# =============================================================================
+structure_physics:
+  description: "Coastal structure wave interaction coefficients from literature review"
+  
+  jetty:
+    reflection_coefficient: 0.80    # From Dean & Dalrymple research
+    transmission_coefficient: 0.10
+    dissipation_coefficient: 0.20   # Kr² + Kt² + Kd² = 1
+    influence_zone_base_m: 1500     # Research: 3-5 × typical length
+    breaking_enhancement: 1.2
+    material_category: "impermeable"
+    typical_length_range: "200-2000m"
+    user_description: "Rock or concrete wall extending into water"
+    user_examples: "Harbor jetties, inlet jetties, groin fields"
+    
+  pier:
+    reflection_coefficient: 0.20    # From Chakrabarti pile research
+    transmission_coefficient: 0.75  # High transmission through piles
+    dissipation_coefficient: 0.25
+    influence_zone_base_m: 300      # Research: 1-2 × typical length
+    breaking_enhancement: 1.0
+    material_category: "permeable"
+    typical_length_range: "100-500m"
+    user_description: "Elevated structure on pillars/piles"
+    user_examples: "Fishing piers, boardwalk piers, loading docks"
+    
+  breakwater:
+    reflection_coefficient: 0.45    # From USACE semi-permeable research
+    transmission_coefficient: 0.35
+    dissipation_coefficient: 0.45   # High energy dissipation
+    influence_zone_base_m: 2000     # Research: 2-4 × typical length
+    breaking_enhancement: 1.1
+    material_category: "semi_permeable"
+    typical_length_range: "500-3000m"
+    user_description: "Structure designed to break waves"
+    user_examples: "Harbor breakwaters, offshore breakwaters, wave barriers"
+    
+  seawall:
+    reflection_coefficient: 0.90    # Higher than jetty (vertical wall)
+    transmission_coefficient: 0.05
+    dissipation_coefficient: 0.15
+    influence_zone_base_m: 400      # Research: Height × 20
+    breaking_enhancement: 1.0       # No breaking enhancement
+    material_category: "impermeable"
+    typical_length_range: "variable"
+    user_description: "Wall parallel to shoreline"
+    user_examples: "Waterfront seawalls, bulkheads, coastal protection walls"
+    
+  groin:
+    reflection_coefficient: 0.60    # Semi-permeable typical
+    transmission_coefficient: 0.25
+    dissipation_coefficient: 0.35
+    influence_zone_base_m: 400      # Research: 2-3 × typical length
+    breaking_enhancement: 1.1
+    material_category: "semi_permeable"
+    typical_length_range: "50-300m"
+    user_description: "Short wall perpendicular to beach"
+    user_examples: "Beach groins, sand retention structures, erosion control"
+
+# =============================================================================
+# TOPOGRAPHIC FEATURES - Natural coastal formations
+# =============================================================================
+topographic_features:
+  description: "Natural coastal features affecting wave propagation"
+  
+  point_break:
+    wave_focusing_factor: 1.1
+    directional_sensitivity: "high"
+    optimal_approach_angle: 45
+    user_description: "Waves wrap around rocky headland"
+    user_test: "Do waves wrap around a rocky point creating longer rides?"
+    examples: "Malibu, Rincon, Trestles"
+    
+  bay_break:
+    wave_reduction_factor: 0.9
+    sheltering_effect: "moderate"
+    user_description: "Significant wave height reduction due to sheltering"
+    user_test: "Can you see clear wave height differences between center and edges?"
+    examples: "Half Moon Bay, Monterey Bay breaks"
+    
+  straight_beach:
+    wave_modification: "minimal"
+    user_description: "Minimal topographic wave modification"
+    user_test: "Is the shoreline relatively straight for 1+ miles?"
+    examples: "Most open coast beaches"
+    
+  headland:
+    wave_shadowing: "high"
+    refraction_enhancement: 1.2
+    user_description: "Large rocky outcrop affects wave direction"
+    user_test: "Does a rocky outcrop block waves from certain directions?"
+    examples: "Point Reyes, Big Sur headlands"
+
+# =============================================================================
+# STRUCTURE INTERACTION RULES - Multi-structure dominance calculation
+# =============================================================================
+structure_interactions:
+  description: "Multi-structure dominance calculation from Phase I research"
+  
+  dominance_calculation:
+    distance_weight: 0.4       # Research-validated weighting
+    material_weight: 0.4       # Material importance
+    size_weight: 0.2          # Size factor importance
+    
+  material_weights:
+    impermeable: 1.0          # Highest dominance
+    semi_permeable: 0.7       # Moderate dominance
+    permeable: 0.4            # Lowest dominance
+    
+  size_categories:
+    small:
+      description: "Small structures"
+      length_range: "<100m"
+      weight_factor: 0.3
+      examples: "Short groins, small piers"
+      
+    medium:
+      description: "Medium structures" 
+      length_range: "100-500m"
+      weight_factor: 0.6
+      examples: "Typical jetties, standard breakwaters"
+      
+    large:
+      description: "Large structures"
+      length_range: ">500m"
+      weight_factor: 1.0
+      examples: "Major harbor breakwaters, long jetties"
+    
+  validation_limits:
+    min_distance_m: 50        # Minimum realistic distance
+    max_distance_m: 1500      # Research: Beyond 3-5 wavelengths
+    max_structures_per_spot: 4 # Practical complexity limit
+    dominance_threshold: 0.1   # Ignore structures below this score
+
+# =============================================================================
+# CONFIGURATION UI MODES - Dual interface system
+# =============================================================================
+configuration_modes:
+  description: "User interface mode selection for surf spot configuration"
+  
+  mode_selection:
+    simple:
+      description: "Seafloor only - current system equivalent"
+      time_estimate: "2-3 minutes"
+      accuracy_level: "baseline"
+      features: ["seafloor_composition"]
+      
+    wizard:
+      description: "Step-by-step guided setup"
+      time_estimate: "8-12 minutes"
+      accuracy_level: "enhanced (+15-30%)"
+      features: ["seafloor_composition", "topographic_features", "coastal_structures"]
+      recommended_for: "first_time_users"
+      
+    all_in_one:
+      description: "Advanced single-screen configuration"
+      time_estimate: "5-8 minutes"
+      accuracy_level: "enhanced (+15-30%)"
+      features: ["seafloor_composition", "topographic_features", "coastal_structures"]
+      recommended_for: "experienced_users"
+
+# =============================================================================
 # FISH CATEGORIES - User-configurable species targeting
 # =============================================================================
 fish_categories:
