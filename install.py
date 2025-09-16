@@ -3418,109 +3418,6 @@ class SurfSpotConfigurationManager:
         
         return structures
 
-    def _configure_single_structure(self, struct_type):
-        """
-        Configure individual structure with YAML-driven validation
-        """
-        struct_physics = self.structure_physics[struct_type]
-        validation_limits = self.structure_interactions.get('validation_limits', {})
-        size_categories = self.structure_interactions.get('size_categories', {})
-        
-        structure = {
-            'type': struct_type,
-            'material_category': struct_physics.get('material_category', 'permeable')
-        }
-        
-        print(f"\nConfiguring {struct_type}:")
-        
-        # Distance configuration with validation
-        min_dist = validation_limits.get('min_distance_m', 50)
-        max_dist = validation_limits.get('max_distance_m', 1500)
-        
-        while True:
-            try:
-                distance_input = input(f"\nDistance to {struct_type} (meters, {min_dist}-{max_dist}): ").strip()
-                distance_m = float(distance_input)
-                
-                if distance_m < min_dist:
-                    print(f"  {CORE_ICONS['warning']} Too close - minimum {min_dist}m for realistic modeling")
-                elif distance_m > max_dist:
-                    print(f"  {CORE_ICONS['warning']} Beyond typical influence zone")
-                    print(f"  Research shows effects minimal beyond {max_dist}m")
-                    proceed = input(f"  Continue anyway? (y/n): ").strip().lower()
-                    if proceed in ['y', 'yes']:
-                        structure['distance_m'] = distance_m
-                        structure['beyond_influence_zone'] = True
-                        break
-                else:
-                    structure['distance_m'] = distance_m
-                    structure['beyond_influence_zone'] = False
-                    break
-            except ValueError:
-                print(f"  {CORE_ICONS['warning']} Please enter a number")
-        
-        # Bearing configuration with helpers
-        while True:
-            print(f"\nBearing to {struct_type} (where is structure relative to surf spot):")
-            print("  Enter degrees (0-360) where 0=North, 90=East, 180=South, 270=West")
-            print("  Or use cardinal directions: N, NE, E, SE, S, SW, W, NW")
-            
-            bearing_input = input(f"Bearing: ").strip().upper()
-            
-            # Cardinal direction conversion
-            cardinal_map = {
-                'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
-                'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
-                'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
-                'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
-            }
-            
-            if bearing_input in cardinal_map:
-                structure['bearing_degrees'] = cardinal_map[bearing_input]
-                structure['bearing_input_type'] = 'cardinal'
-                break
-            else:
-                try:
-                    bearing_degrees = float(bearing_input)
-                    if 0 <= bearing_degrees <= 360:
-                        structure['bearing_degrees'] = bearing_degrees
-                        structure['bearing_input_type'] = 'degrees'
-                        break
-                    else:
-                        print(f"  {CORE_ICONS['warning']} Please enter 0-360 degrees")
-                except ValueError:
-                    print(f"  {CORE_ICONS['warning']} Please enter degrees or cardinal direction")
-        
-        # Size category configuration
-        print(f"\nSize category for {struct_type}:")
-        size_options = list(size_categories.keys())
-        for i, size_cat in enumerate(size_options, 1):
-            size_info = size_categories[size_cat]
-            description = size_info.get('description', size_cat)
-            length_range = size_info.get('length_range', '')
-            examples = size_info.get('examples', '')
-            print(f"  {i}. {description} ({length_range})")
-            if examples:
-                print(f"     Examples: {examples}")
-        
-        while True:
-            try:
-                choice = input(f"\nSelect size category (1-{len(size_options)}): ").strip()
-                choice_idx = int(choice) - 1
-                
-                if 0 <= choice_idx < len(size_options):
-                    structure['size_category'] = size_options[choice_idx]
-                    break
-                else:
-                    print(f"  {CORE_ICONS['warning']} Please enter 1-{len(size_options)}")
-            except ValueError:
-                print(f"  {CORE_ICONS['warning']} Please enter a number")
-        
-        # Calculate dominance score
-        structure['dominance_score'] = self._calculate_dominance_score(structure)
-        
-        return structure
-
     def _calculate_dominance_score(self, structure):
         """
         Calculate structure dominance score using YAML parameters
@@ -3725,80 +3622,6 @@ class SurfSpotConfigurationManager:
             elif key == 27:  # ESC
                 return 'sand'  # Default
 
-    def _select_topographic_curses(self, stdscr):
-        """
-        Curses interface for topographic feature selection
-        """
-        topo_features = self.topographic_features
-        feature_types = list(topo_features.keys())
-        selected_features = []
-        current_selection = 0
-        
-        while True:
-            stdscr.clear()
-            height, width = stdscr.getmaxyx()
-            
-            # Title
-            title = "Select Topographic Features (SPACE to toggle, ENTER when done)"
-            stdscr.addstr(1, (width - len(title)) // 2, title, curses.A_BOLD)
-            
-            # Features
-            for i, feature_type in enumerate(feature_types):
-                y_pos = 4 + i * 3
-                feature_info = topo_features[feature_type]
-                description = feature_info.get('user_description', feature_type)
-                
-                attr = curses.A_REVERSE if i == current_selection else curses.A_NORMAL
-                selected_marker = "[X]" if feature_type in selected_features else "[ ]"
-                
-                feature_text = f"{selected_marker} {feature_type.replace('_', ' ').title()}"
-                stdscr.addstr(y_pos, 2, feature_text, attr)
-                stdscr.addstr(y_pos + 1, 6, description[:width-8])
-            
-            # Instructions
-            stdscr.addstr(height - 2, 2, "↑↓ navigate, SPACE toggle, ENTER done, ESC cancel")
-            
-            stdscr.refresh()
-            key = stdscr.getch()
-            
-            if key == curses.KEY_UP and current_selection > 0:
-                current_selection -= 1
-            elif key == curses.KEY_DOWN and current_selection < len(feature_types) - 1:
-                current_selection += 1
-            elif key == ord(' '):
-                feature = feature_types[current_selection]
-                if feature in selected_features:
-                    selected_features.remove(feature)
-                else:
-                    selected_features.append(feature)
-            elif key == ord('\n'):
-                return selected_features
-            elif key == 27:  # ESC
-                return []
-
-    def _configure_structures_curses(self, stdscr):
-        """
-        Curses interface for structure configuration
-        """
-        structures = []
-        
-        while len(structures) < 4:
-            # Structure type selection
-            struct_type = self._select_structure_type_curses(stdscr)
-            if not struct_type:
-                break
-            
-            # Structure configuration
-            structure = self._configure_structure_curses(stdscr, struct_type)
-            if structure:
-                structures.append(structure)
-            
-            # Ask if user wants to add more
-            if not self._ask_add_more_structures_curses(stdscr, structures):
-                break
-        
-        return structures
-
     def _select_structure_type_curses(self, stdscr):
         """
         Curses interface for structure type selection
@@ -3849,44 +3672,6 @@ class SurfSpotConfigurationManager:
             elif key == 27:  # ESC
                 return None
 
-    def _configure_structure_curses(self, stdscr, struct_type):
-        """
-        Curses interface for individual structure configuration
-        """
-        # This would be a more complex curses form for distance, bearing, size
-        # For now, fall back to text input
-        stdscr.clear()
-        stdscr.addstr(1, 2, f"Configuring {struct_type}...")
-        stdscr.addstr(3, 2, "Distance (meters): ")
-        stdscr.refresh()
-        
-        # Enable echo for text input
-        curses.echo()
-        distance_str = stdscr.getstr(3, 21, 10).decode('utf-8')
-        
-        stdscr.addstr(4, 2, "Bearing (degrees 0-360): ")
-        bearing_str = stdscr.getstr(4, 26, 10).decode('utf-8')
-        
-        curses.noecho()
-        
-        try:
-            distance_m = float(distance_str)
-            bearing_degrees = float(bearing_str)
-            
-            structure = {
-                'type': struct_type,
-                'distance_m': distance_m,
-                'bearing_degrees': bearing_degrees,
-                'size_category': 'medium',  # Default
-                'material_category': self.structure_physics[struct_type].get('material_category', 'permeable')
-            }
-            
-            structure['dominance_score'] = self._calculate_dominance_score(structure)
-            return structure
-            
-        except ValueError:
-            return None
-
     def _ask_add_more_structures_curses(self, stdscr, structures):
         """
         Ask user if they want to add more structures
@@ -3902,7 +3687,384 @@ class SurfSpotConfigurationManager:
                 return True
             elif key == ord('n') or key == ord('N'):
                 return False
+
+    def _configure_coastal_structures(self):
+        """
+        Configure multiple coastal structures using YAML-driven data
+        """
+        structures = []
+        structure_types = list(self.structure_physics.keys())
+        max_structures = self.structure_interactions.get('validation_limits', {}).get('max_structures_per_spot', 4)
+        
+        print(f"\nCoastal structures configuration:")
+        print("Structures affect waves within their influence zones")
+        
+        while len(structures) < max_structures:
+            print(f"\n--- Structure {len(structures) + 1} Configuration ---")
             
+            # Structure type selection
+            print(f"\nAvailable structure types:")
+            for i, struct_type in enumerate(structure_types, 1):
+                struct_info = self.structure_physics[struct_type]
+                description = struct_info.get('user_description', struct_type.replace('_', ' '))
+                typical_length = struct_info.get('typical_length_range', 'varies')
+                print(f"  {i}. {struct_type.title()} - {description}")
+                print(f"     Typical length: {typical_length}")
+            print(f"  {len(structure_types) + 1}. Finish (no more structures)")
+            
+            # Get structure type selection
+            while True:
+                try:
+                    choice = input(f"\nSelect structure type (1-{len(structure_types) + 1}): ").strip()
+                    choice_idx = int(choice) - 1
+                    
+                    if choice_idx == len(structure_types):
+                        return structures  # User chose to finish
+                    elif 0 <= choice_idx < len(structure_types):
+                        selected_type = structure_types[choice_idx]
+                        break
+                    else:
+                        print(f"  {CORE_ICONS['warning']} Please enter 1-{len(structure_types) + 1}")
+                except ValueError:
+                    print(f"  {CORE_ICONS['warning']} Please enter a number")
+            
+            # Configure individual structure
+            structure_config = self._configure_single_structure(selected_type)
+            if structure_config:
+                structures.append(structure_config)
+                print(f"  {CORE_ICONS['status']} Added {selected_type} structure")
+            else:
+                print(f"  {CORE_ICONS['warning']} Structure configuration cancelled")
+        
+        if len(structures) >= max_structures:
+            print(f"\n{CORE_ICONS['warning']} Maximum of {max_structures} structures reached")
+        
+        return structures
+
+    def _configure_single_structure(self, struct_type):
+        """
+        Configure a single structure with full parameters using YAML data
+        """
+        struct_info = self.structure_physics[struct_type]
+        validation_limits = self.structure_interactions.get('validation_limits', {})
+        
+        print(f"\nConfiguring {struct_type} structure:")
+        
+        # Distance configuration with units
+        distance_unit = 'meters' if self.unit_system == 'metric' else 'feet'
+        min_distance = validation_limits.get('min_distance_m', 50)
+        max_distance = validation_limits.get('max_distance_m', 1500)
+        
+        if self.unit_system == 'us':
+            min_distance = int(min_distance * 3.28084)  # Convert to feet
+            max_distance = int(max_distance * 3.28084)
+        
+        print(f"\nDistance from surf spot to structure:")
+        print(f"Range: {min_distance}-{max_distance} {distance_unit}")
+        print("Use Google Maps: Right-click surf spot → Measure distance → click structure")
+        
+        while True:
+            try:
+                distance_str = input(f"Distance ({distance_unit}): ").strip()
+                distance = float(distance_str)
+                
+                if min_distance <= distance <= max_distance:
+                    # Convert to meters for internal storage
+                    distance_m = distance if self.unit_system == 'metric' else distance / 3.28084
+                    break
+                else:
+                    print(f"  {CORE_ICONS['warning']} Distance must be {min_distance}-{max_distance} {distance_unit}")
+            except ValueError:
+                print(f"  {CORE_ICONS['warning']} Please enter a number")
+        
+        # Bearing configuration
+        print(f"\nBearing from surf spot TO structure (0-360 degrees):")
+        print("0°=North, 90°=East, 180°=South, 270°=West")
+        print("Use compass app or Google Earth measurement tool")
+        
+        while True:
+            try:
+                bearing = float(input("Bearing (degrees): ").strip())
+                if 0 <= bearing <= 360:
+                    break
+                else:
+                    print(f"  {CORE_ICONS['warning']} Bearing must be 0-360 degrees")
+            except ValueError:
+                print(f"  {CORE_ICONS['warning']} Please enter a number")
+        
+        # Size category selection
+        size_categories = self.structure_interactions.get('size_categories', {})
+        size_options = list(size_categories.keys())
+        
+        print(f"\nStructure size category:")
+        for i, size_cat in enumerate(size_options, 1):
+            size_info = size_categories[size_cat]
+            description = size_info.get('description', size_cat)
+            length_range = size_info.get('length_range', 'varies')
+            examples = size_info.get('examples', '')
+            print(f"  {i}. {size_cat.title()} - {description}")
+            print(f"     Length: {length_range}")
+            if examples:
+                print(f"     Examples: {examples}")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect size (1-{len(size_options)}): ").strip()
+                choice_idx = int(choice) - 1
+                
+                if 0 <= choice_idx < len(size_options):
+                    size_category = size_options[choice_idx]
+                    break
+                else:
+                    print(f"  {CORE_ICONS['warning']} Please enter 1-{len(size_options)}")
+            except ValueError:
+                print(f"  {CORE_ICONS['warning']} Please enter a number")
+        
+        # Material category selection
+        material_weights = self.structure_interactions.get('material_weights', {})
+        material_options = list(material_weights.keys())
+        
+        print(f"\nStructure material category:")
+        for i, material in enumerate(material_options, 1):
+            weight = material_weights[material]
+            print(f"  {i}. {material.replace('_', ' ').title()} (wave effect: {weight})")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect material (1-{len(material_options)}): ").strip()
+                choice_idx = int(choice) - 1
+                
+                if 0 <= choice_idx < len(material_options):
+                    material_category = material_options[choice_idx]
+                    break
+                else:
+                    print(f"  {CORE_ICONS['warning']} Please enter 1-{len(material_options)}")
+            except ValueError:
+                print(f"  {CORE_ICONS['warning']} Please enter a number")
+        
+        # Calculate dominance score using YAML formula
+        dominance_calc = self.structure_interactions.get('dominance_calculation', {})
+        distance_weight = dominance_calc.get('distance_weight', 0.4)
+        material_weight = dominance_calc.get('material_weight', 0.4)
+        size_weight = dominance_calc.get('size_weight', 0.2)
+        
+        # Distance factor (closer = higher dominance)
+        max_dist = validation_limits.get('max_distance_m', 1500)
+        distance_factor = 1.0 - (distance_m / max_dist)
+        
+        # Material factor
+        material_factor = material_weights[material_category]
+        
+        # Size factor
+        size_factor = size_categories[size_category].get('weight_factor', 0.6)
+        
+        # Calculate weighted dominance score
+        dominance_score = (distance_factor * distance_weight + 
+                        material_factor * material_weight + 
+                        size_factor * size_weight)
+        
+        # Check if beyond influence zone
+        influence_zone_base = struct_info.get('influence_zone_base_m', 1000)
+        influence_zone = influence_zone_base * (0.5 + size_factor)
+        beyond_influence = distance_m > influence_zone
+        
+        # Create structure configuration
+        structure_config = {
+            'type': struct_type,
+            'distance_m': round(distance_m, 1),
+            'bearing_degrees': round(bearing, 1),
+            'size_category': size_category,
+            'material_category': material_category,
+            'dominance_score': round(dominance_score, 3),
+            'influence_zone_m': round(influence_zone, 0),
+            'beyond_influence_zone': beyond_influence
+        }
+        
+        # Display structure summary
+        print(f"\n{CORE_ICONS['status']} Structure Configuration Summary:")
+        print(f"  Type: {struct_type.title()}")
+        print(f"  Distance: {distance_m:.1f}m")
+        print(f"  Bearing: {bearing}°")
+        print(f"  Size: {size_category.title()}")
+        print(f"  Material: {material_category.replace('_', ' ').title()}")
+        print(f"  Dominance Score: {dominance_score:.3f}")
+        print(f"  Influence Zone: {influence_zone:.0f}m")
+        
+        if beyond_influence:
+            print(f"  {CORE_ICONS['warning']} Structure is beyond typical influence zone")
+            print(f"  This structure may have minimal effect on surf conditions")
+        
+        # Confirm structure
+        while True:
+            confirm = input(f"\nAdd this structure? (y/n): ").strip().lower()
+            if confirm in ['y', 'yes']:
+                return structure_config
+            elif confirm in ['n', 'no']:
+                return None
+            else:
+                print(f"  {CORE_ICONS['warning']} Please enter y or n")
+
+    def _select_topographic_curses(self, stdscr):
+        """
+        Curses interface for topographic feature selection
+        """
+        topo_features = self.topographic_features
+        feature_types = list(topo_features.keys())
+        selected_features = []
+        current_selection = 0
+        
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            
+            # Title
+            title = "Select Topographic Features"
+            stdscr.addstr(1, (width - len(title)) // 2, title, curses.A_BOLD)
+            
+            # Instructions
+            instructions = "SPACE=toggle, ↑↓=navigate, ENTER=finish, ESC=cancel"
+            stdscr.addstr(3, (width - len(instructions)) // 2, instructions)
+            
+            # Feature options
+            y_pos = 6
+            for i, feature_type in enumerate(feature_types):
+                feature_info = topo_features[feature_type]
+                description = feature_info.get('user_description', feature_type.replace('_', ' '))
+                test = feature_info.get('user_test', '')
+                
+                # Selection indicator
+                selected = feature_type in selected_features
+                indicator = "[X]" if selected else "[ ]"
+                
+                # Highlight current selection
+                attr = curses.A_REVERSE if i == current_selection else curses.A_NORMAL
+                
+                # Display feature
+                feature_line = f"{indicator} {feature_type.replace('_', ' ').title()}"
+                if len(feature_line) < width - 4:
+                    stdscr.addstr(y_pos, 2, feature_line, attr)
+                
+                # Display description on next line
+                if y_pos + 1 < height - 3:
+                    desc_line = f"    {description}"[:width-6]
+                    stdscr.addstr(y_pos + 1, 2, desc_line)
+                
+                # Display test question
+                if test and y_pos + 2 < height - 3:
+                    test_line = f"    Test: {test}"[:width-6]
+                    stdscr.addstr(y_pos + 2, 2, test_line)
+                
+                y_pos += 4
+            
+            # Selected features summary
+            if selected_features and y_pos < height - 2:
+                stdscr.addstr(y_pos, 2, f"Selected: {', '.join([f.replace('_', ' ') for f in selected_features])}")
+            
+            stdscr.refresh()
+            
+            # Handle input
+            key = stdscr.getch()
+            
+            if key == curses.KEY_UP and current_selection > 0:
+                current_selection -= 1
+            elif key == curses.KEY_DOWN and current_selection < len(feature_types) - 1:
+                current_selection += 1
+            elif key == ord(' '):  # Toggle selection
+                feature = feature_types[current_selection]
+                if feature in selected_features:
+                    selected_features.remove(feature)
+                else:
+                    selected_features.append(feature)
+            elif key == ord('\n'):  # Finish
+                return selected_features
+            elif key == 27:  # ESC
+                return []
+
+    def _configure_structures_curses(self, stdscr):
+        """
+        Curses interface for structure configuration
+        """
+        curses.curs_set(0)  # Hide cursor
+        structures = []
+        structure_types = list(self.structure_physics.keys())
+        current_selection = 0
+        
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            
+            # Title
+            title = "Configure Coastal Structures"
+            stdscr.addstr(1, (width - len(title)) // 2, title, curses.A_BOLD)
+            
+            # Instructions
+            instructions = "↑↓=navigate, ENTER=add structure, 'f'=finish, ESC=cancel"
+            stdscr.addstr(3, (width - len(instructions)) // 2, instructions)
+            
+            # Current structures
+            y_pos = 5
+            if structures:
+                stdscr.addstr(y_pos, 2, "Current Structures:", curses.A_BOLD)
+                y_pos += 1
+                for i, struct in enumerate(structures):
+                    struct_line = f"  {i+1}. {struct['type'].title()}: {struct['distance_m']}m @ {struct['bearing_degrees']}°"
+                    if y_pos < height - 8:
+                        stdscr.addstr(y_pos, 2, struct_line[:width-4])
+                        y_pos += 1
+                y_pos += 1
+            
+            # Available structure types
+            stdscr.addstr(y_pos, 2, "Add Structure Type:", curses.A_BOLD)
+            y_pos += 1
+            
+            for i, struct_type in enumerate(structure_types):
+                struct_info = self.structure_physics[struct_type]
+                description = struct_info.get('user_description', struct_type.replace('_', ' '))
+                
+                attr = curses.A_REVERSE if i == current_selection else curses.A_NORMAL
+                type_line = f"  {struct_type.title()} - {description}"
+                
+                if y_pos < height - 3:
+                    stdscr.addstr(y_pos, 2, type_line[:width-4], attr)
+                    y_pos += 1
+            
+            # Finish option
+            finish_attr = curses.A_REVERSE if current_selection == len(structure_types) else curses.A_NORMAL
+            if y_pos < height - 2:
+                stdscr.addstr(y_pos, 2, "  Finish (no more structures)", finish_attr)
+            
+            stdscr.refresh()
+            
+            # Handle input
+            key = stdscr.getch()
+            
+            if key == curses.KEY_UP and current_selection > 0:
+                current_selection -= 1
+            elif key == curses.KEY_DOWN and current_selection < len(structure_types):
+                current_selection += 1
+            elif key == ord('\n'):  # Add selected structure
+                if current_selection == len(structure_types):
+                    return structures  # Finish selected
+                else:
+                    # Add structure - return to text interface temporarily
+                    curses.endwin()
+                    try:
+                        selected_type = structure_types[current_selection]
+                        structure_config = self._configure_single_structure(selected_type)
+                        if structure_config:
+                            structures.append(structure_config)
+                            print(f"\n{CORE_ICONS['status']} Structure added. Press ENTER to continue...")
+                            input()
+                    finally:
+                        # Restart curses
+                        stdscr = curses.initscr()
+                        curses.noecho()
+                        curses.cbreak()
+                        stdscr.keypad(True)
+            elif key == ord('f') or key == ord('F'):  # Finish
+                return structures
+            elif key == 27:  # ESC
+                return []          
                
 class PhaseIAnalyzer:
     """
