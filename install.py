@@ -2324,16 +2324,17 @@ class SurfFishingConfigurator:
             print(f"    {CORE_ICONS['warning']} Invalid coordinates. Please enter decimal numbers")
             return None, None
     
-    def _configure_surf_characteristics_enhanced(self):
+    def _configure_surf_characteristics(self, name, lat, lon):
         """
-        SURGICAL ENHANCEMENT to existing _configure_surf_characteristics method
+        SURGICAL ENHANCEMENT to existing _configure_surf_characteristics_enhanced method
+        Updated signature to match call from _configure_surf_spots()
         Adds Phase III capabilities while preserving all existing functionality
         """
         
         # Initialize enhanced configuration manager
         config_manager = SurfSpotConfigurationManager(self.yaml_data, self.unit_system)
         
-        print(f"\n{CORE_ICONS['navigation']} Enhanced Surf Spot Configuration")
+        print(f"\n{CORE_ICONS['navigation']} Enhanced Surf Spot Configuration - {name}")
         print("Phase III: Structure Physics Integration")
         
         # Mode selection
@@ -2345,6 +2346,8 @@ class SurfFishingConfigurator:
         if enhanced_config:
             # Convert to format expected by existing code
             spot_config = {
+                'bottom_type': enhanced_config.get('seafloor_composition', 'sand'),  # Map to expected field
+                'exposure': 'exposed',  # Default value for compatibility
                 'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
                 'topographic_features': enhanced_config.get('topographic_features', []),
                 'coastal_structures': enhanced_config.get('coastal_structures', []),
@@ -2360,12 +2363,14 @@ class SurfFishingConfigurator:
         else:
             print(f"\n{CORE_ICONS['warning']} Configuration cancelled - using simple mode")
             return {
+                'bottom_type': 'sand',  # Required field for compatibility
+                'exposure': 'exposed',  # Required field for compatibility
                 'seafloor_composition': 'sand',
                 'topographic_features': [],
                 'coastal_structures': [],
                 'configuration_mode': 'simple'
             }
-    
+   
     def _configure_fishing_characteristics(self, name, lat, lon):
         """Configure fishing-specific spot characteristics"""
         
