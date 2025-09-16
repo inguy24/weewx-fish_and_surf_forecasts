@@ -6963,10 +6963,10 @@ class SurfFishingService(StdService):
                 log.info(f"Station integration type: {integration_type}")
                 
                 if integration_type == 'phase_1_plus_api':
-                    self.integration_manager = MarineDataIntegrationManager(
-                        field_definitions, self.engine, self.config_dict)
-                    self.fusion_processor = MarineDataFusionProcessor(
-                        field_definitions, self.config_dict)
+                    self.integration_manager = MarineStationIntegrationManager(
+                        self.config_dict, field_definitions)
+                    self.fusion_processor = DataFusionProcessor(
+                        self.config_dict, field_definitions)
                     
                     self.fishing_generator.integration_manager = self.integration_manager
                     self.fishing_generator.fusion_processor = self.fusion_processor
