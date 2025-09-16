@@ -4299,7 +4299,8 @@ class SurfForecastGenerator:
 
     def _apply_structure_wave_effects(self, wave_height, wave_period, wave_direction, active_structures):
         """
-        NEW METHOD: Apply combined structure effects using CONF-driven physics
+        Apply combined structure effects using CONF-driven physics
+        Uses wave_period and wave_direction for structure-specific calculations
         """
         if not active_structures or not self.structure_physics:
             return {'wave_height': wave_height, 'total_modification': 1.0, 'structure_effects': []}
@@ -4315,17 +4316,17 @@ class SurfForecastGenerator:
             if not struct_config:
                 continue
             
-            # Apply structure-specific physics based on type
+            # Apply structure-specific physics based on type (pass structure for directional calculations)
             if struct_type == 'jetty':
-                effect = self._apply_jetty_physics(modified_height, struct_config, distance)
+                effect = self._apply_jetty_physics(modified_height, wave_period, wave_direction, struct_config, distance, structure)
             elif struct_type == 'pier':
-                effect = self._apply_pier_physics(modified_height, struct_config, distance)
+                effect = self._apply_pier_physics(modified_height, wave_period, wave_direction, struct_config, distance, structure)
             elif struct_type == 'breakwater':
-                effect = self._apply_breakwater_physics(modified_height, struct_config, distance)
+                effect = self._apply_breakwater_physics(modified_height, wave_period, wave_direction, struct_config, distance, structure)
             elif struct_type == 'seawall':
-                effect = self._apply_seawall_physics(modified_height, struct_config, distance)
+                effect = self._apply_seawall_physics(modified_height, wave_period, wave_direction, struct_config, distance, structure)
             elif struct_type == 'groin':
-                effect = self._apply_groin_physics(modified_height, struct_config, distance)
+                effect = self._apply_groin_physics(modified_height, wave_period, wave_direction, struct_config, distance, structure)
             else:
                 continue
             
@@ -4338,75 +4339,195 @@ class SurfForecastGenerator:
             'structure_effects': structure_effects
         }
 
-    def _apply_jetty_physics(self, wave_height, jetty_config, distance):
-        """NEW METHOD: Apply jetty-specific wave reflection physics"""
+    def _apply_jetty_physics(self, wave_height, wave_period, wave_direction, jetty_config, distance, structure):
+        """Apply jetty-specific wave reflection physics with directional effects"""
         Kr = float(jetty_config.get('reflection_coefficient', 0.80))
         influence_zone = float(jetty_config.get('influence_zone_base_m', 1500))
         
         distance_factor = max(0.0, 1.0 - (distance / influence_zone))
-        Kr_effective = Kr * distance_factor
+        
+        # Wave direction effects: calculate angle between wave direction and structure orientation
+        structure_bearing = structure.get('bearing_degrees', 0)
+        structure_orientation = structure.get('orientation_degrees', structure_bearing)  # Default to same as bearing
+        
+        # Calculate wave approach angle relative to structure (perpendicular = maximum reflection)
+        approach_angle = abs(structure_orientation - wave_direction)
+        if approach_angle > 180:
+            approach_angle = 360 - approach_angle
+        
+        # Convert to angle from perpendicular (0° = perpendicular approach, 90° = parallel)
+        angle_from_perpendicular = min(approach_angle, 180 - approach_angle)
+        
+        # Directional coefficient: maximum reflection at perpendicular, minimum at parallel
+        # Uses cosine relationship: Kr_directional = Kr_base * cos(angle_from_perpendicular)
+        directional_factor = math.cos(math.radians(angle_from_perpendicular))
+        
+        Kr_effective = Kr * distance_factor * directional_factor
+        
+        # Wave period affects reflection characteristics (longer periods = more reflection)
+        period_factor = min(1.2, max(0.8, wave_period / 12.0))
+        Kr_effective *= period_factor
         
         reflected_height = Kr_effective * wave_height
         modified_height = wave_height + (reflected_height * 0.5)
         
-        return {'wave_height': modified_height, 'structure_type': 'jetty'}
+        return {
+            'wave_height': modified_height, 
+            'structure_type': 'jetty',
+            'directional_factor': directional_factor,
+            'approach_angle': angle_from_perpendicular
+        }
 
-    def _apply_pier_physics(self, wave_height, pier_config, distance):
-        """NEW METHOD: Apply pier-specific wave transmission physics"""
+    def _apply_pier_physics(self, wave_height, wave_period, wave_direction, pier_config, distance, structure):
+        """Apply pier-specific wave transmission physics with directional effects"""
         Kt = float(pier_config.get('transmission_coefficient', 0.75))
         influence_zone = float(pier_config.get('influence_zone_base_m', 300))
         
         distance_factor = max(0.0, 1.0 - (distance / influence_zone))
-        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor)
+        
+        # For piers, transmission is less affected by angle (pile structures are more omnidirectional)
+        # But there's still some directional effect due to pile spacing and alignment
+        structure_bearing = structure.get('bearing_degrees', 0)
+        approach_angle = abs(structure_bearing - wave_direction)
+        if approach_angle > 180:
+            approach_angle = 360 - approach_angle
+        
+        angle_from_perpendicular = min(approach_angle, 180 - approach_angle)
+        
+        # Piers have less directional sensitivity than solid structures
+        # Use a weaker angular dependency: 0.8 + 0.2 * cos(angle)
+        directional_factor = 0.8 + 0.2 * math.cos(math.radians(angle_from_perpendicular))
+        
+        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor * directional_factor)
+        
+        # Longer periods transmit more easily through pile structures
+        period_factor = min(1.1, max(0.9, wave_period / 10.0))
+        Kt_effective *= period_factor
         
         modified_height = wave_height * Kt_effective
         
-        return {'wave_height': modified_height, 'structure_type': 'pier'}
+        return {
+            'wave_height': modified_height, 
+            'structure_type': 'pier',
+            'directional_factor': directional_factor,
+            'approach_angle': angle_from_perpendicular
+        }
 
-    def _apply_breakwater_physics(self, wave_height, breakwater_config, distance):
-        """NEW METHOD: Apply breakwater-specific wave dissipation physics"""
+    def _apply_breakwater_physics(self, wave_height, wave_period, wave_direction, breakwater_config, distance, structure):
+        """Apply breakwater-specific wave dissipation physics with directional effects"""
         Kr = float(breakwater_config.get('reflection_coefficient', 0.45))
         Kt = float(breakwater_config.get('transmission_coefficient', 0.35))
         influence_zone = float(breakwater_config.get('influence_zone_base_m', 2000))
         
         distance_factor = max(0.0, 1.0 - (distance / influence_zone))
-        Kr_effective = Kr * distance_factor
-        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor)
         
-        transmitted_height = wave_height * Kt_effective
+        # Breakwater directional effects: maximum effectiveness at perpendicular approach
+        structure_bearing = structure.get('bearing_degrees', 0)
+        structure_orientation = structure.get('orientation_degrees', structure_bearing)
+        
+        approach_angle = abs(structure_orientation - wave_direction)
+        if approach_angle > 180:
+            approach_angle = 360 - approach_angle
+        
+        angle_from_perpendicular = min(approach_angle, 180 - approach_angle)
+        
+        # Strong directional dependence for breakwaters
+        directional_factor = math.cos(math.radians(angle_from_perpendicular))
+        
+        Kr_effective = Kr * distance_factor * directional_factor
+        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor * directional_factor)
+        
+        # Breakwaters are more effective at dissipating longer period waves
+        period_dissipation = min(1.3, max(0.7, wave_period / 12.0))
+        dissipation_factor = 1.0 - (0.2 * period_dissipation * directional_factor)
+        
+        transmitted_height = wave_height * Kt_effective * dissipation_factor
         reflected_height = wave_height * Kr_effective * 0.4
         modified_height = transmitted_height + reflected_height
         
-        return {'wave_height': modified_height, 'structure_type': 'breakwater'}
+        return {
+            'wave_height': modified_height, 
+            'structure_type': 'breakwater',
+            'directional_factor': directional_factor,
+            'approach_angle': angle_from_perpendicular
+        }
 
-    def _apply_seawall_physics(self, wave_height, seawall_config, distance):
-        """NEW METHOD: Apply seawall-specific wave reflection physics"""
+    def _apply_seawall_physics(self, wave_height, wave_period, wave_direction, seawall_config, distance, structure):
+        """Apply seawall-specific wave reflection physics with directional effects"""
         Kr = float(seawall_config.get('reflection_coefficient', 0.90))
         influence_zone = float(seawall_config.get('influence_zone_base_m', 400))
         
         distance_factor = max(0.0, 1.0 - (distance / influence_zone))
-        Kr_effective = Kr * distance_factor
+        
+        # Seawalls typically run parallel to shore, so use bearing for wave approach angle
+        structure_bearing = structure.get('bearing_degrees', 0)
+        # Seawall orientation is typically perpendicular to bearing (parallel to shore)
+        seawall_orientation = (structure_bearing + 90) % 360
+        
+        approach_angle = abs(seawall_orientation - wave_direction)
+        if approach_angle > 180:
+            approach_angle = 360 - approach_angle
+        
+        angle_from_perpendicular = min(approach_angle, 180 - approach_angle)
+        
+        # Seawalls have very strong directional dependence (solid wall reflection)
+        directional_factor = math.cos(math.radians(angle_from_perpendicular))
+        
+        Kr_effective = Kr * distance_factor * directional_factor
+        
+        # Seawalls reflect longer periods more effectively
+        period_factor = min(1.3, max(0.8, wave_period / 10.0))
+        Kr_effective *= period_factor
         
         reflected_height = Kr_effective * wave_height
         modified_height = wave_height + (reflected_height * 0.7)
         
-        return {'wave_height': modified_height, 'structure_type': 'seawall'}
+        return {
+            'wave_height': modified_height, 
+            'structure_type': 'seawall',
+            'directional_factor': directional_factor,
+            'approach_angle': angle_from_perpendicular
+        }
 
-    def _apply_groin_physics(self, wave_height, groin_config, distance):
-        """NEW METHOD: Apply groin-specific mixed wave physics"""
+    def _apply_groin_physics(self, wave_height, wave_period, wave_direction, groin_config, distance, structure):
+        """Apply groin-specific mixed wave physics with directional effects"""
         Kr = float(groin_config.get('reflection_coefficient', 0.60))
         Kt = float(groin_config.get('transmission_coefficient', 0.25))
         influence_zone = float(groin_config.get('influence_zone_base_m', 400))
         
         distance_factor = max(0.0, 1.0 - (distance / influence_zone))
-        Kr_effective = Kr * distance_factor
-        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor)
+        
+        # Groins typically extend perpendicular to shore
+        structure_bearing = structure.get('bearing_degrees', 0)
+        groin_orientation = structure.get('orientation_degrees', structure_bearing)
+        
+        approach_angle = abs(groin_orientation - wave_direction)
+        if approach_angle > 180:
+            approach_angle = 360 - approach_angle
+        
+        angle_from_perpendicular = min(approach_angle, 180 - approach_angle)
+        
+        # Groins have moderate directional sensitivity
+        directional_factor = math.cos(math.radians(angle_from_perpendicular))
+        
+        Kr_effective = Kr * distance_factor * directional_factor
+        Kt_effective = 1.0 - ((1.0 - Kt) * distance_factor * directional_factor)
+        
+        # Groins have period-dependent mixed effects
+        period_factor = min(1.2, max(0.8, wave_period / 12.0))
+        Kr_effective *= period_factor
+        Kt_effective *= (2.0 - period_factor)
         
         transmitted_height = wave_height * Kt_effective
         reflected_height = wave_height * Kr_effective * 0.3
         modified_height = transmitted_height + reflected_height
         
-        return {'wave_height': modified_height, 'structure_type': 'groin'}
+        return {
+            'wave_height': modified_height, 
+            'structure_type': 'groin',
+            'directional_factor': directional_factor,
+            'approach_angle': angle_from_perpendicular
+        }
 
     def calculate_refraction_coefficient(self, wave_direction, beach_facing, current_depth, next_depth):
         """
