@@ -1425,11 +1425,14 @@ class SurfFishingPointManager:
             bathymetry_config = self.yaml_data.get('bathymetry_data', {})
             surf_validation = bathymetry_config.get('surf_break_validation', {})
             depth_range = surf_validation.get('optimal_depth_range', {})
+            depth_adjustment = surf_validation.get('depth_adjustment', {})
+            
             optimal_min = depth_range.get('min_meters', 1.5)
             optimal_max = depth_range.get('max_meters', 6.0)
+            shallow_limit = depth_adjustment.get('shallow_limit', 1.5)
         except:
             # Fallback values if YAML config fails
-            optimal_min, optimal_max = 1.5, 6.0
+            optimal_min, optimal_max, shallow_limit = 1.5, 6.0, 1.5
         
         if optimal_min <= depth <= optimal_max:
             return {
@@ -1439,7 +1442,7 @@ class SurfFishingPointManager:
                 'depth': depth,
                 'recommendation': None
             }
-        elif depth < config['shallow_limit']:
+        elif depth < shallow_limit:  # ✅ Use shallow_limit variable
             return {
                 'has_issue': True,
                 'icon': '⚠️',
