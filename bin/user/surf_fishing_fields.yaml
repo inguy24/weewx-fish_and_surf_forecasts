@@ -264,8 +264,6 @@ seafloor_physics:
 # STRUCTURE PHYSICS - All 5 structure types (Phase I research)
 # =============================================================================
 structure_physics:
-  description: "Coastal structure wave interaction coefficients from literature review"
-  
   jetty:
     reflection_coefficient: 0.80    # From Dean & Dalrymple research
     transmission_coefficient: 0.10
