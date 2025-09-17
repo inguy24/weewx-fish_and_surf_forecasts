@@ -439,10 +439,15 @@ class SurfFishingPointManager:
     def _add_new_spot_dialog(self, stdscr, spot_type: str) -> str:
         """Enhanced dialog for adding a new surf or fishing spot with all characteristics"""
         
+        # FOR SURF SPOTS: Use enhanced configuration system directly
+        if spot_type == 'surf_spots':
+            return self._add_enhanced_surf_spot(stdscr)
+        
+        # FOR FISHING SPOTS: Use existing basic curses dialog
         height, width = stdscr.getmaxyx()
         
-        # Create larger dialog window
-        dialog_height = 18 if spot_type == 'surf_spots' else 16
+        # Create dialog window for fishing spots
+        dialog_height = 16
         dialog_width = 70
         dialog_y = (height - dialog_height) // 2
         dialog_x = (width - dialog_width) // 2
@@ -450,25 +455,16 @@ class SurfFishingPointManager:
         dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
         dialog_win.box()
         
-        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
-        dialog_win.addstr(1, 2, f"Add New {type_name} Spot", curses.A_BOLD)
+        dialog_win.addstr(1, 2, "Add New Fishing Spot", curses.A_BOLD)
         
-        # Input fields with defaults
-        if spot_type == 'surf_spots':
-            fields = ['Name', 'Latitude', 'Longitude', 'Beach Angle (0-360)', 'Bottom Type', 'Exposure']
-            field_values = ['', '', '', '270', 'sand', 'exposed']
-        else:
-            fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
-            field_values = ['', '', '', 'shore', 'mixed_bag']
+        # Input fields for fishing spots
+        fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
+        field_values = ['', '', '', 'shore', 'mixed_bag']
         
         current_field = 0
         curses.curs_set(1)  # Show cursor for input
         
-        # Same options dictionaries as in edit dialog
-        bottom_type_options = {'1': 'sand', '2': 'reef', '3': 'point', '4': 'jetty', '5': 'mixed'}
-        bottom_type_display = {'sand': '1-Sand', 'reef': '2-Reef', 'point': '3-Point', 'jetty': '4-Jetty', 'mixed': '5-Mixed'}
-        exposure_options = {'1': 'exposed', '2': 'semi_protected', '3': 'protected'}
-        exposure_display = {'exposed': '1-Exposed', 'semi_protected': '2-Semi-protected', 'protected': '3-Protected'}
+        # Options for dropdown fields
         location_type_options = {'1': 'shore', '2': 'pier', '3': 'boat', '4': 'mixed'}
         location_type_display = {'shore': '1-Shore', 'pier': '2-Pier', 'boat': '3-Boat', 'mixed': '4-Mixed'}
         
@@ -480,169 +476,6 @@ class SurfFishingPointManager:
             for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
                 target_category_options[str(i)] = cat_key
                 display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
-                target_category_display[cat_key] = f"{i}-{display_name}"
-        
-        while True:
-            # Clear and redraw dialog (same logic as edit dialog)
-            for y in range(2, dialog_height - 1):
-                dialog_win.addstr(y, 1, " " * (dialog_width - 2))
-            
-            # Display fields (same logic as edit dialog)
-            for i, field in enumerate(fields):
-                y = 3 + i * 2
-                
-                dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
-                
-                # Handle display values for dropdown fields
-                field_display_value = field_values[i][:40]
-                if spot_type == 'surf_spots':
-                    if 'Bottom Type' in field:
-                        field_display_value = bottom_type_display.get(field_values[i], field_values[i])
-                    elif 'Exposure' in field:
-                        field_display_value = exposure_display.get(field_values[i], field_values[i])
-                else:
-                    if 'Location Type' in field:
-                        field_display_value = location_type_display.get(field_values[i], field_values[i])
-                    elif 'Target Category' in field:
-                        field_display_value = target_category_display.get(field_values[i], field_values[i])
-                
-                dialog_win.addstr(y, 20, " " * 45)
-                dialog_win.addstr(y, 20, field_display_value)
-                
-                if i == current_field:
-                    cursor_pos = min(len(field_display_value), 40)
-                    if 'Type' in field or 'Exposure' in field or 'Category' in field:
-                        dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
-                    else:
-                        dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
-            
-            # Instructions
-            instructions_y = dialog_height - 4
-            dialog_win.addstr(instructions_y, 2, " " * (dialog_width - 4))
-            current_field_name = fields[current_field]
-            if 'Type' in current_field_name or 'Exposure' in current_field_name or 'Category' in current_field_name:
-                dialog_win.addstr(instructions_y, 2, "1-5: Select option, Tab: Next field", curses.color_pair(5))
-            else:
-                dialog_win.addstr(instructions_y, 2, "Type to edit, Tab: Next field", curses.color_pair(5))
-            
-            dialog_win.addstr(dialog_height - 3, 2, "Enter: Save, Esc: Cancel")
-            dialog_win.refresh()
-            
-            key = dialog_win.getch()
-            
-            if key == 27:  # ESC - Cancel
-                curses.curs_set(0)
-                return 'continue'
-            elif key == ord('\t'):  # Tab - Next field
-                current_field = (current_field + 1) % len(fields)
-            elif key == ord('\n'):  # Enter - Save
-                # Validate and save
-                if self._validate_spot_input(field_values, spot_type):
-                    self._save_new_spot(field_values, spot_type)
-                    curses.curs_set(0)
-                    return 'action_added'
-                else:
-                    dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
-                    dialog_win.refresh()
-                    curses.napms(2000)
-            
-            # Handle field-specific input (same logic as edit dialog)
-            elif 'Bottom Type' in current_field_name and spot_type == 'surf_spots':
-                if chr(key) in bottom_type_options:
-                    field_values[current_field] = bottom_type_options[chr(key)]
-            elif 'Exposure' in current_field_name and spot_type == 'surf_spots':
-                if chr(key) in exposure_options:
-                    field_values[current_field] = exposure_options[chr(key)]
-            elif 'Location Type' in current_field_name and spot_type == 'fishing_spots':
-                if chr(key) in location_type_options:
-                    field_values[current_field] = location_type_options[chr(key)]
-            elif 'Target Category' in current_field_name and spot_type == 'fishing_spots':
-                if chr(key) in target_category_options:
-                    field_values[current_field] = target_category_options[chr(key)]
-            
-            # Handle text input for non-dropdown fields
-            elif not any(x in current_field_name for x in ['Type', 'Exposure', 'Category']):
-                if key == curses.KEY_BACKSPACE or key == 127:
-                    if field_values[current_field]:
-                        field_values[current_field] = field_values[current_field][:-1]
-                elif 32 <= key <= 126:  # Printable characters
-                    if len(field_values[current_field]) < 30:
-                        field_values[current_field] += chr(key)
-    
-    def _edit_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
-        """Enhanced dialog for editing existing spot with full surf characteristics"""
-        
-        spot_key, spot_config = spot_item
-        
-        height, width = stdscr.getmaxyx()
-        
-        # Create larger dialog window to accommodate all fields
-        dialog_height = 18 if spot_type == 'surf_spots' else 16
-        dialog_width = 70
-        dialog_y = (height - dialog_height) // 2
-        dialog_x = (width - dialog_width) // 2
-        
-        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
-        dialog_win.box()
-        
-        type_name = "Surf" if spot_type == 'surf_spots' else "Fishing"
-        dialog_win.addstr(1, 2, f"Edit {type_name} Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
-        
-        # Pre-populate with current values
-        field_values = [
-            spot_config.get('name', ''),
-            spot_config.get('latitude', ''),
-            spot_config.get('longitude', '')
-        ]
-        
-        if spot_type == 'surf_spots':
-            field_values.extend([
-                spot_config.get('beach_facing', ''),
-                spot_config.get('bottom_type', 'sand'),
-                spot_config.get('exposure', 'exposed')
-            ])
-            fields = ['Name', 'Latitude', 'Longitude', 'Beach Angle', 'Bottom Type', 'Exposure']
-        else:  # fishing_spots
-            field_values.extend([
-                spot_config.get('location_type', 'shore'),
-                spot_config.get('target_category', 'mixed_bag')
-            ])
-            fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
-        
-        current_field = 0
-        curses.curs_set(1)
-        
-        # Options for dropdown fields
-        bottom_type_options = {
-            '1': 'sand', '2': 'reef', '3': 'point', '4': 'jetty', '5': 'mixed'
-        }
-        bottom_type_display = {
-            'sand': '1-Sand', 'reef': '2-Reef', 'point': '3-Point', 'jetty': '4-Jetty', 'mixed': '5-Mixed'
-        }
-        
-        exposure_options = {
-            '1': 'exposed', '2': 'semi_protected', '3': 'protected'
-        }
-        exposure_display = {
-            'exposed': '1-Exposed', 'semi_protected': '2-Semi-protected', 'protected': '3-Protected'
-        }
-        
-        location_type_options = {
-            '1': 'shore', '2': 'pier', '3': 'boat', '4': 'mixed'
-        }
-        location_type_display = {
-            'shore': '1-Shore', 'pier': '2-Pier', 'boat': '3-Boat', 'mixed': '4-Mixed'
-        }
-        
-        # Get fish categories for target category field (if available)
-        target_category_options = {}
-        target_category_display = {}
-        if hasattr(self, 'yaml_data') and self.yaml_data and 'fish_categories' in self.yaml_data:
-            fish_categories = self.yaml_data['fish_categories']
-            for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
-                target_category_options[str(i)] = cat_key
-                # Truncate long display names to prevent overflow
-                display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
                 display_name = display_name[:20]  # Limit display name length
                 target_category_display[cat_key] = f"{i}-{display_name}"
         
@@ -650,9 +483,9 @@ class SurfFishingPointManager:
             # Clear and redraw dialog content
             dialog_win.clear()
             dialog_win.box()
-            dialog_win.addstr(1, 2, f"Edit {type_name} Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
+            dialog_win.addstr(1, 2, "Add New Fishing Spot", curses.A_BOLD)
             
-            # Display fields with enhanced formatting
+            # Display fields
             for i, field in enumerate(fields):
                 y = 3 + i * 2
                 
@@ -660,23 +493,17 @@ class SurfFishingPointManager:
                 
                 # Handle display values for dropdown fields
                 field_display_value = field_values[i][:40]
-                if spot_type == 'surf_spots':
-                    if 'Bottom Type' in field:
-                        field_display_value = bottom_type_display.get(field_values[i], field_values[i])
-                    elif 'Exposure' in field:
-                        field_display_value = exposure_display.get(field_values[i], field_values[i])
-                else:
-                    if 'Location Type' in field:
-                        field_display_value = location_type_display.get(field_values[i], field_values[i])
-                    elif 'Target Category' in field:
-                        field_display_value = target_category_display.get(field_values[i], field_values[i])
+                if 'Location Type' in field:
+                    field_display_value = location_type_display.get(field_values[i], field_values[i])
+                elif 'Target Category' in field:
+                    field_display_value = target_category_display.get(field_values[i], field_values[i])
                 
                 dialog_win.addstr(y, 20, " " * 45)
                 dialog_win.addstr(y, 20, field_display_value)
                 
                 if i == current_field:
                     cursor_pos = min(len(field_display_value), 40)
-                    if 'Type' in field or 'Exposure' in field or 'Category' in field:
+                    if 'Type' in field or 'Category' in field:
                         dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
                     else:
                         dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
@@ -687,7 +514,7 @@ class SurfFishingPointManager:
                 dialog_win.addstr(clear_y, 1, " " * (dialog_width - 2))
             
             current_field_name = fields[current_field]
-            if current_field_name in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
+            if current_field_name in ['Location Type', 'Target Category']:
                 dialog_win.addstr(instructions_y, 2, "1-5: Select option, Tab: Next field", curses.color_pair(5))
             else:
                 dialog_win.addstr(instructions_y, 2, "Type to edit, Tab: Next field", curses.color_pair(5))
@@ -704,13 +531,243 @@ class SurfFishingPointManager:
                 current_field = (current_field + 1) % len(fields)
             elif key == ord('\n'):  # Enter - Save
                 if self._validate_spot_input(field_values, spot_type):
-                    # Update spot with enhanced field handling
-                    if spot_type == 'surf_spots':
-                        enhanced_field_values = field_values[:6]  # All 6 fields
+                    self._save_new_spot(field_values, spot_type)
+                    curses.curs_set(0)
+                    return 'action_added'
+                else:
+                    dialog_win.addstr(dialog_height - 2, 2, "Invalid input - check coordinates!", curses.color_pair(4))
+                    dialog_win.refresh()
+                    curses.napms(2000)
+            
+            # Handle field-specific input
+            elif current_field_name == 'Location Type':
+                if chr(key) in location_type_options:
+                    field_values[current_field] = location_type_options[chr(key)]
+            elif current_field_name == 'Target Category':
+                if chr(key) in target_category_options:
+                    field_values[current_field] = target_category_options[chr(key)]
+            
+            # Handle text input for non-dropdown fields
+            elif current_field_name not in ['Location Type', 'Target Category']:
+                if key == curses.KEY_BACKSPACE or key == 127:
+                    if field_values[current_field]:
+                        field_values[current_field] = field_values[current_field][:-1]
+                elif 32 <= key <= 126:  # Printable characters
+                    if len(field_values[current_field]) < 30:
+                        field_values[current_field] += chr(key)
+
+    def _add_enhanced_surf_spot(self, stdscr) -> str:
+        """Add surf spot using enhanced configuration system with wizard/all-in-one modes"""
+        
+        try:
+            # Exit curses temporarily for enhanced configuration
+            curses.endwin()
+            
+            print(f"\n{self.CORE_ICONS['navigation']} Enhanced Surf Spot Configuration")
+            print("=" * 60)
+            
+            # Get basic spot info first
+            name = input("Surf spot name: ").strip()
+            if not name:
+                print(f"{self.CORE_ICONS['warning']} Name cannot be empty.")
+                return 'continue'
+            
+            # Get coordinates
+            lat_str = input("Latitude (-90 to 90): ").strip()
+            lon_str = input("Longitude (-180 to 180): ").strip()
+            
+            lat, lon = self._validate_coordinates(lat_str, lon_str)
+            if lat is None or lon is None:
+                print(f"{self.CORE_ICONS['warning']} Invalid coordinates.")
+                return 'continue'
+            
+            # Get beach angle
+            beach_str = input("Beach facing angle (0-360, default 270): ").strip()
+            if beach_str:
+                try:
+                    beach_angle = str(float(beach_str))
+                    if not (0 <= float(beach_angle) <= 360):
+                        print(f"{self.CORE_ICONS['warning']} Beach angle must be 0-360, using default 270.")
+                        beach_angle = '270'
+                except ValueError:
+                    print(f"{self.CORE_ICONS['warning']} Invalid beach angle, using default 270.")
+                    beach_angle = '270'
+            else:
+                beach_angle = '270'
+            
+            # Initialize enhanced configuration manager
+            config_manager = SurfSpotConfigurationManager(self.yaml_data, 'metric')
+            
+            print(f"\nConfiguring enhanced surf physics for: {name}")
+            
+            # Mode selection (wizard/all-in-one)
+            config_mode = config_manager.select_configuration_mode()
+            
+            # Configure based on selected mode
+            enhanced_config = config_manager.configure_surf_spot(config_mode)
+            
+            if enhanced_config:
+                # Create complete surf spot configuration
+                spot_config = {
+                    'name': name,
+                    'latitude': lat_str,
+                    'longitude': lon_str,
+                    'beach_facing': beach_angle,
+                    'bottom_type': enhanced_config.get('seafloor_composition', 'sand'),
+                    'exposure': 'exposed',  # Default
+                    'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
+                    'topographic_features': enhanced_config.get('topographic_features', []),
+                    'coastal_structures': enhanced_config.get('coastal_structures', []),
+                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
+                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config),
+                    'bathymetry_calculated': 'false'
+                }
+                
+                # Generate unique spot key
+                spot_key = f"surf_spot_{len(self.current_spots['surf_spots']) + 1}"
+                
+                # Add to current spots
+                self.current_spots['surf_spots'][spot_key] = spot_config
+                
+                # Save to weewx.conf
+                if self._save_current_spots_to_conf():
+                    print(f"\n{self.CORE_ICONS['status']} Enhanced surf spot '{name}' added successfully!")
+                    accuracy = enhanced_config.get('accuracy_improvement', 'baseline')
+                    print(f"Forecast accuracy improvement: {accuracy}")
+                    input("\nPress ENTER to continue...")
+                    return 'action_added'
+                else:
+                    print(f"\n{self.CORE_ICONS['warning']} Failed to save surf spot configuration.")
+                    input("Press ENTER to continue...")
+                    return 'continue'
+            else:
+                print(f"\n{self.CORE_ICONS['warning']} Enhanced configuration cancelled.")
+                input("Press ENTER to continue...")
+                return 'continue'
+                
+        except Exception as e:
+            print(f"\n{self.CORE_ICONS['warning']} Enhanced configuration error: {e}")
+            input("Press ENTER to continue...")
+            return 'continue'
+        
+        finally:
+            # Restart curses
+            stdscr = curses.initscr()
+            curses.noecho()
+            curses.cbreak()
+            stdscr.keypad(True)
+            if curses.has_colors():
+                curses.start_color()
+                curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+                curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLUE)
+                curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+                curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
+                curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    
+    def _edit_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
+        """Enhanced dialog for editing existing spot with full surf characteristics"""
+        
+        spot_key, spot_config = spot_item
+        
+        # FOR SURF SPOTS: Use enhanced configuration system directly
+        if spot_type == 'surf_spots':
+            return self._edit_enhanced_surf_spot(stdscr, spot_key, spot_config)
+        
+        # FOR FISHING SPOTS: Use existing basic curses dialog
+        height, width = stdscr.getmaxyx()
+        
+        # Create larger dialog window to accommodate all fields
+        dialog_height = 16
+        dialog_width = 70
+        dialog_y = (height - dialog_height) // 2
+        dialog_x = (width - dialog_width) // 2
+        
+        dialog_win = curses.newwin(dialog_height, dialog_width, dialog_y, dialog_x)
+        dialog_win.box()
+        
+        dialog_win.addstr(1, 2, f"Edit Fishing Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
+        
+        # Pre-populate with current values
+        field_values = [
+            spot_config.get('name', ''),
+            spot_config.get('latitude', ''),
+            spot_config.get('longitude', ''),
+            spot_config.get('location_type', 'shore'),
+            spot_config.get('target_category', 'mixed_bag')
+        ]
+        fields = ['Name', 'Latitude', 'Longitude', 'Location Type', 'Target Category']
+        
+        current_field = 0
+        curses.curs_set(1)
+        
+        # Options for dropdown fields
+        location_type_options = {'1': 'shore', '2': 'pier', '3': 'boat', '4': 'mixed'}
+        location_type_display = {'shore': '1-Shore', 'pier': '2-Pier', 'boat': '3-Boat', 'mixed': '4-Mixed'}
+        
+        # Get fish categories for target category field
+        target_category_options = {}
+        target_category_display = {}
+        if hasattr(self, 'yaml_data') and self.yaml_data and 'fish_categories' in self.yaml_data:
+            fish_categories = self.yaml_data['fish_categories']
+            for i, (cat_key, cat_data) in enumerate(fish_categories.items(), 1):
+                target_category_options[str(i)] = cat_key
+                display_name = cat_data.get('display_name', cat_key.replace('_', ' ').title())
+                display_name = display_name[:20]  # Limit display name length
+                target_category_display[cat_key] = f"{i}-{display_name}"
+        
+        while True:
+            # Clear and redraw dialog content
+            dialog_win.clear()
+            dialog_win.box()
+            dialog_win.addstr(1, 2, f"Edit Fishing Spot: {spot_config.get('name', spot_key)}", curses.A_BOLD)
+            
+            # Display fields with enhanced formatting
+            for i, field in enumerate(fields):
+                y = 3 + i * 2
+                
+                dialog_win.addstr(y, 2, f"{field}:", curses.A_BOLD if i == current_field else curses.A_NORMAL)
+                
+                # Handle display values for dropdown fields
+                field_display_value = field_values[i][:40]
+                if 'Location Type' in field:
+                    field_display_value = location_type_display.get(field_values[i], field_values[i])
+                elif 'Target Category' in field:
+                    field_display_value = target_category_display.get(field_values[i], field_values[i])
+                
+                dialog_win.addstr(y, 20, " " * 45)
+                dialog_win.addstr(y, 20, field_display_value)
+                
+                if i == current_field:
+                    cursor_pos = min(len(field_display_value), 40)
+                    if 'Type' in field or 'Category' in field:
+                        dialog_win.addstr(y, 20 + cursor_pos, " <-", curses.A_REVERSE)
                     else:
-                        enhanced_field_values = field_values[:5]  # All 5 fields
-                    
-                    self._update_existing_spot(spot_key, enhanced_field_values, spot_type)
+                        dialog_win.addch(y, 20 + cursor_pos, curses.ACS_BLOCK)
+            
+            # Instructions based on current field type
+            instructions_y = dialog_height - 4
+            for clear_y in range(instructions_y, dialog_height - 1):
+                dialog_win.addstr(clear_y, 1, " " * (dialog_width - 2))
+            
+            current_field_name = fields[current_field]
+            if current_field_name in ['Location Type', 'Target Category']:
+                dialog_win.addstr(instructions_y, 2, "1-5: Select option, Tab: Next field", curses.color_pair(5))
+            else:
+                dialog_win.addstr(instructions_y, 2, "Type to edit, Tab: Next field", curses.color_pair(5))
+            
+            dialog_win.addstr(dialog_height - 3, 2, "Enter: Save, Esc: Cancel", curses.color_pair(5))
+            dialog_win.refresh()
+            
+            key = dialog_win.getch()
+            
+            if key == 27:  # ESC - Cancel
+                curses.curs_set(0)
+                return 'continue'
+            elif key == ord('\t'):  # Tab - Next field
+                current_field = (current_field + 1) % len(fields)
+            elif key == ord('\n'):  # Enter - Save
+                if self._validate_spot_input(field_values, spot_type):
+                    self._update_existing_spot(spot_key, field_values, spot_type)
                     curses.curs_set(0)
                     return 'action_updated'
                 else:
@@ -718,28 +775,236 @@ class SurfFishingPointManager:
                     dialog_win.refresh()
                     curses.napms(2000)
             
-            # Handle input based on field type
-            elif current_field_name == 'Bottom Type' and spot_type == 'surf_spots':
-                if chr(key) in bottom_type_options:
-                    field_values[current_field] = bottom_type_options[chr(key)]
-            elif current_field_name == 'Exposure' and spot_type == 'surf_spots':
-                if chr(key) in exposure_options:
-                    field_values[current_field] = exposure_options[chr(key)]
-            elif current_field_name == 'Location Type' and spot_type == 'fishing_spots':
+            # Handle field-specific input
+            elif current_field_name == 'Location Type':
                 if chr(key) in location_type_options:
                     field_values[current_field] = location_type_options[chr(key)]
-            elif current_field_name == 'Target Category' and spot_type == 'fishing_spots':
+            elif current_field_name == 'Target Category':
                 if chr(key) in target_category_options:
                     field_values[current_field] = target_category_options[chr(key)]
             
             # Handle text input for non-dropdown fields
-            elif current_field_name not in ['Bottom Type', 'Exposure', 'Location Type', 'Target Category']:
+            elif current_field_name not in ['Location Type', 'Target Category']:
                 if key == curses.KEY_BACKSPACE or key == 127:
                     if field_values[current_field]:
                         field_values[current_field] = field_values[current_field][:-1]
                 elif 32 <= key <= 126:  # Printable characters
                     if len(field_values[current_field]) < 30:
                         field_values[current_field] += chr(key)
+
+    def _edit_enhanced_surf_spot(self, stdscr, spot_key: str, spot_config: Dict) -> str:
+        """Edit surf spot using enhanced configuration system with wizard/all-in-one modes"""
+        
+        try:
+            # Exit curses temporarily for enhanced configuration
+            curses.endwin()
+            
+            print(f"\n{self.CORE_ICONS['navigation']} Enhanced Surf Spot Configuration")
+            print("=" * 60)
+            print(f"Editing: {spot_config.get('name', spot_key)}")
+            
+            # Check if spot has enhanced configuration data
+            has_enhanced_config = (
+                spot_config.get('seafloor_composition') or 
+                spot_config.get('topographic_features') or 
+                spot_config.get('coastal_structures')
+            )
+            
+            if not has_enhanced_config:
+                print(f"\n{self.CORE_ICONS['warning']} This surf spot was created with basic configuration.")
+                print("It's missing enhanced physics data needed for accurate forecasting.")
+                print("\nOptions:")
+                print("1. Upgrade to enhanced configuration (recommended)")
+                print("2. Edit basic properties only")
+                print("3. Cancel")
+                
+                choice = input("\nSelect option (1-3): ").strip()
+                
+                if choice == '2':
+                    return self._edit_basic_surf_properties(spot_key, spot_config)
+                elif choice == '3':
+                    return 'continue'
+                # If choice == '1' or anything else, proceed with enhanced configuration
+            
+            # Get current basic info (allow editing)
+            print(f"\nCurrent surf spot information:")
+            print(f"Name: {spot_config.get('name', '')}")
+            print(f"Latitude: {spot_config.get('latitude', '')}")  
+            print(f"Longitude: {spot_config.get('longitude', '')}")
+            print(f"Beach Angle: {spot_config.get('beach_facing', '270')}")
+            
+            print(f"\nEdit basic information? (y/n, default n): ", end='')
+            edit_basic = input().strip().lower()
+            
+            # Use existing values or get new ones
+            if edit_basic == 'y':
+                name = input(f"Name [{spot_config.get('name', '')}]: ").strip()
+                if not name:
+                    name = spot_config.get('name', '')
+                
+                lat_str = input(f"Latitude [{spot_config.get('latitude', '')}]: ").strip()
+                if not lat_str:
+                    lat_str = spot_config.get('latitude', '')
+                
+                lon_str = input(f"Longitude [{spot_config.get('longitude', '')}]: ").strip()
+                if not lon_str:
+                    lon_str = spot_config.get('longitude', '')
+                
+                # Validate coordinates if changed
+                if lat_str != spot_config.get('latitude', '') or lon_str != spot_config.get('longitude', ''):
+                    lat, lon = self._validate_coordinates(lat_str, lon_str)
+                    if lat is None or lon is None:
+                        print(f"{self.CORE_ICONS['warning']} Invalid coordinates, keeping original.")
+                        lat_str = spot_config.get('latitude', '')
+                        lon_str = spot_config.get('longitude', '')
+                
+                beach_str = input(f"Beach Angle [{spot_config.get('beach_facing', '270')}]: ").strip()
+                if beach_str:
+                    try:
+                        beach_angle = str(float(beach_str))
+                        if not (0 <= float(beach_angle) <= 360):
+                            print(f"{self.CORE_ICONS['warning']} Invalid beach angle, keeping original.")
+                            beach_angle = spot_config.get('beach_facing', '270')
+                    except ValueError:
+                        print(f"{self.CORE_ICONS['warning']} Invalid beach angle, keeping original.")
+                        beach_angle = spot_config.get('beach_facing', '270')
+                else:
+                    beach_angle = spot_config.get('beach_facing', '270')
+            else:
+                # Keep existing values
+                name = spot_config.get('name', '')
+                lat_str = spot_config.get('latitude', '')
+                lon_str = spot_config.get('longitude', '')
+                beach_angle = spot_config.get('beach_facing', '270')
+            
+            # Initialize enhanced configuration manager
+            config_manager = SurfSpotConfigurationManager(self.yaml_data, 'metric')
+            
+            print(f"\nConfiguring enhanced surf physics...")
+            
+            # Mode selection (wizard/all-in-one)
+            config_mode = config_manager.select_configuration_mode()
+            
+            # Configure based on selected mode
+            enhanced_config = config_manager.configure_surf_spot(config_mode)
+            
+            if enhanced_config:
+                # Create complete updated surf spot configuration
+                updated_config = spot_config.copy()
+                updated_config.update({
+                    'name': name,
+                    'latitude': lat_str,
+                    'longitude': lon_str,
+                    'beach_facing': beach_angle,
+                    'bottom_type': enhanced_config.get('seafloor_composition', spot_config.get('bottom_type', 'sand')),
+                    'exposure': spot_config.get('exposure', 'exposed'),  # Keep existing or default
+                    'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
+                    'topographic_features': enhanced_config.get('topographic_features', []),
+                    'coastal_structures': enhanced_config.get('coastal_structures', []),
+                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
+                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config)
+                })
+                
+                # Update the spot
+                self.current_spots['surf_spots'][spot_key] = updated_config
+                
+                # Save to weewx.conf
+                if self._save_current_spots_to_conf():
+                    print(f"\n{self.CORE_ICONS['status']} Enhanced surf spot '{name}' updated successfully!")
+                    accuracy = enhanced_config.get('accuracy_improvement', 'baseline')
+                    print(f"Forecast accuracy improvement: {accuracy}")
+                    input("\nPress ENTER to continue...")
+                    return 'action_updated'
+                else:
+                    print(f"\n{self.CORE_ICONS['warning']} Failed to save surf spot configuration.")
+                    input("Press ENTER to continue...")
+                    return 'continue'
+            else:
+                print(f"\n{self.CORE_ICONS['warning']} Enhanced configuration cancelled.")
+                input("Press ENTER to continue...")
+                return 'continue'
+                
+        except Exception as e:
+            print(f"\n{self.CORE_ICONS['warning']} Enhanced configuration error: {e}")
+            input("Press ENTER to continue...")
+            return 'continue'
+        
+        finally:
+            # Restart curses
+            stdscr = curses.initscr()
+            curses.noecho()
+            curses.cbreak()
+            stdscr.keypad(True)
+            if curses.has_colors():
+                curses.start_color()
+                curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+                curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLUE)
+                curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+                curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
+                curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
+
+    def _edit_basic_surf_properties(self, spot_key: str, spot_config: Dict) -> str:
+        """Edit basic surf spot properties only (fallback option)"""
+        
+        print(f"\n{self.CORE_ICONS['selection']} Basic Surf Spot Edit")
+        print("(Press Enter to keep current value)")
+        
+        # Get updated basic values
+        name = input(f"Name [{spot_config.get('name', '')}]: ").strip()
+        if not name:
+            name = spot_config.get('name', '')
+        
+        lat_str = input(f"Latitude [{spot_config.get('latitude', '')}]: ").strip()
+        if not lat_str:
+            lat_str = spot_config.get('latitude', '')
+        
+        lon_str = input(f"Longitude [{spot_config.get('longitude', '')}]: ").strip()
+        if not lon_str:
+            lon_str = spot_config.get('longitude', '')
+        
+        # Validate coordinates if changed
+        if lat_str != spot_config.get('latitude', '') or lon_str != spot_config.get('longitude', ''):
+            lat, lon = self._validate_coordinates(lat_str, lon_str)
+            if lat is None or lon is None:
+                print(f"{self.CORE_ICONS['warning']} Invalid coordinates, keeping original.")
+                lat_str = spot_config.get('latitude', '')
+                lon_str = spot_config.get('longitude', '')
+        
+        beach_str = input(f"Beach Angle [{spot_config.get('beach_facing', '270')}]: ").strip()
+        if beach_str:
+            try:
+                beach_angle = str(float(beach_str))
+                if not (0 <= float(beach_angle) <= 360):
+                    print(f"{self.CORE_ICONS['warning']} Invalid beach angle, keeping original.")
+                    beach_angle = spot_config.get('beach_facing', '270')
+            except ValueError:
+                print(f"{self.CORE_ICONS['warning']} Invalid beach angle, keeping original.")
+                beach_angle = spot_config.get('beach_facing', '270')
+        else:
+            beach_angle = spot_config.get('beach_facing', '270')
+        
+        # Update basic properties only
+        updated_config = spot_config.copy()
+        updated_config.update({
+            'name': name,
+            'latitude': lat_str,
+            'longitude': lon_str,
+            'beach_facing': beach_angle
+        })
+        
+        # Update the spot
+        self.current_spots['surf_spots'][spot_key] = updated_config
+        
+        # Save to weewx.conf
+        if self._save_current_spots_to_conf():
+            print(f"\n{self.CORE_ICONS['status']} Basic surf spot properties updated.")
+            print(f"{self.CORE_ICONS['warning']} Consider upgrading to enhanced configuration for better forecasts.")
+            input("\nPress ENTER to continue...")
+            return 'action_updated'
+        else:
+            print(f"\n{self.CORE_ICONS['warning']} Failed to save surf spot configuration.")
+            input("Press ENTER to continue...")
+            return 'continue'
     
     def _delete_spot_dialog(self, stdscr, spot_type: str, spot_item: Tuple[str, Dict]) -> str:
         """Confirmation dialog for deleting spot"""
