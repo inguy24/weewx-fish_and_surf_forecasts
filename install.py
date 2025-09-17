@@ -3105,13 +3105,19 @@ class SurfSpotConfigurationManager:
             print("-" * 40)
             self._display_configuration_summary(config)
             
+            # Validation and confirmation
             if self._confirm_configuration():
+                print(f"  {CORE_ICONS['status']} Wizard configuration completed!")
                 return config
             else:
+                # Handle editing/restart options
                 return self._handle_configuration_edit(config)
                 
         except KeyboardInterrupt:
             print(f"\n\n{CORE_ICONS['warning']} Configuration cancelled by user")
+            return None
+        except Exception as e:
+            print(f"\n  {CORE_ICONS['warning']} Configuration error: {e}")
             return None
 
     def _configure_all_in_one_mode(self):
