@@ -4017,7 +4017,8 @@ class SurfSpotConfigurationManager:
         """
         structures = []
         structure_types = list(self.structure_physics.get('structure_types', {}).keys())
-        max_structures = self.structure_interactions.get('validation_limits', {}).get('max_structures_per_spot', 4)
+        validation_limits = self.structure_interactions.get('validation_limits', {})
+        max_structures = validation_limits.get('max_structures_per_spot', 4) if isinstance(validation_limits, dict) else 4
         
         print(f"\nCoastal structures configuration:")
         print("Structures affect waves within their influence zones")
