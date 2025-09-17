@@ -3661,7 +3661,7 @@ class SurfSpotConfigurationManager:
         """
         Configure topographic features with user tests from YAML
         """
-        topo_features = self.topographic_features
+        topo_features = self.topographic_features.get('feature_types', {})
         
         if not topo_features:
             return []
@@ -4231,7 +4231,7 @@ class SurfSpotConfigurationManager:
         """
         Curses interface for topographic feature selection
         """
-        topo_features = self.topographic_features
+        topo_features = self.topographic_features.get('feature_types', {})
         feature_types = list(topo_features.keys())
         selected_features = []
         current_selection = 0
