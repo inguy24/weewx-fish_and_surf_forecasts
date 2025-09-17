@@ -3246,10 +3246,6 @@ class SurfSpotConfigurationManager:
         
         return int(base_zone * (0.5 + size_factor))
 
-# =============================================================================
-# EDUCATIONAL CONTENT METHODS
-# =============================================================================
-
     def _display_wizard_introduction(self):
         """
         Display educational introduction for wizard mode
@@ -3297,10 +3293,6 @@ class SurfSpotConfigurationManager:
         print("• Seawalls: High reflection, standing wave patterns")
         print("• Groins: Sand retention, localized wave effects")
         print("\nStructures typically affect surf within 1 mile (1.5km)")
-
-# =============================================================================
-# CONFIGURATION METHODS - Data-Driven from YAML
-# =============================================================================
 
     def _configure_seafloor_composition(self):
         """
@@ -3577,10 +3569,6 @@ class SurfSpotConfigurationManager:
                     print(f"  {CORE_ICONS['warning']} Please enter 1, 2, or 3")
             except ValueError:
                 print(f"  {CORE_ICONS['warning']} Please enter a number")
-
-# =============================================================================
-# CURSES INTERFACE METHODS FOR ALL-IN-ONE MODE
-# =============================================================================
 
     def _select_seafloor_curses(self, stdscr):
         """
@@ -4070,7 +4058,79 @@ class SurfSpotConfigurationManager:
                 return structures
             elif key == 27:  # ESC
                 return []          
-               
+
+    def _configure_all_in_one_mode(self):
+        """
+        All-in-one mode: Advanced configuration in single interface
+        For now, falls back to sequential configuration (future enhancement: curses UI)
+        """
+        print(f"\n{CORE_ICONS['navigation']} All-in-One Mode Configuration")
+        print("Advanced configuration mode - all options in sequence")
+        print("(Future enhancement will provide interactive curses interface)")
+        
+        config = {'configuration_mode': 'all_in_one'}
+        
+        # Sequential configuration for now
+        config['seafloor_composition'] = self._configure_seafloor_composition()
+        config['topographic_features'] = self._configure_topographic_features()
+        config['coastal_structures'] = self._configure_coastal_structures()
+        
+        # Summary and validation
+        if self._display_configuration_summary(config):
+            return config
+        else:
+            print(f"  {CORE_ICONS['warning']} Configuration cancelled")
+            return None
+
+    def _display_wizard_introduction(self):
+        """
+        Educational introduction for wizard mode
+        """
+        print(f"\n{CORE_ICONS['navigation']} Enhanced Surf Spot Configuration Wizard")
+        print("=" * 50)
+        print("\nThis wizard will guide you through configuring:")
+        print("• Seafloor composition (affects wave breaking)")
+        print("• Topographic features (natural wave focusing/sheltering)")
+        print("• Coastal structures (man-made wave modifications)")
+        print("\nEnhanced configuration typically improves forecast")
+        print("accuracy by 15-30% at structure-influenced surf spots.")
+        
+        input(f"\nPress ENTER to begin configuration...")
+
+    def _display_seafloor_education(self):
+        """
+        Educational content for seafloor composition
+        """
+        print("\nSeafloor composition affects how waves break and lose energy:")
+        print("• Sand: Creates spilling waves, gradual energy loss")
+        print("• Rock: Creates plunging waves, rapid energy dissipation")
+        print("• Coral Reef: Enhanced wave breaking, powerful conditions")
+        print("• Mud: Weak wave breaking, energy absorption")
+        print("• Mixed: Combination effects")
+
+    def _display_topographic_education(self):
+        """
+        Educational content for topographic features
+        """
+        print("\nTopographic features are natural coastal formations that affect waves:")
+        print("• Point Break: Waves wrap around headlands, focus energy")
+        print("• Bay Break: Sheltered areas with reduced wave height")
+        print("• Straight Beach: Minimal natural wave modification")
+        print("• Headland: Rocky outcrops that block/redirect waves")
+
+    def _display_structure_education(self):
+        """
+        Educational content for coastal structures
+        """
+        print("\nCoastal structures can significantly modify surf conditions:")
+        print("• Jetties: Reflect waves, create different conditions on each side")
+        print("• Piers: Allow most wave energy through, minimal reflection")
+        print("• Breakwaters: Designed to absorb/dissipate wave energy")
+        print("• Seawalls: High reflection, standing wave patterns")
+        print("• Groins: Sand retention, localized wave effects")
+        print("\nStructures typically affect surf within 1 mile (1.5km)")
+        
+                
 class PhaseIAnalyzer:
     """
     Analyze existing Phase I station configuration from CONF metadata
