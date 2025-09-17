@@ -3317,6 +3317,11 @@ class SurfSpotConfigurationManager:
         self.topographic_features = yaml_data.get('topographic_features', {})
         self.structure_interactions = yaml_data.get('structure_interactions', {})
         
+        print(f"DEBUG: yaml_data type = {type(yaml_data)}")
+        print(f"DEBUG: yaml_data keys = {list(yaml_data.keys()) if isinstance(yaml_data, dict) else 'Not a dict'}")
+        print(f"DEBUG: structure_physics type = {type(self.structure_physics)}")
+        print(f"DEBUG: structure_physics value = {self.structure_physics}")
+        
     def select_configuration_mode(self):
         """
         Present user with configuration mode selection per Phase II design
