@@ -1098,7 +1098,7 @@ class SurfFishingPointManager:
         return True
     
     def _text_edit_spot(self, spot_type: str, spots: Dict) -> bool:
-        """Text interface for editing existing spot with full surf characteristics"""
+        """Text interface for editing existing spot with enhanced surf characteristics"""
         
         spot_list = list(spots.items())
         
@@ -1113,6 +1113,24 @@ class SurfFishingPointManager:
                 spot_key, spot_config = spot_list[choice]
                 
                 print(f"\nEditing: {spot_config.get('name', spot_key)}")
+                
+                # FOR SURF SPOTS: Offer enhanced configuration options
+                if spot_type == 'surf_spots':
+                    print("\nConfiguration Options:")
+                    print("1. Basic Edit - Name, coordinates, bottom type, exposure")
+                    print("2. Enhanced Configuration - Full wizard/all-in-one setup")
+                    print("3. Cancel")
+                    
+                    config_choice = input("Select option (1-3): ").strip()
+                    
+                    if config_choice == '2':
+                        # Use enhanced configuration system
+                        return self._enhanced_surf_spot_edit(spot_key, spot_config)
+                    elif config_choice == '3':
+                        return False
+                    # If choice == '1', fall through to basic edit below
+                
+                # BASIC EDIT for fishing spots or if user chose basic edit for surf spots
                 print("(Press Enter to keep current value)")
                 
                 # Get new values - Name
@@ -1135,7 +1153,15 @@ class SurfFishingPointManager:
                     print(f"{self.CORE_ICONS['warning']} Invalid coordinates.")
                     return False
                 
-                # Surf-specific characteristics
+                # Update the spot configuration
+                updated_config = spot_config.copy()
+                updated_config.update({
+                    'name': name,
+                    'latitude': lat_str,
+                    'longitude': lon_str
+                })
+                
+                # Surf-specific basic characteristics
                 if spot_type == 'surf_spots':
                     # Beach angle
                     beach_angle = spot_config.get('beach_facing', '270')
@@ -1153,114 +1179,147 @@ class SurfFishingPointManager:
                     # Bottom type selection
                     current_bottom = spot_config.get('bottom_type', 'sand')
                     print(f"\nBottom type (currently: {current_bottom}):")
-                    print("  1. Sand (Beach break)")
-                    print("  2. Reef (Coral/rock reef)")
-                    print("  3. Point break (Rocky point)")
-                    print("  4. Jetty/Pier (Man-made structure)")
-                    print("  5. Mixed")
-                    print("  [Enter] Keep current")
+                    print("  1. sand")
+                    print("  2. reef") 
+                    print("  3. point")
+                    print("  4. jetty")
+                    print("  5. mixed")
                     
-                    bottom_choice = input("Select bottom type (1-5): ").strip()
-                    if bottom_choice:
-                        bottom_type = {
-                            "1": "sand", 
-                            "2": "reef", 
-                            "3": "point", 
-                            "4": "jetty", 
-                            "5": "mixed"
-                        }.get(bottom_choice)
-                        if bottom_type:
-                            current_bottom = bottom_type
-                        else:
-                            print(f"{self.CORE_ICONS['warning']} Invalid choice, keeping current bottom type.")
+                    bottom_choice = input("Select bottom type (1-5, Enter to keep current): ").strip()
+                    bottom_types = ['sand', 'reef', 'point', 'jetty', 'mixed']
+                    if bottom_choice in ['1', '2', '3', '4', '5']:
+                        bottom_type = bottom_types[int(bottom_choice) - 1]
+                    else:
+                        bottom_type = current_bottom
                     
                     # Exposure selection
                     current_exposure = spot_config.get('exposure', 'exposed')
-                    print(f"\nExposure to ocean swell (currently: {current_exposure}):")
-                    print("  1. Fully exposed (open ocean)")
-                    print("  2. Semi-protected (bay/cove)")
-                    print("  3. Protected (harbor/inlet)")
-                    print("  [Enter] Keep current")
+                    print(f"\nExposure (currently: {current_exposure}):")
+                    print("  1. exposed")
+                    print("  2. semi_protected")
+                    print("  3. protected")
                     
-                    exposure_choice = input("Select exposure (1-3): ").strip()
-                    if exposure_choice:
-                        exposure_type = {
-                            "1": "exposed", 
-                            "2": "semi_protected", 
-                            "3": "protected"
-                        }.get(exposure_choice)
-                        if exposure_type:
-                            current_exposure = exposure_type
-                        else:
-                            print(f"{self.CORE_ICONS['warning']} Invalid choice, keeping current exposure.")
+                    exposure_choice = input("Select exposure (1-3, Enter to keep current): ").strip()
+                    exposures = ['exposed', 'semi_protected', 'protected']
+                    if exposure_choice in ['1', '2', '3']:
+                        exposure = exposures[int(exposure_choice) - 1]
+                    else:
+                        exposure = current_exposure
                     
-                    # Update spot with all surf characteristics
-                    field_values = [name, lat_str, lon_str, beach_angle, current_bottom, current_exposure]
-                    
-                else:  # fishing_spots
-                    # For fishing spots, get target category if available
-                    current_target = spot_config.get('target_category', 'mixed_bag')
-                    current_location = spot_config.get('location_type', 'shore')
-                    
-                    # Location type selection
-                    print(f"\nFishing location type (currently: {current_location}):")
-                    print("  1. Shore/Beach (fishing from land)")
-                    print("  2. Pier/Jetty (fishing from structure)")
-                    print("  3. Boat (fishing from vessel)")
-                    print("  4. Mixed (multiple methods)")
-                    print("  [Enter] Keep current")
-                    
-                    location_choice = input("Select location type (1-4): ").strip()
-                    if location_choice:
-                        location_type = {
-                            "1": "shore", 
-                            "2": "pier", 
-                            "3": "boat", 
-                            "4": "mixed"
-                        }.get(location_choice)
-                        if location_type:
-                            current_location = location_type
-                        else:
-                            print(f"{self.CORE_ICONS['warning']} Invalid choice, keeping current location type.")
-                    
-                    # Target species category selection (if fish_categories available)
-                    if hasattr(self, 'yaml_data') and self.yaml_data and 'fish_categories' in self.yaml_data:
-                        fish_categories = self.yaml_data['fish_categories']
-                        print(f"\nPrimary target fish category (currently: {current_target}):")
-                        category_keys = list(fish_categories.keys())
-                        for i, (category_key, category_data) in enumerate(fish_categories.items(), 1):
-                            display_name = category_data.get('display_name', category_key.replace('_', ' ').title())
-                            species_list = category_data.get('species', [])
-                            if isinstance(species_list, list):
-                                species_str = ', '.join(species_list[:3]) + ('...' if len(species_list) > 3 else '')
-                            else:
-                                species_str = str(species_list)
-                            print(f"    {i}. {display_name} ({species_str})")
-                        print("  [Enter] Keep current")
-                        
-                        category_choice = input("Select fish category: ").strip()
-                        if category_choice:
-                            try:
-                                choice_idx = int(category_choice) - 1
-                                if 0 <= choice_idx < len(category_keys):
-                                    current_target = category_keys[choice_idx]
-                                else:
-                                    print(f"{self.CORE_ICONS['warning']} Invalid choice, keeping current target category.")
-                            except ValueError:
-                                print(f"{self.CORE_ICONS['warning']} Invalid input, keeping current target category.")
-                    
-                    # Update spot with all fishing characteristics
-                    field_values = [name, lat_str, lon_str, current_location, current_target]
+                    updated_config.update({
+                        'beach_facing': beach_angle,
+                        'bottom_type': bottom_type,
+                        'exposure': exposure
+                    })
                 
-                # Update the spot using enhanced method
-                self._update_existing_spot_enhanced(spot_key, field_values, spot_type)
-                print(f"{self.CORE_ICONS['status']} Updated {name} successfully.")
-                return True
+                # Fishing-specific characteristics
+                else:  # fishing_spots
+                    # Location type
+                    current_location = spot_config.get('location_type', 'shore')
+                    print(f"\nLocation type (currently: {current_location}):")
+                    print("  1. shore")
+                    print("  2. pier")
+                    print("  3. boat")
+                    print("  4. kayak")
+                    
+                    location_choice = input("Select location type (1-4, Enter to keep current): ").strip()
+                    location_types = ['shore', 'pier', 'boat', 'kayak']
+                    if location_choice in ['1', '2', '3', '4']:
+                        location_type = location_types[int(location_choice) - 1]
+                    else:
+                        location_type = current_location
+                    
+                    # Target category
+                    current_target = spot_config.get('target_category', 'general')
+                    print(f"\nTarget category (currently: {current_target}):")
+                    print("  1. general")
+                    print("  2. gamefish")
+                    print("  3. bottom_fish")
+                    print("  4. pelagic")
+                    
+                    target_choice = input("Select target category (1-4, Enter to keep current): ").strip()
+                    target_categories = ['general', 'gamefish', 'bottom_fish', 'pelagic']
+                    if target_choice in ['1', '2', '3', '4']:
+                        target_category = target_categories[int(target_choice) - 1]
+                    else:
+                        target_category = current_target
+                    
+                    updated_config.update({
+                        'location_type': location_type,
+                        'target_category': target_category
+                    })
+                
+                # Update the spots dictionary
+                self.current_spots[spot_type][spot_key] = updated_config
+                
+                # Save to weewx.conf
+                if self._save_current_spots_to_conf():
+                    print(f"{self.CORE_ICONS['status']} Updated {name} successfully.")
+                    return True
+                else:
+                    print(f"{self.CORE_ICONS['warning']} Failed to save changes.")
+                    return False
             else:
                 print(f"{self.CORE_ICONS['warning']} Invalid spot number.")
                 return False
         except ValueError:
             print(f"{self.CORE_ICONS['warning']} Invalid input.")
+            return False
+
+    def _enhanced_surf_spot_edit(self, spot_key: str, spot_config: Dict) -> bool:
+        """Enhanced configuration for surf spots using SurfSpotConfigurationManager"""
+        
+        print(f"\n{self.CORE_ICONS['navigation']} Enhanced Surf Spot Configuration")
+        print(f"Editing: {spot_config.get('name', spot_key)}")
+        
+        # Need to load YAML data for enhanced configuration
+        # This requires access to the yaml_data - we need to modify the class to have this
+        if not hasattr(self, 'yaml_data'):
+            print(f"{self.CORE_ICONS['warning']} Enhanced configuration requires YAML data.")
+            print("This feature is only available during initial installation.")
+            return False
+        
+        try:
+            # Initialize enhanced configuration manager
+            from install import SurfSpotConfigurationManager  # Import the class
+            config_manager = SurfSpotConfigurationManager(self.yaml_data, 'metric')  # Assume metric for now
+            
+            print("\nStarting enhanced configuration for existing surf spot...")
+            
+            # Mode selection
+            config_mode = config_manager.select_configuration_mode()
+            
+            # Configure based on selected mode
+            enhanced_config = config_manager.configure_surf_spot(config_mode)
+            
+            if enhanced_config:
+                # Merge enhanced config with existing basic config
+                updated_config = spot_config.copy()
+                updated_config.update({
+                    'bottom_type': enhanced_config.get('seafloor_composition', spot_config.get('bottom_type', 'sand')),
+                    'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
+                    'topographic_features': enhanced_config.get('topographic_features', []),
+                    'coastal_structures': enhanced_config.get('coastal_structures', []),
+                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
+                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config)
+                })
+                
+                # Update the spots dictionary
+                self.current_spots['surf_spots'][spot_key] = updated_config
+                
+                # Save to weewx.conf
+                if self._save_current_spots_to_conf():
+                    print(f"{self.CORE_ICONS['status']} Enhanced configuration saved successfully!")
+                    return True
+                else:
+                    print(f"{self.CORE_ICONS['warning']} Failed to save enhanced configuration.")
+                    return False
+            else:
+                print(f"{self.CORE_ICONS['warning']} Enhanced configuration cancelled.")
+                return False
+                
+        except Exception as e:
+            print(f"{self.CORE_ICONS['warning']} Enhanced configuration error: {e}")
             return False
     
     def _text_delete_spot(self, spot_type: str, spots: Dict) -> bool:
