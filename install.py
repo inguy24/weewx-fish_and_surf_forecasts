@@ -3704,7 +3704,7 @@ class SurfSpotConfigurationManager:
         Configure multiple coastal structures with full curses interface
         """
         structures = []
-        structure_types = list(self.structure_physics.keys())
+        structure_types = list(self.structure_physics.get('structure_types', {}).keys())
         
         print(f"\nCoastal structures configuration:")
         print("Structures affect waves within their influence zones")
@@ -3715,7 +3715,7 @@ class SurfSpotConfigurationManager:
             # Structure type selection
             print(f"\nAvailable structure types:")
             for i, struct_type in enumerate(structure_types, 1):
-                struct_info = self.structure_physics[struct_type]
+                struct_info = self.structure_physics.get('structure_types', {}).get(struct_type, {})
                 description = struct_info.get('user_description', struct_type)
                 length_range = struct_info.get('typical_length_range', '')
                 print(f"  {i}. {struct_type.title()} - {description}")
@@ -3949,7 +3949,7 @@ class SurfSpotConfigurationManager:
         """
         Curses interface for structure type selection
         """
-        structure_types = list(self.structure_physics.keys())
+        structure_types = list(self.structure_physics.get('structure_types', {}).keys())
         current_selection = 0
         
         while True:
@@ -3963,7 +3963,7 @@ class SurfSpotConfigurationManager:
             # Structure types
             for i, struct_type in enumerate(structure_types):
                 y_pos = 4 + i * 2
-                struct_info = self.structure_physics[struct_type]
+                struct_info = self.structure_physics.get('structure_types', {}).get(struct_type, {})
                 description = struct_info.get('user_description', struct_type)
                 
                 attr = curses.A_REVERSE if i == current_selection else curses.A_NORMAL
@@ -4016,7 +4016,7 @@ class SurfSpotConfigurationManager:
         Configure multiple coastal structures using YAML-driven data
         """
         structures = []
-        structure_types = list(self.structure_physics.keys())
+        structure_types = list(self.structure_physics.get('structure_types', {}).keys())
         max_structures = self.structure_interactions.get('validation_limits', {}).get('max_structures_per_spot', 4)
         
         print(f"\nCoastal structures configuration:")
@@ -4028,7 +4028,7 @@ class SurfSpotConfigurationManager:
             # Structure type selection
             print(f"\nAvailable structure types:")
             for i, struct_type in enumerate(structure_types, 1):
-                struct_info = self.structure_physics[struct_type]
+                struct_info = self.structure_physics.get('structure_types', {}).get(struct_type, {})
                 description = struct_info.get('user_description', struct_type.replace('_', ' '))
                 typical_length = struct_info.get('typical_length_range', 'varies')
                 print(f"  {i}. {struct_type.title()} - {description}")
@@ -4068,7 +4068,7 @@ class SurfSpotConfigurationManager:
         """
         Configure a single structure with full parameters using YAML data
         """
-        struct_info = self.structure_physics[struct_type]
+        struct_info = self.structure_physics.get('structure_types', {}).get(struct_type, {})
         validation_limits = self.structure_interactions.get('validation_limits', {})
         
         print(f"\nConfiguring {struct_type} structure:")
@@ -4309,7 +4309,7 @@ class SurfSpotConfigurationManager:
         """
         curses.curs_set(0)  # Hide cursor
         structures = []
-        structure_types = list(self.structure_physics.keys())
+        structure_types = list(self.structure_physics.get('structure_types', {}).keys())
         current_selection = 0
         
         while True:
@@ -4341,7 +4341,7 @@ class SurfSpotConfigurationManager:
             y_pos += 1
             
             for i, struct_type in enumerate(structure_types):
-                struct_info = self.structure_physics[struct_type]
+                struct_info = self.structure_physics.get('structure_types', {}).get(struct_type, {})
                 description = struct_info.get('user_description', struct_type.replace('_', ' '))
                 
                 attr = curses.A_REVERSE if i == current_selection else curses.A_NORMAL
