@@ -630,7 +630,7 @@ class SurfFishingPointManager:
                 self.current_spots['surf_spots'][spot_key] = spot_config
                 
                 # Save to weewx.conf
-                if self._save_current_spots_to_conf():
+                if self._save_spots_to_conf():
                     print(f"\n{self.CORE_ICONS['status']} Enhanced surf spot '{name}' added successfully!")
                     accuracy = enhanced_config.get('accuracy_improvement', 'baseline')
                     print(f"Forecast accuracy improvement: {accuracy}")
@@ -909,7 +909,7 @@ class SurfFishingPointManager:
                 self.current_spots['surf_spots'][spot_key] = updated_config
                 
                 # Save to weewx.conf
-                if self._save_current_spots_to_conf():
+                if self._save_spots_to_conf():
                     print(f"\n{self.CORE_ICONS['status']} Enhanced surf spot '{name}' updated successfully!")
                     accuracy = enhanced_config.get('accuracy_improvement', 'baseline')
                     print(f"Forecast accuracy improvement: {accuracy}")
@@ -996,7 +996,7 @@ class SurfFishingPointManager:
         self.current_spots['surf_spots'][spot_key] = updated_config
         
         # Save to weewx.conf
-        if self._save_current_spots_to_conf():
+        if self._save_spots_to_conf():
             print(f"\n{self.CORE_ICONS['status']} Basic surf spot properties updated.")
             print(f"{self.CORE_ICONS['warning']} Consider upgrading to enhanced configuration for better forecasts.")
             input("\nPress ENTER to continue...")
@@ -1518,7 +1518,7 @@ class SurfFishingPointManager:
                 self.current_spots[spot_type][spot_key] = updated_config
                 
                 # Save to weewx.conf
-                if self._save_current_spots_to_conf():
+                if self._save_spots_to_conf():
                     print(f"{self.CORE_ICONS['status']} Updated {name} successfully.")
                     return True
                 else:
