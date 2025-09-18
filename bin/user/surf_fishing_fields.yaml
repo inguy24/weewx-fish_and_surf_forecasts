@@ -9,16 +9,13 @@
 # NOAA GFS WAVE DATA SOURCE - All GFS Wave configuration together
 # =============================================================================
 noaa_gfs_wave:
-  description: "NOAA GFS-Wave Model (WaveWatch III coupled with GFS)"
   base_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
   url_pattern: "gfs.{yyyymmdd}/{hh}/wave/gridded/"
   file_pattern: "gfswave.t{hh}z.{grid_name}.f{fff}.grib2"
-  documentation: "https://polar.ncep.noaa.gov/waves/Model_Description.pdf"
   
   # Grid definitions with selection logic combined
   grids:
     us_east_coast:
-      description: "US East Coast & Gulf (16km resolution)"
       grid_name: "atlocn.0p16"
       bounds: [0, 55, -100, -50]  # lat_min, lat_max, lon_min, lon_max
       resolution: 0.16
@@ -29,7 +26,6 @@ noaa_gfs_wave:
         backup_grid: "global.0p16"
         
     us_west_coast:
-      description: "US West Coast (16km resolution)" 
       grid_name: "wcoast.0p16"
       bounds: [25, 50, -150, -110]
       resolution: 0.16
@@ -40,7 +36,6 @@ noaa_gfs_wave:
         backup_grid: "global.0p16"
         
     hawaii_pacific:
-      description: "Hawaii & Eastern Pacific (16km resolution)"
       grid_name: "epacif.0p16"
       bounds: [-20, 30, -180, -130]
       resolution: 0.16
@@ -51,7 +46,6 @@ noaa_gfs_wave:
         backup_grid: "global.0p16"
         
     alaska_arctic:
-      description: "Alaska & Arctic (9km resolution)"
       grid_name: "arctic.9km"
       bounds: [50, 90, -180, 180]
       resolution: 0.083
@@ -62,7 +56,6 @@ noaa_gfs_wave:
         backup_grid: "global.0p16"
         
     global_primary:
-      description: "Global mid-latitudes (16km resolution)"
       grid_name: "global.0p16"
       bounds: [-15, 52.5, -180, 180]
       resolution: 0.16
@@ -73,7 +66,6 @@ noaa_gfs_wave:
         backup_grid: "global.0p25"
         
     global_fallback:
-      description: "Global interpolated (25km resolution)"
       grid_name: "global.0p25"
       bounds: [-90, 90, -180, 180]
       resolution: 0.25
@@ -123,7 +115,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # meters to feet
       forecast_priority: 1
-      description: "Significant height of combined wind waves and swell"
       
     wave_period:
       grib_parameter: "perpw"                  # CORRECT: no change needed
@@ -131,7 +122,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Primary wave mean period"
       
     wave_direction:
       grib_parameter: "dirpw"                  # CORRECT: no change needed
@@ -139,7 +129,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Primary wave direction"
       
     # ============================================================================
     # ESSENTIAL WIND PARAMETERS (HIGH priority - required for surf quality)
@@ -150,7 +139,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # m/s to mph
       forecast_priority: 1
-      description: "Wind speed at 10 meters"
       
     wind_direction:
       grib_parameter: "wdir"                   # CORRECT: no change needed
@@ -158,7 +146,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Wind direction at 10 meters"
       
     # ============================================================================
     # WIND COMPONENTS (MEDIUM priority - backup for wind calculations)
@@ -169,7 +156,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # m/s to mph
       forecast_priority: 2
-      description: "U component of wind at 10 meters"
       
     wind_v_component:
       grib_parameter: "v"                      # NEW: added based on GRIB contents
@@ -177,7 +163,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # m/s to mph
       forecast_priority: 2
-      description: "V component of wind at 10 meters"
       
     # ============================================================================
     # WIND WAVE COMPONENTS (MEDIUM priority - local sea state)
@@ -188,7 +173,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # meters to feet
       forecast_priority: 2
-      description: "Significant height of wind waves"
       
     wind_wave_period:
       grib_parameter: "mpww"                   # FIXED: was "WVPER"
@@ -196,7 +180,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 2
-      description: "Mean period of wind waves"
       
     wind_wave_direction:
       grib_parameter: "wvdir"                  # CORRECT: no change needed
@@ -204,7 +187,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 2
-      description: "Direction of wind waves"
       
     # ============================================================================
     # TOTAL SWELL COMPONENTS (HIGH priority - distant storm swell)
@@ -215,7 +197,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: true          # meters to feet
       forecast_priority: 1
-      description: "Significant height of total swell"
       
     total_swell_period:
       grib_parameter: "mpts"                   # NEW: replaces non-existent "SWPER:1"
@@ -223,7 +204,6 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Mean period of total swell"
       
     total_swell_direction:
       grib_parameter: "swdir"                  # NEW: replaces non-existent "SWDIR:1"
@@ -231,14 +211,11 @@ noaa_gfs_wave:
       database_type: "REAL"
       unit_conversion_required: false
       forecast_priority: 1
-      description: "Direction of swell waves"
 
 # =============================================================================
 # SEAFLOOR PHYSICS - Separated from coastal structures (Phase I research)
 # =============================================================================
 seafloor_physics:
-  description: "Seafloor composition physics coefficients from coastal engineering literature"
-  
   breaking_coefficients:
     sand: 0.78         # Spilling breakers (Dean & Dalrymple 2002)
     rock: 1.0          # Plunging breakers
@@ -322,9 +299,7 @@ structure_physics:
 # =============================================================================
 # TOPOGRAPHIC FEATURES - Natural coastal formations
 # =============================================================================
-topographic_features:
-  description: "Natural coastal features affecting wave propagation"
-  
+topographic_features: 
   point_break:
     wave_focusing_factor: 1.1
     directional_sensitivity: "high"
@@ -357,8 +332,6 @@ topographic_features:
 # STRUCTURE INTERACTION RULES - Multi-structure dominance calculation
 # =============================================================================
 structure_interactions:
-  description: "Multi-structure dominance calculation from Phase I research"
-  
   dominance_calculation:
     distance_weight: 0.4       # Research-validated weighting
     material_weight: 0.4       # Material importance
@@ -398,8 +371,6 @@ structure_interactions:
 # CONFIGURATION UI MODES - Dual interface system
 # =============================================================================
 configuration_modes:
-  description: "User interface mode selection for surf spot configuration"
-  
   mode_selection:
     simple:
       description: "Seafloor only - current system equivalent"
@@ -592,7 +563,6 @@ scoring_criteria:
 # BATHYMETRY DATA SOURCE - GEBCO API via OpenTopo
 # =============================================================================
 bathymetry_data:
-  description: "GEBCO Global Bathymetry - Multi-Point Path Analysis"
   data_source: "gebco_api"
   implementation_scope: "install_time_only"
   
@@ -635,7 +605,6 @@ bathymetry_data:
   # NEW ADDITION: Adaptive spacing algorithm configuration
   adaptive_spacing:
     enable_adaptive_algorithm: true
-    description: "Gradient-based adaptive refinement of bathymetric sampling points"
     
     # Core algorithm parameters
     refinement_gradient_threshold: 0.02      # 1:50 slope ratio triggers refinement
