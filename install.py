@@ -619,7 +619,6 @@ class SurfFishingPointManager:
                     'topographic_features': enhanced_config.get('topographic_features', []),
                     'coastal_structures': enhanced_config.get('coastal_structures', []),
                     'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
-                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config),
                     'bathymetry_calculated': 'false'
                 }
                 
@@ -2676,7 +2675,6 @@ class SurfFishingConfigurator:
                 'topographic_features': enhanced_config.get('topographic_features', []),
                 'coastal_structures': enhanced_config.get('coastal_structures', []),
                 'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
-                'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config)
             }
             
             print(f"\n{CORE_ICONS['status']} Enhanced configuration completed!")
