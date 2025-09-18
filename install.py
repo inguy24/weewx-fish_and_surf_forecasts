@@ -1572,8 +1572,8 @@ class SurfFishingPointManager:
                 # Update the spots dictionary
                 self.current_spots['surf_spots'][spot_key] = updated_config
                 
-                # Save to weewx.conf
-                if self._save_current_spots_to_conf():
+                # FIXED: Use the correct method name that exists in this class
+                if self._save_spots_to_conf():  # Changed from _save_current_spots_to_conf()
                     print(f"{self.CORE_ICONS['status']} Enhanced configuration saved successfully!")
                     return True
                 else:
@@ -2680,20 +2680,13 @@ class SurfFishingConfigurator:
             }
             
             print(f"\n{CORE_ICONS['status']} Enhanced configuration completed!")
-            print(f"Mode: {spot_config['configuration_mode'].title()}")
-            print(f"Expected improvement: {spot_config['accuracy_improvement']}")
+            print(f"Configuration mode: {enhanced_config.get('configuration_mode', 'simple')}")
+            print(f"Accuracy improvement: {spot_config['accuracy_improvement']}")
             
             return spot_config
         else:
-            print(f"\n{CORE_ICONS['warning']} Configuration cancelled - using simple mode")
-            return {
-                'bottom_type': 'sand',  # Required field for compatibility
-                'exposure': 'exposed',  # Required field for compatibility
-                'seafloor_composition': 'sand',
-                'topographic_features': [],
-                'coastal_structures': [],
-                'configuration_mode': 'simple'
-            }
+            print(f"\n{CORE_ICONS['warning']} Enhanced configuration cancelled.")
+            return None
    
     def _configure_fishing_characteristics(self, name, lat, lon):
         """Configure fishing-specific spot characteristics"""
@@ -3369,6 +3362,7 @@ class SurfSpotConfigurationManager:
     def configure_surf_spot(self, mode):
         """
         Route to appropriate configuration method based on selected mode
+        Returns configuration dict, caller is responsible for saving
         """
         if mode == 'simple':
             return self._configure_simple_mode()
