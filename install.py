@@ -2683,7 +2683,8 @@ class SurfFishingConfigurator:
             
             print(f"\n{CORE_ICONS['status']} Enhanced configuration completed!")
             print(f"Configuration mode: {enhanced_config.get('configuration_mode', 'simple')}")
-            print(f"Accuracy improvement: {spot_config['accuracy_improvement']}")
+            improvement = config_manager._estimate_accuracy_improvement(enhanced_config)
+            print(f"Accuracy improvement: {improvement}")
             
             return spot_config
         else:
