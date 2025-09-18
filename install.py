@@ -906,8 +906,7 @@ class SurfFishingPointManager:
                     'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
                     'topographic_features': enhanced_config.get('topographic_features', []),
                     'coastal_structures': enhanced_config.get('coastal_structures', []),
-                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
-                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config)
+                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple')
                 })
                 
                 # Update the spot
@@ -1570,8 +1569,7 @@ class SurfFishingPointManager:
                     'seafloor_composition': enhanced_config.get('seafloor_composition', 'sand'),
                     'topographic_features': enhanced_config.get('topographic_features', []),
                     'coastal_structures': enhanced_config.get('coastal_structures', []),
-                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple'),
-                    'accuracy_improvement': config_manager._estimate_accuracy_improvement(enhanced_config)
+                    'configuration_mode': enhanced_config.get('configuration_mode', 'simple')
                 })
                 
                 # Update the spots dictionary
