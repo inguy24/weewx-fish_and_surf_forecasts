@@ -3802,6 +3802,7 @@ class SurfSpotConfigurationManager:
     def _display_configuration_summary(self, config):
         """
         Display complete configuration summary for user review
+        Returns True if user confirms configuration, False if cancelled
         """
         print(f"\nConfiguration Summary:")
         print("=" * 40)
@@ -3831,6 +3832,17 @@ class SurfSpotConfigurationManager:
         if structures or topo_features:
             improvement = self._estimate_accuracy_improvement(config)
             print(f"\nExpected forecast accuracy improvement: {improvement}")
+        
+        # FIXED: Add user confirmation and return boolean result
+        print("\n" + "=" * 40)
+        while True:
+            confirm = input(f"Save this configuration? (y/n): ").strip().lower()
+            if confirm in ['y', 'yes']:
+                return True
+            elif confirm in ['n', 'no']:
+                return False
+            else:
+                print(f"  {CORE_ICONS['warning']} Please enter y (yes) or n (no)")
 
     def _estimate_accuracy_improvement(self, config):
         """
