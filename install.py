@@ -2839,7 +2839,16 @@ class SurfFishingConfigurator:
 
     def _convert_yaml_section_to_conf(self, yaml_section):
         """Convert YAML section to CONF format - excludes geographic_regions from CONF"""
-        
+
+        if isinstance(yaml_section, dict):
+            conf_section = {}
+            for key, value in yaml_section.items():
+                # SKIP documentation fields that service doesn't need
+                if key in ['description', 'examples', 'user_description', 'user_test', 'display_name']:
+                    continue
+                conf_section[str(key)] = self._convert_yaml_section_to_conf(value)
+            return conf_section
+    
         # NEW: Skip geographic_regions section (install-time only data)
         if isinstance(yaml_section, dict) and 'geographic_regions' in yaml_section:
             print(f"  {CORE_ICONS['navigation']} Excluding geographic_regions from CONF (install-time only)")
