@@ -179,6 +179,12 @@ class SurfFishingPointManager:
             config['SurfFishingService']['fishing_spots'] = {str(k): v for k, v in self.current_spots['fishing_spots'].items()}
             
             # WeeWX 5.1 best practice: Immediate write to persist changes
+            # Debug: Print exactly what's being saved
+            print("DEBUG: Data being saved to CONF:")
+            for spot_key, spot_data in updated_surf_spots.items():
+                print(f"  {spot_key}: {spot_data}")
+                for key, value in spot_data.items():
+                    print(f"    {key}: {repr(value)} (type: {type(value)})")
             config.write()
             
             return True
